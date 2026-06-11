@@ -1,0 +1,960 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pagoda2</title>
+<style>
+  :root{
+    --ink:#0d1117; --panel:#161b22; --inset:#1b2230; --line:#2a3340; --line2:#222a35;
+    --text:#d7dee8; --dim:#8a97a8; --faint:#5b6675;
+    --teal:#3fb6b2; --cyan:#5cc8ff; --amber:#e0a458; --ok:#5bbf8f; --bad:#e07a7a;
+    --ct0:#6ea8fe; --ct1:#e0a458; --ct2:#b48ead; --ct3:#88c0a0; --ct4:#d98c8c;
+    --mono: ui-monospace,"SF Mono","Cascadia Code",Menlo,Consolas,monospace;
+    --sans: -apple-system,"Segoe UI",system-ui,Roboto,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--ink);color:var(--text);
+    font-family:var(--sans);font-size:13.5px;line-height:1.45;-webkit-font-smoothing:antialiased;overflow:hidden}
+  button{font-family:inherit}
+
+  .app{display:flex;flex-direction:column;height:100vh}
+
+  /* ---------- slim top bar ---------- */
+  .top{display:flex;align-items:center;gap:14px;height:46px;padding:0 14px;
+    background:var(--panel);border-bottom:1px solid var(--line);flex:0 0 auto}
+  .logo{font-weight:600;font-size:13px;letter-spacing:.2px;color:var(--text)}
+  .logo span{color:var(--teal)}
+  .wstabs{display:flex;gap:4px}
+  .ws{font-size:12px;padding:4px 11px;border-radius:7px;border:1px solid transparent;
+    color:var(--dim);cursor:pointer}
+  .ws:hover{color:var(--text)}
+  .ws.on{background:var(--inset);border-color:var(--line);color:var(--cyan)}
+  .spacer{flex:1}
+  .tb{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--dim);cursor:pointer;
+    border:1px solid var(--line);background:var(--inset);border-radius:8px;padding:5px 10px}
+  .tb:hover{color:var(--text)}
+  .tb.on{border-color:var(--amber);color:var(--amber)}
+  .tb .kbd{font-family:var(--mono);font-size:10px;color:var(--faint);border:1px solid var(--line);
+    border-radius:4px;padding:0 4px;margin-left:2px}
+  .badge{min-width:16px;height:16px;border-radius:8px;background:var(--cyan);color:#04222e;
+    font-size:10px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;padding:0 4px}
+
+  /* ---------- stage: canvas + rail drawer ---------- */
+  .stage{flex:1;display:flex;min-height:0}
+  .canvas{flex:1;overflow:auto;padding:14px}
+  .workbench{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-content:start}
+  @media(max-width:760px){.workbench{grid-template-columns:1fr}}
+
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:11px;overflow:hidden;
+    animation:rise .3s ease}
+  .panel.full{grid-column:1/-1}
+  @keyframes rise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+  .ph{display:flex;align-items:center;gap:8px;padding:8px 11px;border-bottom:1px solid var(--line2)}
+  .ph .pt{font-weight:600;font-size:12.5px}
+  .ph .pc{font-size:10.5px;color:var(--dim)}
+  .ph .sp{margin-left:auto;display:flex;align-items:center;gap:6px}
+  .mini{background:var(--inset);color:var(--dim);border:1px solid var(--line);border-radius:6px;
+    font-size:11px;padding:3px 7px;cursor:pointer;font-family:var(--mono)}
+  .mini:hover{color:var(--text)}
+  .pbody{padding:11px}
+  .prov{font-family:var(--mono);font-size:10px;color:var(--faint);padding:6px 11px;border-top:1px solid var(--line2)}
+  .caveat{display:flex;gap:8px;padding:9px 11px;background:rgba(224,164,88,.08);
+    border-left:3px solid var(--amber);font-size:12px;color:#f0d9b6}
+  .caveat b{color:var(--amber)}
+
+  /* rail drawer */
+  .rail{flex:0 0 0;width:0;background:var(--panel);border-left:1px solid var(--line);
+    transition:width .25s ease,flex-basis .25s ease;overflow:hidden;display:flex;flex-direction:column}
+  .rail.open{flex-basis:312px;width:312px}
+  .railhd{display:flex;align-items:center;height:38px;padding:0 12px;border-bottom:1px solid var(--line);flex:0 0 auto}
+  .railhd .t{font-family:var(--mono);font-size:10px;letter-spacing:1.4px;color:var(--dim)}
+  .railhd .x{margin-left:auto;color:var(--faint);cursor:pointer;font-size:14px}
+  .railbody{overflow:auto;padding:11px;display:flex;flex-direction:column;gap:11px}
+  .rcard{background:var(--inset);border:1px solid #34465e;border-radius:10px;overflow:hidden;animation:slidein .28s ease}
+  @keyframes slidein{from{opacity:0;transform:translateX(10px)}to{opacity:1;transform:none}}
+  .rch{display:flex;align-items:center;gap:7px;padding:7px 9px;border-bottom:1px solid var(--line2)}
+  .rch .rt{font-family:var(--mono);font-size:9px;letter-spacing:.8px;color:var(--cyan)}
+  .rch .sp{margin-left:auto;display:flex;gap:5px}
+  .pin{background:var(--cyan);color:#04222e;border:0;border-radius:5px;font-size:11px;padding:2px 8px;font-weight:600;cursor:pointer}
+  .dismiss{background:none;border:1px solid var(--line);color:var(--faint);border-radius:5px;font-size:11px;padding:2px 7px;cursor:pointer}
+  .rq{padding:5px 9px;font-size:11px;color:var(--dim);font-style:italic;border-bottom:1px solid var(--line2)}
+  .rcard .pbody{padding:9px}
+  .notebody{font-size:12.5px;color:var(--text);line-height:1.5}
+
+  /* proposal (rung 2/3, but never labeled as such) */
+  .proposal{border:1px solid var(--amber);background:rgba(224,164,88,.06)}
+  .proposal .rch .rt{color:var(--amber)}
+  .proposal .body{padding:10px}
+  .proposal h4{margin:0 0 5px;font-size:12.5px;color:var(--amber)}
+  .diff{font-family:var(--mono);font-size:11px;color:var(--dim);margin-bottom:10px;line-height:1.6}
+  .diff .add{color:var(--ok)} .diff .rm{color:var(--bad)}
+  .acts{display:flex;gap:8px}
+  .apply{background:var(--amber);color:#241a08;border:0;border-radius:6px;padding:4px 13px;font-weight:600;cursor:pointer;font-size:12px}
+
+  /* ---------- timeline strip ---------- */
+  .timeline{flex:0 0 auto;background:var(--panel);border-top:1px solid var(--line);transition:height .2s}
+  .tlhd{display:flex;align-items:center;height:26px;padding:0 12px;cursor:pointer;gap:8px}
+  .tlhd .t{font-family:var(--mono);font-size:10px;letter-spacing:1.4px;color:var(--dim)}
+  .tlhd .chev{margin-left:auto;color:var(--faint);font-size:11px;transition:.2s}
+  .timeline.collapsed .ckpts{display:none}
+  .timeline.collapsed .chev{transform:rotate(-90deg)}
+  .ckpts{display:flex;gap:8px;overflow-x:auto;padding:0 12px 11px}
+  .ckpt{flex:0 0 auto;max-width:172px;border:1px solid var(--line);border-radius:8px;padding:6px 9px;
+    background:var(--inset);cursor:pointer}
+  .ckpt:hover{border-color:var(--cyan)}
+  .ckpt.on{border-color:var(--cyan);box-shadow:0 0 0 1px var(--cyan) inset}
+  .ckpt .cq{font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ckpt .cw{font-size:9.5px;color:var(--faint);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+  /* ---------- command palette overlay ---------- */
+  .scrim{position:fixed;inset:0;background:rgba(5,8,12,.55);display:none;z-index:50}
+  .scrim.show{display:block}
+  .palette{position:fixed;left:50%;top:16%;transform:translateX(-50%);width:min(580px,92vw);z-index:60;
+    background:var(--panel);border:1px solid var(--line);border-radius:13px;display:none;
+    box-shadow:0 24px 60px rgba(0,0,0,.5);overflow:hidden}
+  .palette.show{display:block;animation:pop .16s ease}
+  @keyframes pop{from{opacity:0}to{opacity:1}}
+  .scope{display:flex;align-items:center;gap:7px;padding:8px 12px;border-bottom:1px solid var(--line2);
+    font-size:11.5px;color:var(--cyan);font-family:var(--mono)}
+  .scope .x{margin-left:auto;cursor:pointer;color:var(--faint)}
+  .palette input{width:100%;border:0;background:transparent;color:var(--text);font-size:15px;
+    padding:14px 16px;outline:none;font-family:var(--sans)}
+  .palette input::placeholder{color:var(--faint)}
+  .sugs{border-top:1px solid var(--line2);max-height:280px;overflow:auto}
+  .sug{display:flex;align-items:center;gap:10px;padding:9px 14px;cursor:pointer;font-size:13px}
+  .sug:hover,.sug.hot{background:var(--inset)}
+  .sug .ic{width:16px;color:var(--faint);font-family:var(--mono);font-size:12px;text-align:center}
+  .sug .lab{flex:1}
+  .sug .hint{font-size:10.5px;color:var(--faint);font-family:var(--mono)}
+
+  /* selection popover */
+  .selpop{position:fixed;z-index:55;background:var(--panel);border:1px solid var(--line);
+    border-radius:10px;box-shadow:0 12px 30px rgba(0,0,0,.45);display:none;min-width:180px;overflow:hidden}
+  .selpop.show{display:block;animation:pop .14s ease}
+  .selpop .head{padding:8px 11px;font-family:var(--mono);font-size:11px;color:var(--cyan);border-bottom:1px solid var(--line2)}
+  .selpop .it{padding:8px 11px;font-size:12.5px;cursor:pointer;display:flex;gap:8px;align-items:center}
+  .selpop .it:hover{background:var(--inset)}
+  .selpop .it .ic{color:var(--faint);font-family:var(--mono);width:14px;text-align:center}
+
+  /* context menu */
+  .ctx{position:fixed;z-index:55;background:var(--panel);border:1px solid var(--line);border-radius:9px;
+    box-shadow:0 12px 30px rgba(0,0,0,.45);display:none;min-width:170px;overflow:hidden}
+  .ctx.show{display:block}
+  .ctx .it{padding:7px 12px;font-size:12.5px;cursor:pointer}
+  .ctx .it:hover{background:var(--inset)}
+
+  /* toasts */
+  .toasts{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:70;
+    display:flex;flex-direction:column;gap:8px;align-items:center}
+  .toast{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:9px 13px;
+    font-size:12.5px;display:flex;gap:12px;align-items:center;box-shadow:0 10px 28px rgba(0,0,0,.4);
+    animation:tin .2s ease;max-width:78vw}
+  @keyframes tin{from{opacity:0;transform:translateY(6px)}to{opacity:1}}
+  .toast .why{color:var(--teal);cursor:pointer;font-size:11.5px;white-space:nowrap}
+  .toast .det{color:var(--dim);font-size:11.5px;border-top:1px solid var(--line2);margin-top:2px;padding-top:6px;display:none;line-height:1.4}
+  .toast.open{flex-direction:column;align-items:flex-start}
+  .toast.open .det{display:block}
+
+  /* ---------- agent presence pip (the one persistent chat atom) ---------- */
+  .tb.pip{position:relative}
+  .tb.pip .dot{width:7px;height:7px;border-radius:50%;background:var(--faint);transition:.25s;flex:0 0 auto}
+  .tb.pip.listening{border-color:var(--cyan);color:var(--cyan)}
+  .tb.pip.listening .dot{background:var(--cyan)}
+  .tb.pip.working{border-color:var(--teal);color:var(--teal)}
+  .tb.pip.working .dot{background:var(--teal);animation:ppulse 1s infinite}
+  .tb.pip.nudge{border-color:var(--cyan);color:var(--cyan)}
+  .tb.pip.nudge .dot{background:var(--cyan);animation:ppulse 1.4s infinite}
+  @keyframes ppulse{0%,100%{opacity:1}50%{opacity:.25}}
+  .tb.pip .nbadge{position:absolute;top:-6px;right:-6px;min-width:15px;height:15px;border-radius:8px;
+    background:var(--cyan);color:#04222e;font-size:9.5px;font-weight:700;display:inline-flex;
+    align-items:center;justify-content:center;padding:0 3px}
+
+  /* ---------- live thread = the swollen tip of the timeline (modes 3-5) ---------- */
+  .thread{max-height:0;overflow:hidden;transition:max-height .3s ease;border-bottom:1px solid var(--line)}
+  .thread.show{max-height:240px;overflow:auto}
+  .thrinner{padding:10px 13px;display:flex;flex-direction:column;gap:9px}
+  .thrhd{display:flex;align-items:center;gap:9px;font-family:var(--mono);font-size:10px;letter-spacing:1.3px;color:var(--dim)}
+  .thrhd .live{display:flex;align-items:center;gap:5px;color:var(--teal)}
+  .thrhd .live.idle{color:var(--faint)}
+  .thrhd .live .d{width:6px;height:6px;border-radius:50%;background:var(--teal);animation:ppulse 1s infinite}
+  .thrhd .live.idle .d{background:var(--faint);animation:none}
+  .thrhd .ctrls{margin-left:auto;display:flex;gap:6px}
+  .thrhd .ctrls button{background:var(--inset);border:1px solid var(--line);color:var(--dim);border-radius:6px;
+    font-size:11px;padding:2px 9px;cursor:pointer;font-family:var(--sans)}
+  .thrhd .ctrls button:hover{color:var(--text);border-color:var(--cyan)}
+  .turn{display:flex;gap:9px;font-size:12.5px;line-height:1.5}
+  .turn .ava{flex:0 0 auto;width:19px;height:19px;border-radius:5px;font-family:var(--mono);font-size:10px;
+    display:flex;align-items:center;justify-content:center;margin-top:1px}
+  .turn.user .ava{background:var(--inset);color:var(--dim)}
+  .turn.agent .ava{background:rgba(63,182,178,.16);color:var(--teal)}
+  .turn .msg{color:var(--text)}
+  .turn.user .msg{color:var(--dim)}
+  .turn .msg b{color:var(--cyan);font-weight:600}
+  .replies{display:flex;gap:7px;flex-wrap:wrap;margin:1px 0 3px 28px}
+  .reply{background:var(--inset);border:1px solid #34465e;color:var(--cyan);border-radius:7px;
+    font-size:11.5px;padding:3px 11px;cursor:pointer;font-family:var(--sans)}
+  .reply:hover{background:rgba(92,200,255,.12);border-color:var(--cyan)}
+  .step{display:flex;gap:9px;align-items:flex-start;font-size:12px;margin-left:28px}
+  .step .mk{flex:0 0 auto;width:14px;text-align:center;font-family:var(--mono);font-size:12px;margin-top:1px}
+  .step.done .mk{color:var(--ok)}
+  .step.active .mk{color:var(--teal)}
+  .step.pending{opacity:.42} .step.skipped{opacity:.5}
+  .step .sd{font-size:10.5px;color:var(--faint);font-family:var(--mono)}
+  .step.proposal{background:rgba(224,164,88,.07);border:1px solid var(--amber);border-radius:9px;
+    padding:7px 9px;margin-left:28px;flex-direction:column;gap:7px}
+  .step.proposal b{color:var(--amber)}
+  .step.proposal .pacts{display:flex;gap:7px}
+  .step.proposal .pacts button{border-radius:6px;font-size:11.5px;padding:3px 12px;cursor:pointer;
+    border:1px solid var(--line);background:var(--inset);color:var(--dim);font-family:var(--sans)}
+  .step.proposal .pacts .ok{background:var(--amber);color:#241a08;border:0;font-weight:600}
+
+  /* ---------- layout direct-manipulation (V.1) + thread input (V.3) ---------- */
+  .ph .grip{color:var(--faint);cursor:grab;font-size:12px;line-height:1;user-select:none;margin:0 2px 0 -2px;padding:2px 1px}
+  .ph .grip:hover{color:var(--dim)} .ph .grip:active{cursor:grabbing}
+  .ph .sp .mini{padding:2px 7px;line-height:1}
+  .panel.dragging{opacity:.45}
+  .panel.dragover{box-shadow:0 0 0 2px var(--cyan) inset}
+  .thinput{display:flex;align-items:center;gap:8px;margin:1px 0 2px 28px;border:1px solid var(--line);
+    background:var(--inset);border-radius:8px;padding:0 5px 0 11px}
+  .thinput input{flex:1;border:0;background:transparent;color:var(--text);font-size:12.5px;padding:6px 0;outline:none;font-family:var(--sans)}
+  .thinput input::placeholder{color:var(--faint)}
+  .thinput .thhint{font-family:var(--mono);font-size:10px;color:var(--faint);border:1px solid var(--line);border-radius:4px;padding:1px 5px}
+  .thread.flash{animation:thflash .9s ease}
+  @keyframes thflash{0%{background:rgba(92,200,255,.12)}100%{background:transparent}}
+
+  /* ---------- workspace management (V.4) ---------- */
+  .ws.wsadd{color:var(--faint);font-weight:700;padding:4px 9px}
+  .ws.wsadd:hover{color:var(--cyan)}
+  .ws.wsdrag{opacity:.5}
+  .ws.wsover{box-shadow:0 0 0 1px var(--cyan) inset}
+  .wsinput{background:var(--inset);border:1px solid var(--cyan);color:var(--text);border-radius:7px;
+    font-size:12px;padding:3px 8px;font-family:var(--sans);outline:none;width:135px}
+
+  /* ---------- pinned conversation column (V.5) ---------- */
+  .tlhd .dockbtn{margin-left:auto;font-size:10px;color:var(--faint);cursor:pointer;font-family:var(--mono);letter-spacing:.5px}
+  .tlhd .dockbtn:hover{color:var(--cyan)}
+  .tlhd .chev{margin-left:10px}
+  .convo{flex:0 0 0;width:0;background:var(--panel);border-right:1px solid var(--line);
+    transition:width .25s ease,flex-basis .25s ease;overflow:hidden;display:flex;flex-direction:column}
+  .convo.open{flex-basis:300px;width:300px}
+  .convohd{display:flex;align-items:center;height:38px;padding:0 12px;border-bottom:1px solid var(--line);flex:0 0 auto}
+  .convohd .t{font-family:var(--mono);font-size:10px;letter-spacing:1.4px;color:var(--dim)}
+  .convohd .x{margin-left:auto;color:var(--faint);cursor:pointer;font-size:14px}
+  .convobody{flex:1;overflow:auto;padding:11px;display:flex;flex-direction:column;gap:8px}
+  .cxentry{border-left:2px solid var(--line);padding:1px 0 1px 9px}
+  .cxq{font-size:12px;color:var(--text)}
+  .cxw{font-size:10.5px;color:var(--faint);margin-top:1px;line-height:1.35}
+  .convolive{display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--cyan);padding-top:9px;margin-top:4px}
+  .convofoot{flex:0 0 auto;border-top:1px solid var(--line);padding:8px 10px}
+  .convofoot input{width:100%;border:1px solid var(--line);background:var(--inset);color:var(--text);
+    border-radius:8px;font-size:12.5px;padding:7px 10px;outline:none;font-family:var(--sans)}
+  .convofoot input::placeholder{color:var(--faint)}
+
+  /* ---------- refused component placeholder (V.8) ---------- */
+  .placeholder{border:1px dashed var(--bad);border-radius:9px;padding:12px;background:rgba(224,122,122,.05);
+    display:flex;flex-direction:column;gap:6px}
+  .placeholder .phh{font-family:var(--mono);font-size:11px;color:var(--bad);letter-spacing:.5px}
+  .placeholder .phr{font-size:12.5px;color:var(--text)}
+  .placeholder .phspec{font-family:var(--mono);font-size:10.5px;color:var(--faint);background:var(--inset);
+    border:1px solid var(--line);border-radius:6px;padding:5px 8px;word-break:break-all}
+  .placeholder .phnote{font-size:11px;color:var(--dim);line-height:1.4}
+
+  svg{display:block;width:100%;height:auto}
+  .axis{fill:var(--faint);font-family:var(--mono);font-size:9px}
+  .gl{stroke:var(--line);stroke-width:1}
+  circle.cell{transition:fill .45s ease,fill-opacity .4s ease,stroke .15s}
+  .legend{display:flex;flex-wrap:wrap;gap:9px;margin-top:8px;font-size:11px;color:var(--dim)}
+  .legend span{display:flex;align-items:center;gap:5px}
+  .sw{width:9px;height:9px;border-radius:3px;display:inline-block}
+  table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:11px}
+  th{text-align:right;color:var(--dim);font-weight:500;padding:4px 7px;border-bottom:1px solid var(--line2)}
+  th:first-child{text-align:left}
+  td{text-align:right;padding:4px 7px;border-bottom:1px solid var(--line2);color:#cdd7e2}
+  td:first-child{text-align:left;color:var(--text)}
+  tr.gene{cursor:pointer} tr.gene:hover{background:var(--inset)} tr.gene.on{background:rgba(92,200,255,.12)}
+  .up{color:var(--bad)} .dn{color:var(--cyan)}
+  .brush{fill:rgba(92,200,255,.12);stroke:var(--cyan);stroke-dasharray:3 3}
+  select.inline{background:var(--inset);color:var(--text);border:1px solid var(--line);border-radius:6px;
+    font-size:11px;padding:2px 5px;font-family:var(--mono)}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="top">
+    <div class="logo">pagoda<span>2</span></div>
+    <div class="wstabs" id="wstabs"></div>
+    <div class="spacer"></div>
+    <div class="tb" id="askBtn">Ask<span class="kbd">⌘K</span></div>
+    <div class="tb" id="lockBtn">🔓 Layout</div>
+    <div class="tb" id="railBtn">Answers</div>
+  </div>
+
+  <div class="stage">
+    <div class="convo" id="convo"></div>
+    <div class="canvas"><div class="workbench" id="workbench"></div></div>
+    <div class="rail" id="rail">
+      <div class="railhd"><span class="t">ANSWERS · DISPOSABLE</span><span class="x" id="railX">✕</span></div>
+      <div class="railbody" id="railbody"></div>
+    </div>
+  </div>
+
+  <div class="timeline" id="timeline">
+    <div class="thread" id="thread"></div>
+    <div class="tlhd" id="tlhd"><span class="t">HISTORY</span><span class="dockbtn" id="dockBtn" title="Pin the conversation open as a column">⇥ dock chat</span><span class="chev">▾</span></div>
+    <div class="ckpts" id="ckpts"></div>
+  </div>
+</div>
+
+<!-- overlays -->
+<div class="scrim" id="scrim"></div>
+<div class="palette" id="palette">
+  <div class="scope" id="scope" style="display:none"></div>
+  <input id="pin" placeholder="Ask, or describe what you want to see…">
+  <div class="sugs" id="sugs"></div>
+</div>
+<div class="selpop" id="selpop"></div>
+<div class="ctx" id="ctx"></div>
+<div class="toasts" id="toasts"></div>
+
+<script>
+/* ===== mock data (stable) ===== */
+let _s=20240611;const rnd=()=>{_s=(_s*1664525+1013904223)%4294967296;return _s/4294967296;};
+const gss=(m,sd)=>{let u=0,v=0;while(!u)u=rnd();while(!v)v=rnd();return m+sd*Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);};
+const CT=["Macrophage","T cell","B cell","Fibroblast","Endothelial"];
+const CT_COL=["var(--ct0)","var(--ct1)","var(--ct2)","var(--ct3)","var(--ct4)"];
+const SAMP=[["D1","control"],["D2","control"],["D3","control"],["D4","disease"],["D5","disease"],["D6","disease"]];
+const cen=[[-2.2,1.6],[2.4,1.9],[2.0,-2.1],[-2.6,-1.7],[0.1,0.1]];
+const cells=[];
+for(let i=0;i<340;i++){const t=Math.floor(rnd()*5),c=cen[t];
+  let s=t===0?SAMP[rnd()<.66?3+Math.floor(rnd()*3):Math.floor(rnd()*3)]:SAMP[Math.floor(rnd()*6)];
+  const dis=s[1]==="disease";let IL6=t===0?gss(dis?(s[0]==="D5"?3.4:1.8):.6,.7):gss(.2,.3);
+  cells.push({i,ct:t,smp:s[0],cond:s[1],x:gss(c[0],.6),y:gss(c[1],.6),
+    IL6:+Math.max(0,IL6).toFixed(2),CD3D:+Math.max(0,t===1?gss(2.6,.6):gss(.2,.25)).toFixed(2),
+    mito:+Math.min(18,Math.max(1,gss(t===4?9:4,2.5))).toFixed(1)});}
+const comp=SAMP.map(s=>{const k=[0,0,0,0,0];let n=0;cells.forEach(c=>{if(c.smp===s[0]){k[c.ct]++;n++;}});
+  return{sample:s[0],cond:s[1],prop:k.map(v=>n?v/n:0)};});
+const de=[["IL6",2.4,3e-4],["CXCL10",1.9,8e-4],["SOD2",1.5,2e-3],["CCL2",1.3,5e-3],["S100A8",1.1,9e-3],
+  ["IDO1",.9,.02],["MRC1",-1.6,1e-3],["F13A1",-1.2,6e-3],["SELENOP",-1,.012],["LYVE1",-.8,.03],["CD163",-.6,.06]]
+  .map(r=>({g:r[0],lfc:r[1],padj:r[2]}));
+const il6S=SAMP.map(s=>{const v=cells.filter(c=>c.smp===s[0]&&c.ct===0).map(c=>c.IL6);
+  return{sample:s[0],cond:s[1],vals:v,mean:v.length?+(v.reduce((a,b)=>a+b)/v.length).toFixed(2):0};});
+
+/* geneset / aspect programs (V.9) — deterministic per-cell scores, no live RNG */
+const GENESETS=[
+  {id:"GO:0006954",name:"Inflammatory response",type:"GO:BP",adjVar:4.6,drv:c=>c.IL6*0.9+(c.ct===0?0.4:0)},
+  {id:"GO:0042110",name:"T cell activation",type:"GO:BP",adjVar:3.8,drv:c=>c.CD3D},
+  {id:"aspect:7",name:"Stress / oxidative program",type:"de-novo aspect",adjVar:2.9,drv:c=>c.IL6*0.5+c.mito*0.08},
+  {id:"GO:0006119",name:"Oxidative phosphorylation",type:"GO:BP",adjVar:2.1,drv:c=>c.mito*0.12},
+  {id:"aspect:12",name:"Complement / MRC1 program",type:"de-novo aspect",adjVar:1.7,drv:c=>(c.ct===0?1.5-c.IL6*0.3:0.1)}];
+cells.forEach(c=>{c.gs={};GENESETS.forEach(G=>{c.gs[G.id]=+Math.max(0,G.drv(c)).toFixed(3);});});
+const gsRange={};GENESETS.forEach(G=>{const v=cells.map(c=>c.gs[G.id]);gsRange[G.id]=[Math.min(...v),Math.max(...v)];});
+
+/* ===== data-handle catalog — provenance & caveats TRAVEL WITH THE HANDLE (V.6 / I.7) =====
+   Any component that binds a handle inherits its provenance + caveat automatically. */
+const HANDLES={
+  "embedding:main":{prov:"largeVis · 340 cells"},
+  "de:macrophage":{prov:"estimatePerCellTypeDE · cacoa 0.5 · 3 vs 3 donors",
+    caveat:"Cell-level p-values overstate a population effect — the IL6 up-shift leans on donor <b>D5</b>. The donor is the replicate; verify with the per-sample view."},
+  "composition:byCondition":{prov:"cacoa compositional test",
+    caveat:"Proportions sum to 1 — a rise in one cell type forces others down. Read jointly, not per-cluster."},
+  "expr:IL6@Macrophage":{prov:"per-donor aggregation · Macrophage",
+    caveat:"This is the replicate view: each point is a donor mean. One donor (D5) can carry an apparent shift."},
+  "aspect:overdispersion":{prov:"testGeneSets / pathwayOverdispersion · pagoda2",
+    caveat:"Overdispersion is not differential expression — a program varying across cells need not differ between conditions."},
+  "qc:cells":{prov:"per-cell QC · mito% / nGene"}};
+function handleOf(p){return p&&p.bind?HANDLES[p.bind]:null;}
+function caveatEl(p){const H=handleOf(p),cv=(H&&H.caveat)||(p&&p.caveat);if(!cv)return null;
+  const d=mk("div","caveat");d.innerHTML=`<b>⚠ caveat</b><span>${cv}</span>`;return d;}
+function provEl(p){const H=handleOf(p),pr=(H&&H.prov)||(p&&p.prov);if(!pr)return null;
+  return Object.assign(mk("div","prov"),{textContent:"◆ "+pr});}
+
+/* ===== component registry & validation — the generation surface is finite (V.8 / I.3) =====
+   The agent authors a spec; the viewer renders ONLY validated components. A rejected node
+   becomes a visible, inert placeholder carrying the reason — never silently dropped, never executed. */
+const REGISTRY={Embedding:1,CompositionBars:1,DeTable:1,BoxBySample:1,Volcano:1,Overdispersion:1,Note:1};
+function validate(p){
+  if(!REGISTRY[p.type])return{ok:false,reason:`unknown component type “${p.type}” — not in the validated registry`};
+  if(p.bind&&!HANDLES[p.bind])return{ok:false,reason:`unresolved data handle “${p.bind}” — not in the catalog`};
+  return{ok:true};}
+function emitEvent(t,payload){if(window.console)console.info("event · "+t,payload||"");}
+
+/* ===== state ===== */
+const coord={colorBy:"meta:cellType",focus:null,selection:[],geneset:null};
+const WS={
+  Overview:{colorBy:"meta:cellType",panels:[
+    {type:"Embedding",title:"Embedding",cap:"all cells",bind:"embedding:main"},
+    {type:"CompositionBars",title:"Composition by sample",cap:"by condition",bind:"composition:byCondition"}]},
+  "DE deep-dive":{colorBy:"gene:IL6",panels:[
+    {type:"Embedding",title:"Embedding",cap:"coordinated colour",bind:"embedding:main"},
+    {type:"DeTable",title:"Macrophage DE",cap:"disease vs control",bind:"de:macrophage"},
+    {type:"BoxBySample",title:"IL6 per sample (Macrophage)",cap:"each bar a donor mean",full:true,bind:"expr:IL6@Macrophage"}]},
+  "QC triage":{colorBy:"qc:mito",panels:[
+    {type:"Embedding",title:"Embedding",cap:"mito fraction",bind:"embedding:main"},
+    {type:"Volcano",title:"DE volcano",cap:"macrophage",bind:"de:macrophage"}]},
+  "Aspects":{colorBy:"geneset:GO:0006954",panels:[
+    {type:"Embedding",title:"Embedding",cap:"coloured by active program",bind:"embedding:main"},
+    {type:"Overdispersion",title:"Overdispersed programs",cap:"gene sets & de-novo aspects",bind:"aspect:overdispersion"}]}
+};
+let currentWS="Overview",canvas=[],rail=[],proposal=null,locked=false,history=[],viewing=-1,uid=0,mounts=[];
+let wsOrder=Object.keys(WS),wsDrag=null;
+
+/* ===== helpers ===== */
+function mk(t,c,x){const e=document.createElement(t);if(c)e.className=c;if(x!=null)e.textContent=x;return e;}
+function S(t,a){const e=document.createElementNS("http://www.w3.org/2000/svg",t);for(const k in a)e.setAttribute(k,a[k]);return e;}
+const $=id=>document.getElementById(id);
+
+/* ===== colour ===== */
+function colorOf(c,f){
+  if(f&&f.startsWith("geneset:")){const id=f.slice(8),r=gsRange[id]||[0,1];return ramp(c.gs?c.gs[id]||0:0,r[0],r[1]);}
+  return f==="meta:cellType"?CT_COL[c.ct]:f==="meta:condition"?(c.cond==="disease"?"var(--bad)":"var(--cyan)"):
+  f==="meta:sample"?CT_COL[SAMP.findIndex(s=>s[0]===c.smp)%5]:f==="gene:IL6"?ramp(c.IL6,0,3.6):
+  f==="gene:CD3D"?ramp(c.CD3D,0,3.2):f==="qc:mito"?ramp(c.mito,0,16):"var(--dim)";}
+function labelOf(f){const o=COLOR_OPTS.find(o=>o[0]===f);if(o)return o[1];
+  if(f&&f.startsWith("geneset:")){const G=GENESETS.find(G=>"geneset:"+G.id===f);return G?G.name:f;}return f;}
+function ramp(v,lo,hi){const t=Math.max(0,Math.min(1,(v-lo)/(hi-lo))),a=[27,34,48],b=[224,164,88];
+  return`rgb(${a.map((x,i)=>Math.round(x+(b[i]-x)*t)).join(",")})`;}
+function legendFor(f){const d=mk("div","legend");
+  if(f.startsWith("gene:")||f.startsWith("qc:")||f.startsWith("geneset:"))d.innerHTML=`<span><span class="sw" style="background:var(--inset)"></span>low</span><span><span class="sw" style="background:var(--amber)"></span>high · ${labelOf(f)}</span>`;
+  else if(f==="meta:condition")d.innerHTML=`<span><span class="sw" style="background:var(--cyan)"></span>control</span><span><span class="sw" style="background:var(--bad)"></span>disease</span>`;
+  else if(f==="meta:sample")d.innerHTML=SAMP.map((s,i)=>`<span><span class="sw" style="background:${CT_COL[i%5]}"></span>${s[0]}</span>`).join("");
+  else d.innerHTML=CT.map((t,i)=>`<span><span class="sw" style="background:${CT_COL[i]}"></span>${t}</span>`).join("");
+  return d;}
+const COLOR_OPTS=[["meta:cellType","cell type"],["meta:condition","condition"],["meta:sample","sample"],["gene:IL6","IL6"],["gene:CD3D","CD3D"],["qc:mito","mito %"]];
+
+/* ===== bodies ===== */
+let lastSelBox=null;
+function embeddingBody(){
+  const W=420,H=260,p=10,xs=cells.map(c=>c.x),ys=cells.map(c=>c.y);
+  const xmn=Math.min(...xs),xmx=Math.max(...xs),ymn=Math.min(...ys),ymx=Math.max(...ys);
+  const sx=v=>p+(v-xmn)/(xmx-xmn)*(W-2*p),sy=v=>H-p-(v-ymn)/(ymx-ymn)*(H-2*p);
+  const wrap=mk("div");wrap.style.position="relative";
+  const svg=S("svg",{viewBox:`0 0 ${W} ${H}`});svg.style.touchAction="none";
+  let g="";cells.forEach(c=>{g+=`<circle class="cell" data-i="${c.i}" cx="${sx(c.x).toFixed(1)}" cy="${sy(c.y).toFixed(1)}" r="3.1" fill="${colorOf(c,coord.colorBy)}"/>`;});
+  svg.innerHTML=g;const brush=S("rect",{class:"brush"});brush.style.display="none";svg.appendChild(brush);
+  const legHost=mk("div");legHost.appendChild(legendFor(coord.colorBy));
+  wrap.appendChild(svg);wrap.appendChild(legHost);
+  let st=null;const pt=e=>{const r=svg.getBoundingClientRect();return{x:(e.clientX-r.left)/r.width*W,y:(e.clientY-r.top)/r.height*H,r};};
+  svg.addEventListener("pointerdown",e=>{hideSelpop();st=pt(e);svg.setPointerCapture(e.pointerId);brush.style.display="";});
+  svg.addEventListener("pointermove",e=>{if(!st)return;const q=pt(e);
+    brush.setAttribute("x",Math.min(st.x,q.x));brush.setAttribute("y",Math.min(st.y,q.y));
+    brush.setAttribute("width",Math.abs(q.x-st.x));brush.setAttribute("height",Math.abs(q.y-st.y));});
+  svg.addEventListener("pointerup",e=>{if(!st)return;const q=pt(e);
+    const x0=Math.min(st.x,q.x),x1=Math.max(st.x,q.x),y0=Math.min(st.y,q.y),y1=Math.max(st.y,q.y);
+    const sel=cells.filter(c=>{const X=sx(c.x),Y=sy(c.y);return X>=x0&&X<=x1&&Y>=y0&&Y<=y1;}).map(c=>c.i);
+    brush.style.display="none";st=null;
+    if(sel.length){coord.selection=sel;updateVisuals();
+      const r=q.r;lastSelBox={left:r.left+(x1/W)*r.width,top:r.top+(y0/H)*r.height};
+      openSelpop();}});
+  mounts.push({svg,legHost});return wrap;
+}
+function updateVisuals(){mounts.forEach(m=>{
+  [...m.svg.querySelectorAll("circle.cell")].forEach(ci=>{const c=cells[+ci.getAttribute("data-i")];
+    ci.setAttribute("fill",colorOf(c,coord.colorBy));
+    ci.setAttribute("fill-opacity",coord.focus&&c.cond!==coord.focus?.1:.85);
+    if(coord.selection.length&&coord.selection.includes(c.i)){ci.setAttribute("stroke","var(--cyan)");ci.setAttribute("stroke-width","1.4");}
+    else ci.setAttribute("stroke","none");});
+  m.legHost.replaceChild(legendFor(coord.colorBy),m.legHost.firstChild);});
+  $("railBtn").innerHTML="Answers"+(rail.length?` <span class="badge">${rail.length}</span>`:"");}
+function compositionBody(){const W=420,H=190,p=28,bw=44,svg=S("svg",{viewBox:`0 0 ${W} ${H}`});let g="";
+  comp.forEach((row,i)=>{const x=p+i*((W-p-6)/comp.length);let ya=H-24;
+    row.prop.forEach((pr,t)=>{const h=pr*(H-44);ya-=h;g+=`<rect x="${x}" y="${ya.toFixed(1)}" width="${bw}" height="${h.toFixed(1)}" fill="${CT_COL[t]}" fill-opacity="${coord.focus&&row.cond!==coord.focus?.2:.9}"/>`;});
+    g+=`<text class="axis" x="${x+bw/2}" y="${H-12}" text-anchor="middle">${row.sample}</text>`;
+    g+=`<text class="axis" x="${x+bw/2}" y="${H-3}" text-anchor="middle" fill="${row.cond==="disease"?"var(--bad)":"var(--cyan)"}">${row.cond}</text>`;});
+  svg.innerHTML=g;const w=mk("div");w.appendChild(svg);w.appendChild(legendFor("meta:cellType"));return w;}
+function deBody(){const t=document.createElement("table");
+  t.innerHTML=`<thead><tr><th>gene</th><th>log2FC</th><th>p.adj</th></tr></thead>`;const tb=document.createElement("tbody");
+  de.forEach(r=>{const tr=mk("tr","gene");
+    tr.innerHTML=`<td>${r.g}</td><td class="${r.lfc>0?"up":"dn"}">${r.lfc.toFixed(2)}</td><td>${r.padj<1e-3?r.padj.toExponential(1):r.padj.toFixed(3)}</td>`;
+    tr.onclick=()=>{[...tb.children].forEach(x=>x.classList.remove("on"));tr.classList.add("on");
+      const h=r.g==="IL6"?"gene:IL6":r.g==="CD3D"?"gene:CD3D":null;
+      if(h){setColor(h,`Clicked ${r.g} in the table`,`A click on a result is the cheapest kind of request — it just moved the shared colour scope, so every embedding recoloured in place.`);}
+      else toast(`No expression layer for ${r.g}`,null);};
+    tb.appendChild(tr);});t.appendChild(tb);return t;}
+function boxBody(){const W=560,H=170,p=28,all=il6S.flatMap(s=>s.vals),ymx=Math.max(...all,1);
+  const sx=i=>p+i*((W-p-6)/il6S.length)+20,sy=v=>H-p-v/ymx*(H-2*p);const svg=S("svg",{viewBox:`0 0 ${W} ${H}`});let g="";
+  il6S.forEach((s,i)=>{const x=sx(i),col=s.cond==="disease"?"var(--bad)":"var(--cyan)";
+    s.vals.forEach(v=>g+=`<circle cx="${(x+gss(0,4)).toFixed(1)}" cy="${sy(v).toFixed(1)}" r="2.3" fill="${col}" fill-opacity=".4"/>`);
+    g+=`<line x1="${x-13}" y1="${sy(s.mean).toFixed(1)}" x2="${x+13}" y2="${sy(s.mean).toFixed(1)}" stroke="${col}" stroke-width="2.4"/>`;
+    g+=`<text class="axis" x="${x}" y="${H-11}" text-anchor="middle">${s.sample}</text><text class="axis" x="${x}" y="${H-3}" text-anchor="middle" fill="${col}">${s.cond}</text>`;});
+  svg.innerHTML=g;const w=mk("div");w.appendChild(svg);return w;}
+function volcanoBody(){const W=420,H=240,p=28,lT=1,pT=.05,xm=3,ym=4;
+  const sx=v=>p+(v+xm)/(2*xm)*(W-p-6),sy=v=>H-p-Math.min(v,ym)/ym*(H-2*p);const svg=S("svg",{viewBox:`0 0 ${W} ${H}`});
+  let g=`<line class="gl" x1="${sx(0)}" y1="6" x2="${sx(0)}" y2="${H-p}"/>`;
+  de.forEach(r=>{const y=-Math.log10(r.padj),hit=Math.abs(r.lfc)>=lT&&r.padj<=pT;
+    g+=`<circle cx="${sx(r.lfc).toFixed(1)}" cy="${sy(y).toFixed(1)}" r="4" fill="${hit?(r.lfc>0?"var(--bad)":"var(--cyan)"):"var(--faint)"}"/>`;
+    if(hit)g+=`<text class="axis" x="${(sx(r.lfc)+6).toFixed(1)}" y="${(sy(y)+3).toFixed(1)}">${r.g}</text>`;});
+  g+=`<text class="axis" x="${W/2}" y="${H-3}" text-anchor="middle">log2 fold-change</text>`;svg.innerHTML=g;
+  const w=mk("div");w.appendChild(svg);return w;}
+function noteBody(text){const d=mk("div","notebody");d.innerHTML=text;return d;}
+function overdispBody(){const wrap=mk("div");const t=document.createElement("table");
+  t.innerHTML=`<thead><tr><th>program</th><th>type</th><th>adj.var</th></tr></thead>`;const tb=document.createElement("tbody");
+  GENESETS.forEach(G=>{const on="geneset:"+G.id===coord.colorBy;const tr=mk("tr","gene"+(on?" on":""));
+    tr.innerHTML=`<td>${G.name}</td><td style="text-align:left;color:var(--dim)">${G.type}</td><td>${G.adjVar.toFixed(1)}</td>`;
+    tr.onclick=()=>{[...tb.children].forEach(x=>x.classList.remove("on"));tr.classList.add("on");coord.geneset="geneset:"+G.id;
+      setColor("geneset:"+G.id,`Selected ${G.name}`,`An overdispersed program is the cheapest result to explore — clicking it just moved the shared colour scope to a geneset handle, so every embedding repainted in place. No panel or layout moved.`);};
+    tb.appendChild(tr);});
+  t.appendChild(tb);wrap.appendChild(t);return wrap;}
+function placeholderBody(reason,p){const d=mk("div","placeholder");
+  d.innerHTML=`<div class="phh">⊘ component not rendered</div><div class="phr">${reason}</div>`+
+    `<div class="phspec">spec · { type: "${p.type}"${p.bind?`, bind: "${p.bind}"`:""} }</div>`+
+    `<div class="phnote">The viewer renders only validated components — this node is inert and was never executed.</div>`;
+  return d;}
+function bodyFor(p){const v=validate(p);if(!v.ok)return placeholderBody(v.reason,p);
+  return p.type==="Embedding"?embeddingBody():p.type==="CompositionBars"?compositionBody():
+  p.type==="DeTable"?deBody():p.type==="BoxBySample"?boxBody():p.type==="Volcano"?volcanoBody():
+  p.type==="Overdispersion"?overdispBody():p.type==="Note"?noteBody(p.text):mk("div",null,p.type);}
+
+/* ===== render workbench ===== */
+let dragId=null;
+function reorderCanvas(fromId,toId){const from=canvas.findIndex(z=>z.id===fromId),to=canvas.findIndex(z=>z.id===toId);
+  if(from<0||to<0||from===to)return;const [m]=canvas.splice(from,1);canvas.splice(to,0,m);
+  fullRender();checkpoint("reorder · "+m.title,"You dragged a panel — direct edits to your own layout always win, and each is a checkpoint like any other.");}
+function panelEl(p){const d=mk("div","panel"+(p.full?" full":""));d.dataset.pid=p.id;
+  const h=mk("div","ph");
+  const grip=Object.assign(mk("span","grip","⠿"),{title:"Drag to reorder"});h.appendChild(grip);
+  h.appendChild(Object.assign(mk("span","pt"),{textContent:p.title}));
+  if(p.cap)h.appendChild(Object.assign(mk("span","pc"),{textContent:"· "+p.cap}));
+  const sp=mk("div","sp");
+  if(p.type==="Embedding"){const sel=document.createElement("select");sel.className="inline";
+    COLOR_OPTS.forEach(o=>{const op=document.createElement("option");op.value=o[0];op.textContent=o[1];if(o[0]===coord.colorBy)op.selected=true;sel.appendChild(op);});
+    sel.onchange=()=>setColor(sel.value,"Changed colour control",`You set the colour directly — a manipulation, no agent involved. It writes the same shared scope an asked request would.`);
+    sp.appendChild(sel);}
+  const spanBtn=Object.assign(mk("button","mini",p.full?"◫":"▦"),{title:p.full?"Make half width":"Make full width"});
+  spanBtn.onclick=()=>{p.full=!p.full;fullRender();checkpoint((p.full?"widen · ":"narrow · ")+p.title,"You resized a panel — the layout is yours to shape.");};
+  const closeBtn=Object.assign(mk("button","mini","✕"),{title:"Remove from workbench"});
+  closeBtn.onclick=()=>{canvas=canvas.filter(z=>z.id!==p.id);fullRender();checkpoint("remove "+p.title,"You removed a panel — direct edits to your own layout always win.");};
+  sp.appendChild(spanBtn);sp.appendChild(closeBtn);
+  h.appendChild(sp);d.appendChild(h);
+  const cv=caveatEl(p);if(cv)d.appendChild(cv);          // inherited from the handle (V.6)
+  const b=mk("div","pbody");b.appendChild(bodyFor(p));d.appendChild(b);
+  const pr=provEl(p);if(pr)d.appendChild(pr);            // inherited from the handle (V.6)
+  // drag-to-reorder: header is the handle, panel is the drop target (V.1)
+  h.setAttribute("draggable","true");
+  h.addEventListener("dragstart",e=>{dragId=p.id;e.dataTransfer.effectAllowed="move";d.classList.add("dragging");});
+  h.addEventListener("dragend",()=>{dragId=null;d.classList.remove("dragging");
+    document.querySelectorAll(".panel.dragover").forEach(x=>x.classList.remove("dragover"));});
+  d.addEventListener("dragover",e=>{if(dragId!=null&&dragId!==p.id){e.preventDefault();d.classList.add("dragover");}});
+  d.addEventListener("dragleave",()=>d.classList.remove("dragover"));
+  d.addEventListener("drop",e=>{e.preventDefault();d.classList.remove("dragover");reorderCanvas(dragId,p.id);});
+  d.oncontextmenu=e=>{e.preventDefault();openCtx(e.clientX,e.clientY,p);};
+  return d;}
+function fullRender(){const wb=$("workbench");
+  const old={};wb.querySelectorAll(".panel[data-pid]").forEach(el=>{old[el.dataset.pid]=el.getBoundingClientRect();});
+  mounts=[];wb.innerHTML="";
+  canvas.forEach(p=>wb.appendChild(panelEl(p)));
+  // FLIP: panels that existed before animate from their old position to the new one (V.2)
+  wb.querySelectorAll(".panel[data-pid]").forEach(el=>{const o=old[el.dataset.pid];if(!o)return;
+    const n=el.getBoundingClientRect(),dx=o.left-n.left,dy=o.top-n.top;if(!dx&&!dy)return;
+    el.style.animation="none";el.style.transition="none";el.style.transform=`translate(${dx}px,${dy}px)`;
+    requestAnimationFrame(()=>{el.style.transition="transform .32s cubic-bezier(.2,.8,.2,1)";el.style.transform="";});});
+  updateVisuals();renderRail();renderWS();}
+
+/* ===== rail ===== */
+function setRail(open){$("rail").classList.toggle("open",open);}
+function renderRail(){const rb=$("railbody");rb.innerHTML="";
+  if(proposal){const d=mk("div","rcard proposal");
+    const h=mk("div","rch");h.appendChild(Object.assign(mk("span","rt"),{textContent:"NEEDS YOUR OK"}));d.appendChild(h);
+    const body=mk("div","body");body.innerHTML=`<h4>${proposal.title}</h4><div class="diff">${proposal.diff}</div>`;
+    const acts=mk("div","acts");const ap=mk("button","apply","Apply");
+    ap.onclick=()=>{const lbl=proposal.label,fn=proposal.apply;proposal=null;fn();checkpoint(lbl,proposal_why);fullRender();};
+    const dc=mk("button","dismiss","Discard");dc.onclick=()=>{proposal=null;renderRail();toast("Proposal discarded","Your workbench is exactly as it was — proposals never change anything until you apply them.");};
+    acts.appendChild(ap);acts.appendChild(dc);body.appendChild(acts);d.appendChild(body);rb.appendChild(d);}
+  rail.forEach(p=>{const d=mk("div","rcard");const h=mk("div","rch");
+    h.appendChild(Object.assign(mk("span","rt"),{textContent:"EPHEMERAL"}));const sp=mk("div","sp");
+    if(p.type!=="Note"&&validate(p).ok){const pin=mk("button","pin","⤴ pin");pin.onclick=()=>{rail=rail.filter(z=>z.id!==p.id);
+      canvas.push({id:++uid,type:p.type,title:p.title,cap:p.cap,prov:p.prov,full:p.full,text:p.text,bind:p.bind});
+      fullRender();if(!rail.length)setRail(false);checkpoint("pin "+p.title,"You promoted a disposable answer into your workbench — generation accretes only by your hand.");};sp.appendChild(pin);}
+    const ds=mk("button","dismiss","✕");ds.onclick=()=>{rail=rail.filter(z=>z.id!==p.id);renderRail();updateVisuals();if(!rail.length&&!proposal)setRail(false);};
+    sp.appendChild(ds);h.appendChild(sp);d.appendChild(h);
+    if(p.q)d.appendChild(Object.assign(mk("div","rq"),{textContent:"“"+p.q+"”"}));
+    const rcv=caveatEl(p);if(rcv)d.appendChild(rcv);     // caveat travels into the rail too (V.6)
+    const b=mk("div","pbody");b.appendChild(bodyFor(p));d.appendChild(b);
+    const rpr=provEl(p);if(rpr)d.appendChild(rpr);rb.appendChild(d);});
+  if(rail.length||proposal)setRail(true);}
+function renderWS(){const t=$("wstabs");t.innerHTML="";
+  wsOrder.forEach(n=>{const b=mk("span","ws"+(n===currentWS?" on":""),n);b.setAttribute("draggable","true");
+    b.onclick=()=>switchWS(n,true);
+    b.ondblclick=e=>{e.stopPropagation();startRenameWS(n,b);};
+    b.oncontextmenu=e=>{e.preventDefault();e.stopPropagation();openWsCtx(e.clientX,e.clientY,n);};
+    b.addEventListener("dragstart",e=>{wsDrag=n;e.dataTransfer.effectAllowed="move";b.classList.add("wsdrag");});
+    b.addEventListener("dragend",()=>{wsDrag=null;b.classList.remove("wsdrag");document.querySelectorAll(".ws.wsover").forEach(x=>x.classList.remove("wsover"));});
+    b.addEventListener("dragover",e=>{if(wsDrag&&wsDrag!==n){e.preventDefault();b.classList.add("wsover");}});
+    b.addEventListener("dragleave",()=>b.classList.remove("wsover"));
+    b.addEventListener("drop",e=>{e.preventDefault();b.classList.remove("wsover");reorderWS(wsDrag,n);});
+    t.appendChild(b);});
+  const add=Object.assign(mk("span","ws wsadd","+"),{title:"Save current layout as a workspace"});add.onclick=startSaveWS;t.appendChild(add);}
+function captureLayout(){return canvas.map(p=>({type:p.type,title:p.title,cap:p.cap,full:p.full,bind:p.bind}));}
+function startSaveWS(){const t=$("wstabs");const inp=document.createElement("input");inp.className="wsinput";inp.placeholder="name workspace…";
+  t.appendChild(inp);inp.focus();let done=false;
+  const commit=ok=>{if(done)return;done=true;const name=inp.value.trim();
+    if(ok&&name&&!WS[name]){WS[name]={colorBy:coord.colorBy,panels:captureLayout()};wsOrder.push(name);currentWS=name;
+      renderWS();checkpoint("save workspace · "+name,"You saved your current layout as a named, reversible workspace — generation accretes into the workbench only by your hand.");
+      toast("Saved workspace “"+name+"”",null);}else renderWS();};
+  inp.onkeydown=e=>{if(e.key==="Enter")commit(true);else if(e.key==="Escape")commit(false);};inp.onblur=()=>commit(true);}
+function startRenameWS(n,el){const inp=document.createElement("input");inp.className="wsinput";inp.value=n;el.replaceWith(inp);inp.focus();inp.select();let done=false;
+  const commit=ok=>{if(done)return;done=true;const nn=inp.value.trim();
+    if(ok&&nn&&nn!==n&&!WS[nn]){WS[nn]=WS[n];delete WS[n];wsOrder=wsOrder.map(x=>x===n?nn:x);if(currentWS===n)currentWS=nn;
+      checkpoint("rename workspace · "+nn,"Renamed a workspace — the layout is yours to organize.");}
+    renderWS();};
+  inp.onkeydown=e=>{if(e.key==="Enter")commit(true);else if(e.key==="Escape")commit(false);};inp.onblur=()=>commit(true);}
+function reorderWS(from,to){if(!from||from===to)return;const fi=wsOrder.indexOf(from);if(fi<0)return;
+  wsOrder.splice(fi,1);wsOrder.splice(wsOrder.indexOf(to),0,from);renderWS();
+  checkpoint("reorder workspaces","Reordered your workspace tabs — the layout is yours to organize.");}
+function openWsCtx(x,y,n){const c=$("ctx");c.innerHTML=`<div class="it" data-a="rename">Rename…</div>`+
+  `<div class="it" data-a="update">Update to current layout</div>`+`<div class="it" data-a="dup">Duplicate</div>`+
+  (wsOrder.length>1?`<div class="it" data-a="del">Delete</div>`:"");
+  c.style.left=Math.min(x,window.innerWidth-190)+"px";c.style.top=y+"px";c.classList.add("show");
+  c.querySelectorAll(".it").forEach(it=>it.onclick=()=>{const a=it.getAttribute("data-a");c.classList.remove("show");
+    if(a==="rename"){const el=[...document.querySelectorAll(".ws")].find(b=>!b.classList.contains("wsadd")&&b.textContent===n);if(el)startRenameWS(n,el);}
+    else if(a==="update"){WS[n].panels=captureLayout();WS[n].colorBy=coord.colorBy;
+      checkpoint("update workspace · "+n,"You folded your current edits back into the workspace — good extensions become part of the durable instrument.");toast("Updated “"+n+"”",null);}
+    else if(a==="dup"){let nn=n+" copy",k=2;while(WS[nn])nn=n+" copy "+(k++);WS[nn]={colorBy:WS[n].colorBy,panels:WS[n].panels.map(p=>({...p}))};
+      wsOrder.splice(wsOrder.indexOf(n)+1,0,nn);renderWS();checkpoint("duplicate workspace · "+nn,"Duplicated a workspace.");}
+    else if(a==="del"){delete WS[n];wsOrder=wsOrder.filter(x=>x!==n);
+      if(currentWS===n)switchWS(wsOrder[0],false);else renderWS();checkpoint("delete workspace · "+n,"Removed a workspace — reversible from History.");}});}
+
+/* ===== checkpoints ===== */
+function snap(){return{colorBy:coord.colorBy,focus:coord.focus,selection:[...coord.selection],ws:currentWS,
+  canvas:JSON.parse(JSON.stringify(canvas)),rail:JSON.parse(JSON.stringify(rail))};}
+function checkpoint(q,why){history.push({i:history.length,q,why,state:snap()});viewing=-1;renderSpine();if(threadDocked)renderThread();}
+function renderSpine(){const c=$("ckpts");c.innerHTML="";history.forEach(h=>{const d=mk("div","ckpt"+(h.i===viewing?" on":""));
+  d.title=h.why||"";d.innerHTML=`<div class="cq">${h.q}</div><div class="cw">${h.why?h.why.replace(/<[^>]+>/g,""):""}</div>`;
+  d.onclick=()=>restore(h.i);c.appendChild(d);});c.scrollLeft=c.scrollWidth;}
+function restore(i){const h=history[i];viewing=i;coord.colorBy=h.state.colorBy;coord.focus=h.state.focus;
+  coord.selection=[...h.state.selection];currentWS=h.state.ws;canvas=JSON.parse(JSON.stringify(h.state.canvas));
+  rail=JSON.parse(JSON.stringify(h.state.rail));proposal=null;fullRender();renderSpine();
+  toast(`Returned to “${h.q}”`,"The whole session is navigable — every state is a checkpoint, so nothing is ever lost to a change.");}
+
+/* ===== coordinated colour (shared by manipulation + agent + table clicks) ===== */
+function setColor(f,what,why){coord.colorBy=f;if(!f.startsWith("geneset:"))coord.geneset=null;updateVisuals();
+  // keep inline selects in sync
+  document.querySelectorAll("select.inline").forEach(s=>s.value=f);
+  toast(what+" → coloured by "+labelOf(f),why);
+  checkpoint("colour · "+labelOf(f),why);}
+
+/* ===== toasts ===== */
+function toast(text,why){const t=mk("div","toast");const span=mk("span",null,text);t.appendChild(span);
+  if(why){const w=mk("span","why","why?");const det=mk("div","det",why);
+    w.onclick=()=>{t.classList.toggle("open");};t.appendChild(w);t.appendChild(det);}
+  $("toasts").appendChild(t);setTimeout(()=>{if(!t.classList.contains("open"))t.remove();},4200);
+  setTimeout(()=>t.remove(),11000);}
+
+/* ===== command palette ===== */
+const SUGS=[
+  {t:"Colour cells by IL6",q:"show il6",ic:"◐"},
+  {t:"Colour by cell type",q:"colour by cell type",ic:"◐"},
+  {t:"Focus on disease samples",q:"focus on disease",ic:"◎"},
+  {t:"What genes change in macrophages?",q:"what genes changed",ic:"≢"},
+  {t:"Show overdispersed gene programs",q:"show overdispersed gene sets",ic:"▤"},
+  {t:"Is the IL6 change driven by one donor?",q:"is it driven by one donor",ic:"⋮"},
+  {t:"Show composition across conditions",q:"show composition",ic:"▥"},
+  {t:"Set me up for a DE deep-dive",q:"set me up for a de deep dive",ic:"⤢"},
+  {t:"Help me interpret the IL6 finding",q:"help me interpret the il6 finding",ic:"✦"},
+  {t:"Set everything up to compare conditions",q:"set everything up to compare conditions",ic:"⚙"},
+  {t:"Show a 3D embedding",q:"show a 3d embedding",ic:"⊘"},
+  {t:"Rebuild the layout for this question",q:"rebuild the layout",ic:"⌗"}];
+let scope=null,hot=0,filtered=[];
+function openPalette(withScope){scope=withScope||scope;$("scrim").classList.add("show");$("palette").classList.add("show");
+  if(!thread)setPip("listening");renderScope();$("pin").value="";filter("");$("pin").focus();}
+function closePalette(){$("scrim").classList.remove("show");$("palette").classList.remove("show");
+  if(!thread)setPip(nudgePending?"nudge":"idle",nudgePending?"1":null);}
+function renderScope(){const s=$("scope");if(scope){s.style.display="";s.innerHTML=`<span>↳ about ${scope.summary}</span><span class="x" id="scx">clear</span>`;
+  $("scx").onclick=()=>{scope=null;renderScope();filter($("pin").value);};}else s.style.display="none";}
+function scopedSugs(){if(!scope)return SUGS;return[
+  {t:"Run differential expression on this selection",q:"run de",ic:"≢"},
+  {t:"What cell types are these?",q:"what are these",ic:"?"},
+  {t:"Colour by condition",q:"colour by condition",ic:"◐"}];}
+function filter(v){const base=scopedSugs();filtered=base.filter(s=>s.t.toLowerCase().includes(v.toLowerCase()));
+  if(v&&!filtered.length)filtered=[{t:`Ask: “${v}”`,q:v,ic:"➤",free:true}];hot=0;renderSugs(v);}
+function renderSugs(v){const c=$("sugs");c.innerHTML="";filtered.forEach((s,i)=>{const d=mk("div","sug"+(i===hot?" hot":""));
+  d.innerHTML=`<span class="ic">${s.ic||"➤"}</span><span class="lab">${s.t}</span>`+(s.free?"":`<span class="hint">enter</span>`);
+  d.onclick=()=>{closePalette();agent(s.q,scope);};c.appendChild(d);});}
+$("pin").addEventListener("input",e=>filter(e.target.value));
+$("pin").addEventListener("keydown",e=>{if(e.key==="ArrowDown"){hot=Math.min(hot+1,filtered.length-1);renderSugs($("pin").value);e.preventDefault();}
+  else if(e.key==="ArrowUp"){hot=Math.max(hot-1,0);renderSugs($("pin").value);e.preventDefault();}
+  else if(e.key==="Enter"){const s=filtered[hot];if(s){closePalette();agent(s.q,scope);}}});
+
+/* ===== selection popover ===== */
+function openSelpop(){const cts={};coord.selection.forEach(i=>cts[CT[cells[i].ct]]=(cts[CT[cells[i].ct]]||0)+1);
+  const top=Object.entries(cts).sort((a,b)=>b[1]-a[1])[0];const n=coord.selection.length;
+  scope={type:"selection",ids:[...coord.selection],summary:`${n} cells (mostly ${top[0]})`};
+  const sp=$("selpop");sp.innerHTML=`<div class="head">${n} cells selected · mostly ${top[0]}</div>`+
+    `<div class="it" data-a="ask"><span class="ic">⌘K</span>Ask about these…</div>`+
+    `<div class="it" data-a="de"><span class="ic">≢</span>Run DE on selection</div>`+
+    `<div class="it" data-a="type"><span class="ic">?</span>What cell types are these?</div>`+
+    `<div class="it" data-a="clear"><span class="ic">✕</span>Clear selection</div>`;
+  sp.style.left=Math.min(lastSelBox.left+8,window.innerWidth-200)+"px";sp.style.top=lastSelBox.top+"px";
+  sp.classList.add("show");
+  sp.querySelectorAll(".it").forEach(it=>it.onclick=()=>{const a=it.getAttribute("data-a");hideSelpop();
+    if(a==="ask")openPalette(scope);else if(a==="de")agent("run de",scope);else if(a==="type")agent("what are these",scope);
+    else{coord.selection=[];scope=null;updateVisuals();}});}
+function hideSelpop(){$("selpop").classList.remove("show");}
+
+/* ===== context menu (right-click panel) ===== */
+function openCtx(x,y,p){const c=$("ctx");c.innerHTML=`<div class="it" data-a="ask">Ask about this panel…</div>`+
+  (p.type!=="Note"?`<div class="it" data-a="copy">Send a copy to the rail</div>`:"")+
+  `<div class="it" data-a="rm">Remove from workbench</div>`;
+  c.style.left=Math.min(x,window.innerWidth-180)+"px";c.style.top=y+"px";c.classList.add("show");
+  c.querySelectorAll(".it").forEach(it=>it.onclick=()=>{const a=it.getAttribute("data-a");c.classList.remove("show");
+    if(a==="ask")openPalette({type:"panel",summary:`the ${p.title} panel`});
+    else if(a==="copy"){rail.unshift({id:++uid,type:p.type,title:p.title+" (copy)",cap:p.cap,prov:p.prov,text:p.text,bind:p.bind});renderRail();}
+    else{canvas=canvas.filter(z=>z.id!==p.id);fullRender();checkpoint("remove "+p.title,"You removed a panel — direct edits to your own layout always win.");}});}
+
+/* ===== workspace switch ===== */
+function switchWS(name,user){const ws=WS[name];if(!ws)return;currentWS=name;coord.colorBy=ws.colorBy;coord.selection=[];
+  canvas=ws.panels.map(p=>({id:++uid,type:p.type,title:p.title,cap:p.cap,prov:p.prov,full:p.full,bind:p.bind}));fullRender();
+  if(user){toast("Switched to "+name,"A workspace is a named, reversible layout — your previous one is a single step back in History.");
+    checkpoint("workspace → "+name,"Deliberate workspace switch.");}}
+
+/* ===== the agent: route intent to the right surface (rungs internal, never shown) ===== */
+let proposal_why="";
+function agent(qraw,sc){const q=qraw.toLowerCase().trim();if(!q)return;hideSelpop();
+  // selection-scoped asks
+  if(sc&&sc.type==="selection"){
+    if(/\bde\b|differential|chang|marker/.test(q)){
+      rail.unshift({id:++uid,type:"DeTable",title:`DE · selection (${sc.ids.length} cells)`,cap:"vs rest",bind:"de:macrophage",q:qraw});
+      renderRail();toast(`DE for your ${sc.ids.length}-cell selection is in the rail`,"You gave the agent a referent by selecting, so it didn't have to guess what 'these' meant — the selection carried the context, your words carried only the verb.");
+      return checkpoint("DE on selection","Answer scoped to your selection, placed in the rail.");}
+    if(/type|are these|identit/.test(q)){const cts={};sc.ids.forEach(i=>cts[CT[cells[i].ct]]=(cts[CT[cells[i].ct]]||0)+1);
+      const tot=sc.ids.length;const txt=Object.entries(cts).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`${k}: <b>${Math.round(v/tot*100)}%</b>`).join(" · ");
+      rail.unshift({id:++uid,type:"Note",title:`Selection · ${tot} cells`,q:qraw,text:txt});renderRail();
+      return checkpoint("identity of selection","Composition of your selection, summarised.");}
+    if(/condition/.test(q))return setColor("meta:condition","Asked about your selection","Coordinated colour change — the selection stays outlined across views.");
+  }
+  // mode 3 — sustained dialogue (lives as the swelling tip of the timeline)
+  if(/interpret|publish|robust|help me (read|decide|interpret)|is (this|the|it).*(solid|real|right)|should i (trust|believe|report)/.test(q))
+    return startDialogue(qraw);
+  // mode 4 — autopilot (agent takes the wheel; a live, interruptible trace)
+  if(/take it from here|set everything up|set it all up|optimi[sz]e|compare conditions|do the (whole|full)|clean .*up and/.test(q)){
+    if(locked)return toast("Layout is locked — unlock to let autopilot reconfigure","You hold the wheel; the agent won't take it while the layout is locked.");
+    return startAutopilot(qraw);}
+  // validation / refusal — a request outside the registry is refused VISIBLY, never as raw markup (V.8 / I.3)
+  if(/\b3d\b|three.?d|sankey|chord|word ?cloud|raw ?html|<\w+>/.test(q)){
+    const type=/3d|three/.test(q)?"Embedding3D":/sankey/.test(q)?"Sankey":/chord/.test(q)?"ChordDiagram":/word/.test(q)?"WordCloud":"RawHTML";
+    const spec={id:++uid,type,title:type+" (requested)",q:qraw};const v=validate(spec);
+    rail.unshift(spec);renderRail();emitEvent("validation.rejected",{type,reason:v.reason});
+    toast("That isn't in the validated component set","The agent authors a spec the viewer checks against a fixed registry — an unknown type becomes a visible, inert placeholder, never raw markup reaching the DOM. The surface stays finite. I'd compose existing components instead.");
+    return checkpoint("rejected · "+type,"An unknown component was refused — shown as an inert placeholder, not executed.");}
+  // rung 0 — coordinate
+  if(/il6/.test(q)&&!/donor|sample|driv|replicate/.test(q))return setColor("gene:IL6","Asked to show IL6","Your request mapped to the smallest possible edit — a colour change on the shared scope — so no panel or layout moved.");
+  if(/cell ?type/.test(q))return setColor("meta:cellType","Asked for cell type","Coordinated recolour.");
+  if(/cd3d|t.?cell/.test(q))return setColor("gene:CD3D","Asked for CD3D","Coordinated recolour.");
+  if(/condition/.test(q))return setColor("meta:condition","Asked for condition","Coordinated recolour.");
+  if(/focus|disease only|only.*disease|highlight disease/.test(q)){coord.focus="disease";updateVisuals();
+    toast("Focused on disease","Control cells dim everywhere at once — one change to the shared focus, reflected by every linked view.");
+    return checkpoint("focus disease","Coordinated focus.");}
+  if(/clear|reset|show all|unfocus/.test(q)){coord.focus=null;coord.selection=[];updateVisuals();
+    toast("Cleared focus","Coordinated state reset.");return checkpoint("clear focus","Cleared coordination state.");}
+  // rung 1 — ephemeral answer
+  if(/donor|one sample|driv|replicate|per.?sample/.test(q)){
+    rail.unshift({id:++uid,type:"BoxBySample",title:"IL6 per sample (Macrophage)",cap:"donor means",bind:"expr:IL6@Macrophage",q:qraw});renderRail();
+    toast("Answer added to the rail","This needs a view you don't have, but I'm not sure it belongs in your workbench — so it's disposable. It shows the IL6 shift is carried by donor D5. Pin it to keep it.");
+    return checkpoint("per-donor IL6?","Disposable answer in the rail; pin to keep.");}
+  if(/overdispers|gene ?set|pathway|aspect|program/.test(q)){
+    rail.unshift({id:++uid,type:"Overdispersion",title:"Overdispersed programs",cap:"gene sets & de-novo aspects",bind:"aspect:overdispersion",q:qraw});renderRail();
+    toast("Overdispersed programs added to the rail","pagoda2's signature view — significantly overdispersed gene sets and de-novo aspects. Click one to colour the embedding by it.");
+    return checkpoint("overdispersed programs","Disposable aspects list in the rail; pin to keep.");}
+  if(/what.*chang|differential|\bde\b|marker/.test(q)){
+    if(canvas.some(p=>p.type==="DeTable")){toast("DE is already on your workbench",null);return;}
+    rail.unshift({id:++uid,type:"DeTable",title:"Macrophage DE",cap:"disease vs control",bind:"de:macrophage",q:qraw});renderRail();
+    toast("DE answer added to the rail","Placed in the rail rather than rearranging your layout. Its donor caveat rides along on the handle. Pin to promote it.");
+    return checkpoint("what changed?","Disposable DE answer in the rail.");}
+  if(/composition|proportion|abundanc/.test(q)){
+    rail.unshift({id:++uid,type:"CompositionBars",title:"Composition by sample",cap:"compositional-aware",bind:"composition:byCondition",q:qraw});renderRail();
+    toast("Composition answer added to the rail",null);return checkpoint("composition?","Disposable composition answer.");}
+  // rung 2 — propose workspace
+  if(/deep.?dive|set me up|workspace|switch to/.test(q)){const target=/qc|quality/.test(q)?"QC triage":"DE deep-dive";
+    if(locked){rail.unshift({id:++uid,type:"DeTable",title:"Macrophage DE",cap:"disease vs control",bind:"de:macrophage",q:qraw});renderRail();
+      toast("Layout is locked — answer sent to the rail instead","You locked the layout, so the agent won't reconfigure it. It dropped the key view in the rail. You stay in control.");
+      return checkpoint("deep-dive (locked→rail)","Downgraded to a rail answer because the layout was locked.");}
+    proposal_why="A different task warrants a different layout — but the agent proposes rather than imposes. Reversible either way.";
+    proposal={title:`Switch to “${target}”?`,diff:`<span class="rm">− current ${currentWS} panels</span><br><span class="add">+ ${WS[target].panels.map(p=>p.title).join(", ")}</span>`,
+      label:"workspace → "+target,apply:()=>switchWS(target,false)};renderRail();
+    toast("Proposed a workspace switch","Big layout moves are proposals, not surprises — check the card in the rail and Apply or Discard.");
+    return;}
+  // rung 3 — reconfigure
+  if(/rebuild|rearrange|reconfigure|redo the layout|add.*panel/.test(q)){
+    if(locked){toast("Layout is locked",null);return;}
+    proposal_why="A relayout is the biggest move, so you get a diff first; nothing changes until you Apply.";
+    proposal={title:"Reconfigure workbench",diff:`<span class="add">+ IL6 per-sample (full width)</span><br><span class="add">+ Macrophage DE table</span><br><span class="rm">− Composition panel</span>`,
+      label:"reconfigure layout",apply:()=>{canvas=canvas.filter(p=>p.type!=="CompositionBars");
+        if(!canvas.some(p=>p.type==="DeTable"))canvas.push({id:++uid,type:"DeTable",title:"Macrophage DE",cap:"disease vs control",bind:"de:macrophage"});
+        canvas.push({id:++uid,type:"BoxBySample",title:"IL6 per sample (Macrophage)",cap:"donor means",full:true,bind:"expr:IL6@Macrophage"});}};renderRail();
+    toast("Proposed a layout change","Preview the diff in the rail; nothing moves until you Apply.");return;}
+  toast("I'm not sure how to act on that","Try ⌘K — the suggestions are wired to show the different ways the agent responds.");
+}
+
+/* ===== agent presence pip (idle · listening · working · nudge) ===== */
+function setPip(state,label){const b=$("askBtn");
+  b.className="tb pip"+(state&&state!=="idle"?" "+state:"");
+  const main=state==="working"?("Working"+(label?" · "+label:"")):state==="listening"?"Listening…":"Ask";
+  const right=state==="nudge"?`<span class="nbadge">${label||"!"}</span>`:
+    (!state||state==="idle"||state==="listening")?`<span class="kbd">⌘K</span>`:"";
+  b.innerHTML=`<span class="dot"></span>${main}${right}`;}
+
+/* ===== live thread = the swollen tip of the timeline (modes 3-5) ===== */
+let thread=null,apTimer=null,apIndex=0,nudgePending=null,threadDocked=false;
+function appendThreadGuts(inner){
+  const hd=mk("div","thrhd");
+  hd.appendChild(mk("span",null,thread.kind==="autopilot"?"AUTOPILOT":thread.kind==="nudge"?"FROM THE AGENT":"CONVERSATION"));
+  const live=mk("div","live"+(thread.live?"":" idle"));
+  live.innerHTML=`<span class="d"></span>${thread.kind==="autopilot"?(thread.paused?"paused":thread.live?"working":"done"):thread.live?"live":"resolved"}`;
+  hd.appendChild(live);
+  if(thread.kind==="autopilot"&&thread.live){const ctr=mk("div","ctrls");
+    const pz=mk("button",null,thread.paused?"Resume":"Pause");pz.onclick=toggleAutopilot;
+    const st=mk("button",null,"Stop");st.onclick=stopAutopilot;ctr.appendChild(pz);ctr.appendChild(st);hd.appendChild(ctr);}
+  inner.appendChild(hd);
+  if(thread.kind==="autopilot"){thread.steps.forEach(s=>{
+    if(s.proposal){const d=mk("div","step proposal");
+      d.innerHTML=`<div><b>${s.label}</b>${s.detail?`<div class="sd">${s.detail}</div>`:""}</div>`;
+      if(s.status==="active"){const a=mk("div","pacts");
+        const ok=mk("button","ok","Apply");ok.onclick=s.onApply;const sk=mk("button",null,"Skip");sk.onclick=s.onSkip;
+        a.appendChild(ok);a.appendChild(sk);d.appendChild(a);}
+      inner.appendChild(d);return;}
+    const m=s.status==="done"?"✓":s.status==="active"?"◐":s.status==="skipped"?"–":"○";
+    const d=mk("div","step "+s.status);
+    d.innerHTML=`<span class="mk">${m}</span><div><div>${s.label}</div>${s.detail?`<div class="sd">${s.detail}</div>`:""}</div>`;
+    inner.appendChild(d);});
+  }else{thread.turns.forEach(t=>{const d=mk("div","turn "+t.role);
+    d.innerHTML=`<span class="ava">${t.role==="user"?"me":"✦"}</span><div class="msg">${t.text}</div>`;inner.appendChild(d);
+    if(t.replies&&t.replies.length){const r=mk("div","replies");
+      t.replies.forEach(rep=>{const b=mk("button","reply",rep.label);b.onclick=rep.go;r.appendChild(b);});inner.appendChild(r);}});
+    // free-text reply on an OPEN turn (V.3): chips are accelerators above it; closed turns stay chips-only
+    const last=thread.turns[thread.turns.length-1];
+    if(!threadDocked&&thread.kind!=="nudge"&&last&&last.role==="agent"&&last.replies&&last.replies.length&&!last.chipsOnly){
+      const row=mk("div","thinput");const inp=document.createElement("input");inp.placeholder="or type your own…";
+      inp.onkeydown=e=>{if(e.key==="Enter"&&inp.value.trim()){const v=inp.value.trim();inp.value="";threadReply(v);}};
+      row.appendChild(inp);row.appendChild(mk("span","thhint","↵"));inner.appendChild(row);}}}
+function renderThread(){if(threadDocked)return renderDockedConvo();
+  const host=$("thread");
+  if(!thread){host.classList.remove("show");setTimeout(()=>{if(!thread)host.innerHTML="";},300);return;}
+  host.innerHTML="";const inner=mk("div","thrinner");appendThreadGuts(inner);
+  const wasShown=host.classList.contains("show");
+  host.appendChild(inner);host.classList.add("show");host.scrollTop=host.scrollHeight;
+  if(!wasShown){host.classList.add("flash");setTimeout(()=>host.classList.remove("flash"),900);$("timeline").scrollIntoView({block:"end"});}}
+/* pinned conversation column = the timeline rendered as an always-on transcript (V.5 / III.8) */
+function renderDockedConvo(){$("thread").classList.remove("show");$("thread").innerHTML="";
+  const host=$("convo");host.classList.add("open");host.innerHTML="";
+  const hd=mk("div","convohd");hd.appendChild(mk("span","t","CONVERSATION · PINNED"));
+  const x=Object.assign(mk("span","x","⇤"),{title:"Unpin — return to the timeline tip"});x.onclick=()=>setThreadDock(false);hd.appendChild(x);host.appendChild(hd);
+  const body=mk("div","convobody");
+  history.forEach(h=>{const e=mk("div","cxentry");e.innerHTML=`<div class="cxq">${h.q}</div>${h.why?`<div class="cxw">${h.why.replace(/<[^>]+>/g,"")}</div>`:""}`;body.appendChild(e);});
+  if(thread){const liveBox=mk("div","convolive");appendThreadGuts(liveBox);body.appendChild(liveBox);}
+  host.appendChild(body);
+  const foot=mk("div","convofoot");const inp=document.createElement("input");inp.placeholder="Message the agent…";
+  inp.onkeydown=e=>{if(e.key==="Enter"&&inp.value.trim()){const v=inp.value.trim();inp.value="";dockSend(v);}};
+  foot.appendChild(inp);host.appendChild(foot);body.scrollTop=body.scrollHeight;}
+function dockSend(text){const last=thread&&thread.turns&&thread.turns[thread.turns.length-1];
+  if(thread&&thread.kind==="dialogue"&&last&&last.role==="agent"&&last.replies&&last.replies.length)threadReply(text);else agent(text);}
+function setThreadDock(on){threadDocked=on;updateDockBtn();
+  if(on){renderThread();toast("Conversation pinned open","An always-on transcript for those who want it — it's the same timeline, rendered as a thread. The default stays collapsed.");}
+  else{$("convo").classList.remove("open");$("convo").innerHTML="";renderThread();toast("Conversation unpinned","Back to the default — the conversation lives at the tip of your timeline and recedes when idle.");}}
+function updateDockBtn(){const b=$("dockBtn");if(b)b.textContent=threadDocked?"⇤ undock":"⇥ dock chat";}
+function settleThread(label,why){thread=null;renderThread();if(label)checkpoint(label,why);}
+
+/* ----- mode 3: sustained dialogue ----- */
+function startDialogue(q){setPip("working","thinking");
+  thread={kind:"dialogue",live:true,turns:[{role:"user",text:q}]};renderThread();
+  setTimeout(()=>{if(!thread)return;
+    thread.turns.push({role:"agent",
+      text:"The macrophage <b>IL6</b> up-shift is significant (padj 3e-4) — but that p-value is across <i>cells</i>, while your replicate is the <i>donor</i>. Before I weigh in: are you claiming a population-level shift, or a subpopulation effect?",
+      replies:[{label:"Population-level",go:()=>dialogue2("pop")},{label:"A subpopulation",go:()=>dialogue2("sub")}],chipsOnly:true});
+    setPip("listening","your call");renderThread();},950);}
+/* a typed reply can ADVANCE the turn (refine) or REDIRECT the thread (pivot) — a real-planner job, keyword-mocked here */
+function threadReply(text){const last=thread.turns[thread.turns.length-1];if(last&&last.replies)last.replies=null;
+  thread.turns.push({role:"user",text});
+  const pivot=/forget|instead|actually|what about|never ?mind|rather|change topic/i.test(text);
+  setPip("working","thinking");renderThread();
+  setTimeout(()=>{if(!thread)return;
+    if(pivot){thread.turns.push({role:"agent",text:`Got it — treating that as a new direction. I'll settle this thread and take up “${text}.”`});renderThread();
+      setTimeout(()=>{setPip("idle");settleThread("dialogue → pivot","A typed reply can *redirect* the thread, not just answer it — the agent settled the old conversation and re-routed your ask. (Reply-vs-pivot is a real-planner job; here it's keyword-mocked.)");agent(text);},700);
+    }else{thread.turns.push({role:"agent",text:`Noted — “${text}.” I'll fold that into the read; the conclusion stands: the IL6 shift is donor-driven.`,
+      replies:[{label:"Makes sense",go:()=>{setPip("idle");settleThread("interpret · IL6 is donor-driven","Conclusion kept; your typed refinement folded into one checkpoint.");}}]});
+      setPip("listening","your call");renderThread();}},800);}
+function dialogue2(kind){thread.turns[thread.turns.length-1].replies=null;
+  thread.turns.push({role:"user",text:kind==="pop"?"Population-level.":"A subpopulation."});
+  setPip("working","thinking");renderThread();
+  setTimeout(()=>{if(!thread)return;
+    if(kind==="pop"){thread.turns.push({role:"agent",
+      text:"Then donor structure is decisive. The shift is carried by <b>donor D5</b> — drop it and the effect is marginal. I'd report this as <b>donor-driven</b>, not a population effect, and caveat accordingly. Want the per-donor view to verify?",
+      replies:[
+        {label:"Pin per-donor view",go:()=>{canvas.push({id:++uid,type:"BoxBySample",title:"IL6 per sample (Macrophage)",cap:"donor means",full:true,bind:"expr:IL6@Macrophage"});fullRender();setPip("idle");
+          settleThread("interpret · IL6 is donor-driven","A multi-turn question lived as a thread at the tip of your timeline; only the conclusion became a checkpoint — the back-and-forth was working memory, not a permanent log.");
+          toast("Pinned the per-donor view","The dialogue settled into one panel and one checkpoint.");}},
+        {label:"Just note the caveat",go:()=>{setPip("idle");
+          settleThread("interpret · IL6 is donor-driven","Conclusion kept; the dialogue recompacted into a single checkpoint.");
+          toast("Noted — IL6 effect is donor-driven",null);}}]});
+    }else{thread.turns.push({role:"agent",
+      text:"For a subpopulation claim the cell-level test is fairer — but then the subpopulation must be defined explicitly (a selection or cluster), or the boundary is post-hoc. Select the cells you mean and ask again, and I'll scope the DE to them.",
+      replies:[{label:"Got it",go:()=>{setPip("idle");settleThread("interpret · scope to a subpopulation","Conclusion kept; dialogue recompacted to one checkpoint.");}}]});}
+    setPip("listening","your call");renderThread();},950);}
+
+/* ----- mode 4: autopilot (agent takes the wheel; live, interruptible) ----- */
+function startAutopilot(q){
+  thread={kind:"autopilot",live:true,paused:false,q,steps:[
+    {label:"Surveying cell types and conditions",status:"active"},
+    {label:"Checking replicate structure",status:"pending",detail:"3 disease vs 3 control donors"},
+    {label:"Testing composition shift",status:"pending",detail:"compositional-aware · proportions sum to 1"}]};
+  apIndex=0;setPip("working","step 1");renderThread();scheduleAP();}
+function scheduleAP(){if(!thread||thread.kind!=="autopilot"||thread.paused)return;
+  const cur=thread.steps[apIndex];if(cur&&cur.proposal)return;
+  apTimer=setTimeout(()=>{if(!thread||thread.paused)return;
+    const c=thread.steps[apIndex];if(c&&c.status==="active")c.status="done";apIndex++;
+    if(apIndex<thread.steps.length){thread.steps[apIndex].status="active";setPip("working","step "+(apIndex+1));renderThread();scheduleAP();}
+    else{thread.steps.push({proposal:true,status:"active",label:"Reconfigure layout to compare conditions",
+      detail:"+ colour by condition · + composition · + per-donor IL6",
+      onApply:()=>{const p=thread.steps[thread.steps.length-1];p.status="done";
+        coord.colorBy="meta:condition";
+        if(!canvas.some(x=>x.type==="CompositionBars"))canvas.push({id:++uid,type:"CompositionBars",title:"Composition by sample",cap:"by condition",bind:"composition:byCondition"});
+        if(!canvas.some(x=>x.type==="BoxBySample"))canvas.push({id:++uid,type:"BoxBySample",title:"IL6 per sample (Macrophage)",cap:"donor means",full:true,bind:"expr:IL6@Macrophage"});
+        fullRender();thread.steps.push({label:"Colouring by condition",status:"active"});renderThread();
+        setTimeout(()=>{if(!thread)return;thread.steps[thread.steps.length-1].status="done";finishAutopilot();},700);},
+      onSkip:()=>{const p=thread.steps[thread.steps.length-1];p.status="skipped";p.label="Reconfigure layout (skipped)";finishAutopilot();}});
+      setPip("listening","needs your OK");renderThread();}},850);}
+function finishAutopilot(){setPip("idle");
+  settleThread("autopilot · compare conditions","The agent took the wheel for a few steps — the trace was live and interruptible, and the big move was still a proposal you approved. It recompacted to one checkpoint.");
+  toast("Autopilot finished","Everything it did is replayable from History — autonomy stayed auditable.");}
+function toggleAutopilot(){if(!thread)return;thread.paused=!thread.paused;
+  if(thread.paused){setPip("working","paused");renderThread();}else{setPip("working","resumed");renderThread();scheduleAP();}}
+function stopAutopilot(){if(apTimer)clearTimeout(apTimer);
+  thread.steps.forEach(s=>{if(s.status==="active"&&!s.proposal)s.status="done";if(s.status==="pending")s.status="skipped";});
+  setPip("idle");settleThread("autopilot stopped","You seized the wheel mid-run — control returns instantly, and the partial run is still a checkpoint.");
+  toast("Stopped — you have the wheel","Autonomy is interruptible by construction; the agent never holds a lock you can't take back.");}
+
+/* ----- mode 5: nudge (agent speaks first; quiet badge, never modal) ----- */
+function armNudge(){nudgePending={text:"Heads up — the macrophage <b>IL6</b> up-shift leans on a single donor (<b>D5</b>). Want the per-donor breakdown before treating it as a population effect?"};setPip("nudge","1");}
+function openNudge(){const n=nudgePending;nudgePending=null;setPip("idle");
+  thread={kind:"nudge",live:false,turns:[{role:"agent",text:n.text,replies:[
+    {label:"Show me",go:()=>{rail.unshift({id:++uid,type:"BoxBySample",title:"IL6 per sample (Macrophage)",cap:"agent-flagged · donor means",bind:"expr:IL6@Macrophage",q:"(the agent flagged this on its own)"});renderRail();
+      settleThread(null);toast("Per-donor view added to the rail","Proactive findings arrive as a quiet badge you can open or ignore — never a popup that grabs the screen.");}},
+    {label:"Dismiss",go:()=>{settleThread(null);toast("Dismissed",null);}}]}]};
+  renderThread();}
+
+/* ===== wiring ===== */
+$("askBtn").onclick=()=>{if(nudgePending)openNudge();else openPalette();};
+$("lockBtn").onclick=()=>{locked=!locked;$("lockBtn").classList.toggle("on",locked);
+  $("lockBtn").textContent=locked?"🔒 Layout":"🔓 Layout";
+  toast(locked?"Layout locked":"Layout unlocked",locked?"The agent will now route bigger changes to the rail instead of touching your workbench.":null);};
+$("railBtn").onclick=()=>setRail(!$("rail").classList.contains("open"));
+$("railX").onclick=()=>setRail(false);
+$("tlhd").onclick=()=>$("timeline").classList.toggle("collapsed");
+$("dockBtn").onclick=e=>{e.stopPropagation();setThreadDock(!threadDocked);};
+$("scrim").onclick=()=>{closePalette();};
+document.addEventListener("click",e=>{if(!$("selpop").contains(e.target))hideSelpop();
+  if(!$("ctx").contains(e.target))$("ctx").classList.remove("show");});
+document.addEventListener("keydown",e=>{
+  if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==="k"){e.preventDefault();openPalette();}
+  else if(e.key==="Escape"){closePalette();hideSelpop();$("ctx").classList.remove("show");}
+  else if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==="z"){e.preventDefault();
+    const cur=viewing<0?history.length-1:viewing;if(cur>0)restore(cur-1);}});
+
+/* boot */
+setPip("idle");
+switchWS("Overview",false);
+checkpoint("session start","Baseline Overview workspace.");
+setTimeout(()=>toast("Drag to select cells · ⌘K to ask · right-click a panel",null),400);
+setTimeout(()=>{armNudge();toast("The agent has a note for you — see the Ask button","Proactive findings arrive as a quiet badge on the agent's status light, never a popup. Open it when you're ready.");},2800);
+</script>
+</body>
+</html>
