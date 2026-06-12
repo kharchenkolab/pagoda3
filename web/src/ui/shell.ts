@@ -1,7 +1,7 @@
 import { mk } from "./dom.ts";
 import { Ctx } from "../data/ctx.ts";
 import { Coord, handleLabel } from "../data/coord.ts";
-import { Panel, PanelHooks, bodyFor, paintEmbedding } from "./panels.ts";
+import { Panel, PanelHooks, CompReactor, bodyFor, paintEmbedding } from "./panels.ts";
 import { EmbeddingView } from "../render/embedding.ts";
 import { Agent, Scope } from "../agent/agent.ts";
 import { checkLive } from "../agent/live.ts";
@@ -21,6 +21,7 @@ export class App {
   WS: Record<string, WS>; wsOrder: string[]; currentWS = "Overview";
   history: Checkpoint[] = []; viewing = -1; locked = false; uid = 0;
   embeddings: EmbeddingView[] = [];
+  compReactors: CompReactor[] = [];   // vocabulary-bound panels that highlight a category on a coord hint
   // presence
   thread: any = null; threadDocked = false; nudgePending: any = null; apTimer: any = null; apIndex = 0;
   scope: Scope | null = null; hot = 0; filtered: any[] = []; lastSelAnchor = { left: 0, top: 0 };
@@ -97,14 +98,23 @@ export class App {
       onGeneClick: (sym) => this.agent.coordinateGene(sym),
       onSelect: (ids, anchor) => { this.coord.setSelection(ids); this.lastSelAnchor = anchor; this.openSelpop(); },
       registerEmbedding: (ev) => this.embeddings.push(ev),
+      onCellHover: (idx) => this.onCellHover(idx),
+      registerComposition: (r) => this.compReactors.push(r),
     };
+  }
+
+  // embedding hover → the cross-panel hint, in the embedding's current categorical vocabulary
+  onCellHover(index: number | null) {
+    if (index == null) { this.coord.clearHint(); return; }
+    const g = this.ctx.keyGrouping(), v = this.ctx.categoryAt(g, index);
+    if (v) this.coord.setHint(g, v); else this.coord.clearHint();
   }
 
   async fullRender() {
     const wb = this.$("workbench");
     const old: Record<string, DOMRect> = {};
     wb.querySelectorAll<HTMLElement>(".panel[data-pid]").forEach((el) => (old[el.dataset.pid!] = el.getBoundingClientRect()));
-    this.embeddings = [];
+    this.embeddings = []; this.compReactors = [];
     wb.innerHTML = "";
     const afters: (() => void)[] = [];
     for (const p of this.canvas) { const { dom, afterAttach } = await this.panelEl(p); wb.appendChild(dom); if (afterAttach) afters.push(afterAttach); }
@@ -181,20 +191,19 @@ export class App {
 
   async repaint() { for (const ev of this.embeddings) await paintEmbedding(ev, this.ctx); this.$("railBtn").innerHTML = "Answers" + (this.rail.length ? ` <span class="badge">${this.rail.length}</span>` : ""); }
 
-  // The light hover path: place a subtle locator ring at the hinted group's centroid — no recolour.
+  // The light hover path — no recolour, no checkpoint: a locator ring on the embedding at the hinted
+  // category's cell centroid, plus a category highlight on any vocabulary-bound panel. Cross-vocabulary
+  // links translate VIA CELLS, but only when cheap (else they wait for a click — see translateCheap()).
   async repaintHint() {
     const hint = this.coord.state.hint;
-    let xy: [number, number] | null = null;
-    if (hint) {
-      const md: any = await this.ctx.metaOf(hint.grouping);
-      const ci = md.categories.indexOf(hint.value);
-      if (ci >= 0) {
-        const emb = this.ctx.embedding.data; let sx = 0, sy = 0, cnt = 0;
-        for (let i = 0; i < this.ctx.n; i++) if (md.codes[i] === ci) { sx += emb[i * 2]; sy += emb[i * 2 + 1]; cnt++; }
-        if (cnt) xy = [sx / cnt, sy / cnt];
-      }
-    }
+    const xy = hint ? this.ctx.categoryCentroid(hint.grouping, hint.value) : null;
     for (const ev of this.embeddings) ev.setHint(xy);
+    for (const r of this.compReactors) {
+      if (!hint) { r.highlight(null); continue; }
+      if (hint.grouping === r.grouping) { r.highlight(new Set([hint.value])); continue; }   // same vocabulary — direct
+      if (this.ctx.translateCheap()) r.highlight(new Set(this.ctx.translate(hint.grouping, hint.value, r.grouping).filter((t) => t.frac >= 0.08).map((t) => t.value)));
+      else r.highlight(null);   // translation too costly for hover — the link commits on click
+    }
   }
 
   newPanel(p: Partial<Panel>): Panel { return { id: ++this.uid, type: p.type!, title: p.title || p.type!, cap: p.cap, full: p.full, bind: p.bind, text: p.text, q: p.q, group: p.group, gene: p.gene, rows: p.rows }; }

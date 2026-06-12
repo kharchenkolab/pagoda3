@@ -12,6 +12,7 @@ export class EmbeddingView {
   private n: number;
   private radius = 2.4;
   onSelect?: (ids: Int32Array) => void;
+  onHover?: (index: number | null) => void;   // a cell under the cursor (or null) — emits the cross-panel hint
 
   constructor(container: HTMLElement, emb: Float32Array, n: number) {
     this.n = n;
@@ -42,7 +43,11 @@ export class EmbeddingView {
       initialViewState: { target: [cx, cy, 0], zoom },
       controller: { dragPan: true, scrollZoom: true, doubleClickZoom: false },
       layers: this.layers(),
+      // hover IS available in pan mode — picking fires on move, not drag. Emit the picked cell (or null).
+      onHover: (info: any) => this.onHover?.(info && info.index != null && info.index >= 0 ? info.index : null),
+      getCursor: ({ isDragging, isHovering }: any) => (isDragging ? "grabbing" : isHovering ? "crosshair" : "grab"),
     });
+    canvas.addEventListener("pointerleave", () => this.onHover?.(null));
 
     this.installBrush(canvas);
   }
@@ -80,8 +85,8 @@ export class EmbeddingView {
       this.hintXY
         ? new ScatterplotLayer({
             id: "hint", data: [{ p: this.hintXY }], getPosition: (d: any) => d.p,
-            radiusUnits: "pixels", getRadius: 15, stroked: true, filled: false,
-            getLineColor: [150, 225, 255, 220], lineWidthUnits: "pixels", getLineWidth: 1.8,
+            radiusUnits: "pixels", getRadius: 22, stroked: true, filled: true,
+            getFillColor: [150, 230, 255, 26], getLineColor: [150, 232, 255, 255], lineWidthUnits: "pixels", getLineWidth: 2.4,
             updateTriggers: { getPosition: this.hintVersion },
           }) as any
         : null,

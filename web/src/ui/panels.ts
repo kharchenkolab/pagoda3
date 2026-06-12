@@ -14,7 +14,15 @@ export interface PanelHooks {
   onGeneClick: (symbol: string) => void;
   onSelect: (ids: Int32Array, anchor: { left: number; top: number }) => void;
   registerEmbedding: (ev: EmbeddingView) => void;
+  onCellHover: (index: number | null) => void;                 // embedding → cross-panel hint
+  registerComposition: (r: CompReactor) => void;               // a panel that highlights a category on hint
 }
+
+// A vocabulary-bound panel that reacts to a coord hint: `grouping` is the categorical it stacks/keys on,
+// `highlight` lifts the given category values (translated in via cells when they differ). null = clear.
+export interface CompReactor { grouping: string; highlight: (values: Set<string> | null) => void; }
+
+const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
 
 export interface BuiltBody { el: HTMLElement; afterAttach?: () => void; }
 
@@ -23,7 +31,7 @@ export async function bodyFor(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bu
     case "Embedding": return embeddingBody(ctx, hooks);
     case "DeTable": return deBody(p, ctx, hooks);
     case "Volcano": return volcanoBody(p, ctx);
-    case "CompositionBars": return compositionBody(ctx);
+    case "CompositionBars": return compositionBody(ctx, hooks);
     case "BoxBySample": return boxBody(p, ctx);
     case "Overdispersion": return overdispBody(ctx, hooks);
     case "Heatmap": return heatmapBody(p, ctx, hooks);
@@ -40,6 +48,7 @@ function embeddingBody(ctx: Ctx, hooks: PanelHooks): BuiltBody {
   const afterAttach = () => {
     const ev = new EmbeddingView(host, ctx.embedding.data, ctx.embedding.n);
     ev.onSelect = (ids) => { const r = host.getBoundingClientRect(); hooks.onSelect(ids, { left: r.left + r.width * 0.55, top: r.top + 40 }); };
+    ev.onHover = (idx) => hooks.onCellHover(idx);
     (ev as any)._legend = legend;
     hooks.registerEmbedding(ev);
   };
@@ -113,21 +122,46 @@ function geneListBody(p: Panel, hooks: PanelHooks): BuiltBody {
   return { el: t };
 }
 
-async function compositionBody(ctx: Ctx): Promise<BuiltBody> {
-  const { samples, conds, groups, props } = await ctx.composition("leiden");
+async function compositionBody(ctx: Ctx, hooks: PanelHooks): Promise<BuiltBody> {
+  const grouping = "leiden";
+  const { samples, conds, groups, props } = await ctx.composition(grouping);
   const W = 460, H = 200, p = 28, bw = Math.min(46, (W - p - 6) / samples.length - 6);
+  // remember each category's segment box per sample — geometry for the hover ribbons
+  const seg: ({ x: number; yTop: number; yBot: number } | null)[][] = groups.map(() => samples.map(() => null));
   let g = "";
   samples.forEach((sm, i) => {
     const x = p + i * ((W - p - 6) / samples.length); let ya = H - 26;
-    props[i].forEach((pr, t) => { const h = pr * (H - 46); ya -= h; const c = catColor(t); g += `<rect x="${x}" y="${ya.toFixed(1)}" width="${bw}" height="${h.toFixed(1)}" fill="rgb(${c.join(",")})" fill-opacity=".9"/>`; });
-    g += `<text class="axis" x="${x + bw / 2}" y="${H - 13}" text-anchor="middle">${sm}</text>`;
-    g += `<text class="axis" x="${x + bw / 2}" y="${H - 3}" text-anchor="middle" fill="${conds[i] === "disease" ? "var(--bad)" : "var(--cyan)"}">${conds[i]}</text>`;
+    props[i].forEach((pr, t) => { const h = pr * (H - 46); const yTop = ya - h; seg[t][i] = { x, yTop, yBot: ya };
+      g += `<rect class="cseg" data-g="${esc(groups[t])}" x="${x}" y="${yTop.toFixed(1)}" width="${bw}" height="${h.toFixed(1)}" fill="rgb(${catColor(t).join(",")})"/>`; ya = yTop; });
+    g += `<text class="axis" x="${x + bw / 2}" y="${H - 13}" text-anchor="middle">${esc(sm)}</text>`;
+    g += `<text class="axis" x="${x + bw / 2}" y="${H - 3}" text-anchor="middle" fill="${conds[i] === "disease" ? "var(--bad)" : "var(--cyan)"}">${esc(conds[i])}</text>`;
   });
-  const svg = S("svg", { viewBox: `0 0 ${W} ${H}` }); svg.innerHTML = g;
-  const w = mk("div"); w.appendChild(svg);
-  const leg = mk("div", "legend"); leg.innerHTML = groups.map((gr, i) => `<span><span class="sw" style="background:rgb(${catColor(i).join(",")})"></span>${gr}</span>`).join("");
-  w.appendChild(leg);
-  return { el: w };
+  const host = mk("div", "comphost");
+  host.innerHTML = `<svg class="compsvg" viewBox="0 0 ${W} ${H}"><g class="cbars">${g}</g><g class="cribbons"></g></svg>`;
+  const leg = mk("div", "legend"); leg.innerHTML = groups.map((gr, i) => `<span class="lgi" data-g="${esc(gr)}"><span class="sw" style="background:rgb(${catColor(i).join(",")})"></span>${esc(gr)}</span>`).join("");
+  const w = mk("div"); w.appendChild(host); w.appendChild(leg);
+
+  // consume hints: lift the named categories, dim the rest, ribbon each across the sample bars
+  const ribbons = host.querySelector(".cribbons") as SVGGElement;
+  const highlight = (values: Set<string> | null) => {
+    const segs = host.querySelectorAll<SVGRectElement>(".cseg");
+    if (!values || !values.size) { segs.forEach((s) => s.classList.remove("dim", "hl")); leg.querySelectorAll(".lgi").forEach((e) => e.classList.remove("hl")); ribbons.innerHTML = ""; return; }
+    segs.forEach((s) => { const on = values.has(s.dataset.g!); s.classList.toggle("hl", on); s.classList.toggle("dim", !on); });
+    leg.querySelectorAll<HTMLElement>(".lgi").forEach((e) => e.classList.toggle("hl", values.has(e.dataset.g!)));
+    let paths = "";
+    for (const name of values) { const t = groups.indexOf(name); if (t < 0) continue; const col = catColor(t);
+      for (let i = 0; i + 1 < samples.length; i++) { const a = seg[t][i], b = seg[t][i + 1]; if (!a || !b) continue;
+        const xr = a.x + bw, xl = b.x, mx = (xr + xl) / 2;
+        paths += `<path d="M${xr} ${a.yTop.toFixed(1)} C${mx} ${a.yTop.toFixed(1)} ${mx} ${b.yTop.toFixed(1)} ${xl} ${b.yTop.toFixed(1)} L${xl} ${b.yBot.toFixed(1)} C${mx} ${b.yBot.toFixed(1)} ${mx} ${a.yBot.toFixed(1)} ${xr} ${a.yBot.toFixed(1)} Z" fill="rgb(${col.join(",")})" fill-opacity=".3"/>`; } }
+    ribbons.innerHTML = paths;
+  };
+  // emit hints on hover (the bus + translator do the rest); click commits a focus (cell-mediated → dims the UMAP)
+  const nameAt = (e: Event) => ((e.target as Element).closest(".cseg, .lgi") as HTMLElement | null)?.dataset.g || null;
+  w.addEventListener("pointermove", (e) => { const n = nameAt(e); if (n) ctx.coord.setHint(grouping, n); else ctx.coord.clearHint(); });
+  w.addEventListener("pointerleave", () => ctx.coord.clearHint());
+  host.addEventListener("click", (e) => { const r = (e.target as Element).closest(".cseg") as HTMLElement | null; if (r) ctx.coord.setFocus(grouping, r.dataset.g!); });
+
+  return { el: w, afterAttach: () => hooks.registerComposition({ grouping, highlight }) };
 }
 
 function volcanoBody(p: Panel, _ctx: Ctx): BuiltBody {
