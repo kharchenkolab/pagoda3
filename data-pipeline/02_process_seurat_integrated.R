@@ -47,8 +47,9 @@ for (nm in c("X", "scale.data", "orig.ident", "pca", "integrated.cca")) ds$field
 for (nm in names(ds$fields)) if (grepl("_loadings$", nm)) ds$fields[[nm]] <- NULL
 for (ax in c("pca", "integrated.cca")) ds$axes[[ax]] <- NULL
 
-# --- viewer profile (R, kernel-backed): cluster stats + markers + cell_order + counts_cellmajor ---
-ds <- write_viewer(ds, grouping = "leiden")
+# --- viewer profile (R, kernel-backed): per-annotation stats+markers (leiden AND cell_type),
+#     whole-dataset od_score navigator, cell_order, counts_cellmajor ---
+ds <- write_viewer(ds, grouping = "leiden", also = "cell_type")
 message("fields: ", paste(names(ds$fields), collapse = ", "))
 message("cells x genes: ", length(ds$axes$cells$labels), " x ", length(ds$axes$genes$labels),
         " | clusters: ", length(ds$axes$groups_leiden$labels))
