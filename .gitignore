@@ -18,3 +18,11 @@ web/public/*.lstar.zarr/
 
 # wasm build artifact (built from ../lstar/js)
 web/public/wasm/
+
+# python / R build artifacts
+__pycache__/
+*.pyc
+*.egg-info/
+.Rcheck/
+r/src/*.o
+r/src/*.so
