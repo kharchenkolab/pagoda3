@@ -1,75 +1,76 @@
-# pagoda2 browser — the agent-driven generative viewer (working build)
+# pagoda3
 
-An implementation of the agent-driven generative scRNA-seq viewer designed in
-[`plan1.md`](plan1.md) (and mocked in [`pagoda2-production.html`](pagoda2-production.html)),
-running on a real [lstar](../lstar) Zarr store with a **live Anthropic (Opus) agent**.
-Build plan: [`plan1.0.md`](plan1.0.md).
+**An agent-driven, browser-native viewer for single-cell data.** Point it at any
+[L\* / lstar](../lstar) store — or hand it an AnnData / Seurat / SingleCellExperiment object and let
+lstar convert it — and explore it through a shared *coordination space* driven by an Anthropic (Opus)
+copilot. Designed in [`docs/design.md`](docs/design.md), mocked in [`docs/mockup.html`](docs/mockup.html).
 
-## What works
+pagoda3 views **any** single-cell object (via lstar's converters); it is not tied to pagoda
+analysis output. Think "cellxgene for L\*", but agent-driven and generative.
 
-- **Data layer** — a faithful TypeScript reader for the lstar Zarr format (consolidated
-  metadata, sparse CSC gene-column reads, dense embeddings, label codes) over `zarrita`'s
-  `FetchStore`. Scales: verified at **50,000 cells** in deck.gl.
-- **Rendering** — deck.gl GPU `ScatterplotLayer` (binary attributes; colour = a buffer swap),
-  colour by cluster / cell type / condition / sample / QC / **gene** / gene-program; legend,
-  Shift-drag rectangle select.
-- **The generative viewer** (ported from the mock onto real data) — coordination space,
-  workbench panels (Embedding, Composition, DE/marker table, Volcano, Box-by-sample,
-  Overdispersion, Heatmap, Note), the disposable **answer rail** + pinning, **workspaces**,
-  the **timeline = transcript**, the **status pip**, ⌘K **command palette**, selection
-  popover, context menu, panel drag/resize/remove + FLIP, docked conversation, the
-  **validation/refusal** placeholder, and **handle-borne provenance + cacoa caveats**.
-- **The agent** — a real **Anthropic Opus** tool-use loop (`agent/live.ts` → the proxy):
-  the model drives the coordination space at the lowest sufficient rung via tools
-  (`set_color`, `set_focus`, `get_markers`, `run_de_on_selection`, `get_composition`,
-  `get_overdispersion`, `propose_workspace`, `add_note`). The system prompt encodes the
-  ladder of restraint + the cacoa methodology (sample-is-replicate, pseudobulk,
-  compositional, refuse/caveat). The five presence modes render in the timeline thread.
-  A faithful **keyword-matcher mock** runs if the agent is unreachable.
-- **Auth proxy** (`server/proxy.mjs`) — keeps the credential server-side, relays the
-  Messages API SSE. Currently borrows the local Claude Code OAuth token
-  (`~/.aba/oauth.json`, refreshed near expiry) per project directive; an `ANTHROPIC_API_KEY`
-  mode and a browser PKCE/UI-forwarding sign-in are stubbed for later.
+## How it's layered
 
-## Run it
+- **[lstar](../lstar)** — the substrate. Converts external formats (AnnData/Seurat/SCE/Conos/pagoda2)
+  to the uniform L\* Zarr model and provides the compute kernels (`col_sum_by_group`, mean/var,
+  csc↔csr). Format- and viewer-agnostic.
+- **pagoda3** — the viewer. The browser app (`web/`) plus thin R/Python launchers (`r/`, `py/`) that
+  own the *viewer policy*: which navigators to precompute (`write_viewer`) and how to launch locally.
 
-Prereqs: Node ≥ 20 and a Python with numpy/scipy/zarr2 (a venv at `../.venv` is assumed by
-the make-store command below).
+**Precompute is optional.** A plain or freshly-converted L\* store opens directly — markers, cluster
+stats, all-genes selection DE, and scope-aware overdispersion are computed **on the fly in-browser**
+(WASM kernels). `write_viewer` only precomputes the global *navigators* (per-annotation markers, a
+whole-dataset `od_score`, the cell-major counts orientation) so a large/remote store opens instantly.
 
-```bash
-# 1. generate the synthetic demo store (8k cells, the canonical schema)
-../.venv/bin/python data-pipeline/make_dev_store.py            # -> web/public/sample.lstar.zarr
-#    optional larger store for perf:  make_dev_store.py web/public/big.lstar.zarr 50000 1500
+## Use it
 
-# 2. install + run (the agent proxy auto-spawns from the dev server)
-cd web && npm install && npm run dev                           # -> http://localhost:8787
+```r
+# R: view a Seurat/SCE object, or an existing store
+library(pagoda3)
+view(seurat_obj, repo = "~/pagoda/pagoda3", prepare = TRUE)   # convert -> prepare -> open browser
+```
+```python
+# Python: view an AnnData, an lstar.Dataset, or a store path
+import pagoda3
+pagoda3.view(adata, prepare=True)
+pagoda3.view("sample.lstar.zarr")
 ```
 
-Open <http://localhost:8787>. Append `?store=/big.lstar.zarr` to load the 50k store.
-The agent is live if `~/.aba/oauth.json` holds a valid token (a "Live agent connected"
-toast appears); otherwise the local mock planner runs. Try ⌘K → "colour by IL6", or ask
-"is cluster c0 enriched in disease, or a confound?".
+Or run the dev server directly and pass a store via `?store=`:
+
+```bash
+../.venv/bin/python examples/make_dev_store.py     # -> web/public/sample.lstar.zarr (synthetic demo)
+cd web && npm install && npm run dev               # -> http://localhost:8787  (agent proxy auto-spawns)
+```
+
+Open <http://localhost:8787/?store=/sample.lstar.zarr>. The agent is live when `~/.aba/oauth.json`
+holds a valid token (else a faithful keyword mock runs). Ask "markers of the CD8 T cells", select a
+blob and ask "what's different here?", or "what genes vary most within these cells?".
+
+## What's inside
+
+- **Coordination space + generative viewer** — colour/focus the shared scope, a disposable answer
+  rail + pinning, workspaces, the timeline-as-transcript, command palette, handle-borne provenance
+  with **cacoa caveats** (sample-is-replicate, compositional, pseudobulk, refuse/caveat 1-vs-1).
+- **Scope-correct compute** — selection DE ranks **all genes** for the selected cells; overdispersion
+  is the pagoda2-style residual above a smoothed mean-variance trend, **recomputed for the scope**
+  (never a global gene shortlist). Both subsample cells, read cell-major rows, reduce over all genes.
+- **The agent** — an Opus tool-use loop with a **data-driven** system prompt (read from the loaded
+  store), driving the coordination space at the lowest sufficient rung.
 
 ## Layout
 
 ```
-data-pipeline/   make_dev_store.py (synthetic, canonical schema) · real-data scripts
-web/             Vite + TS app
-  src/data/      store.ts (lstar reader) · view.ts (WASM kernels + pure-TS fallback) · kernels.ts · ctx.ts · coord.ts
-  src/render/    embedding.ts (deck.gl) · colors.ts
-  src/ui/        shell.ts · panels.ts · app.css · dom.ts
-  src/agent/     agent.ts (dispatch + mock + presence) · live.ts (Opus tool-use loop)
-server/proxy.mjs OAuth/API-key proxy + Messages API SSE relay
+web/             the browser viewer (Vite + TS): src/{data,render,ui,agent}, public/ (dev stores + /wasm)
+py/              python package "pagoda3": write_viewer (prep) + view() launcher
+r/               R package "pagoda3": write_viewer + view()
+server/          proxy.mjs — local agent proxy (Anthropic Messages API relay)
+examples/        demo data-prep scripts (make_dev_store.py, real-data pipelines)
+docs/            design.md (the viewer design), roadmap.md, mockup.html, design-brief.md
 ```
 
-## Honest status (real vs. to-build)
+## Status
 
-- **Real:** the whole app + data layer + live Opus agent, on a synthetic store with the
-  *canonical schema* (so the real GSE192391 store slots in unchanged).
-- **Approximate by design:** DE on arbitrary selections is subsampled / ranking-grade (labelled).
-- **Real WASM:** the libstar kernels (incl. the new `csc_col_sum_by_group` + `subsample_de_rank`)
-  are compiled to WebAssembly (`lstar/js/dist`, built via emcc) and drive the app's DE; numbers
-  match the C++/R/Python core. Pure-TS fallback if `/wasm` is absent.
-- **To build:** real GSE192391 sample 1 via pagoda2.1 (`lstar write_pagoda2` — see plan1.0
-  Part B); the lstar `viewer@0.1` profile *exporter*; the cell-major DE panel + `csrRow` path
-  so subsample DE reads O(rows) at 10⁶ cells; browser OAuth sign-in; Zarr v3/sharding.
+Working locally on real data: a Seurat integration of two GSE192391 PBMC samples
+(`examples/02_process_seurat_integrated.R` → 12,221 cells, 21 cell types). Remote zarr-over-HTTP
+(cell_order + cell-block sharding + a shard-aware stratified sampler) and browser OAuth sign-in are
+the next steps — see [`docs/roadmap.md`](docs/roadmap.md).
