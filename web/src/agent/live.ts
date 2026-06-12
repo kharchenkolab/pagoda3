@@ -25,6 +25,8 @@ const TOOLS: Tool[] = [
   { name: "add_note", description: "Add a short text note to the rail (for an answer that needs no view).", input_schema: { type: "object", properties: { text: { type: "string" } }, required: ["text"] } },
   { name: "set_display", description: "Toggle embedding view options: on-plot category labels and the colour legend. Defaults are automatic (labels on for categorical colourings; legend shown for gene/numeric colourings, hidden when labels carry identity). Pass only the field(s) to change. Use when the human asks to show/hide the labels or bring back / hide the legend.", input_schema: { type: "object", properties: { labels: { type: "boolean", description: "show on-plot cell-type/cluster labels" }, legend: { type: "boolean", description: "show the colour legend (swatches for categorical, low→high for numeric)" } } } },
   { name: "configure_panel", description: "DEEP per-panel view control — fine-tune ONE panel in place, leaving the others alone. Use it to build a focused evidence view (e.g. take a copy of the embedding, zoom it to one cluster, colour it by donor). panelId comes from the LAYOUT line. colorBy is a handle (meta:sample, meta:cell_type, gene:CD8A, qc:mito…) and overrides that panel's colour only. scopeGrouping+scopeValue restrict the panel to a group's cells (e.g. cell_type + \"CD8+ T cells\"): the embedding reframes to those cells and greys the rest. The smallest way to make a bespoke view — prefer it over a new workspace.", input_schema: { type: "object", properties: { panelId: { type: "number" }, colorBy: { type: "string" }, scopeGrouping: { type: "string" }, scopeValue: { type: "string" } }, required: ["panelId"] } },
+  { name: "add_panel", description: "Compose a NEW configured panel onto the workbench (additive — nothing existing moves; reversible checkpoint). type is a component: Embedding, CompositionBars, Heatmap. colorBy + scopeGrouping/scopeValue configure it just like configure_panel (e.g. an Embedding scoped to one cluster, coloured by donor). Use to build a focused multi-panel evidence board — e.g. the same cluster coloured by donor beside it coloured by a marker gene. Returns the new panel id.", input_schema: { type: "object", properties: { type: { type: "string" }, title: { type: "string" }, colorBy: { type: "string" }, scopeGrouping: { type: "string" }, scopeValue: { type: "string" } }, required: ["type"] } },
+  { name: "de_between", description: "Differential expression WITHIN one group, between two values of a splitting factor — e.g. within the CD8+ T cells, donor GSM5746259 vs GSM5746260. The integration-verification move: genes still split by donor INSIDE one cell type (look for ribosomal RPS/RPL or MT-) are RESIDUAL BATCH, not biology. Adds a DE table (toCanvas=true → onto the workbench as part of an evidence board; else the disposable rail).", input_schema: { type: "object", properties: { scopeGrouping: { type: "string" }, scopeValue: { type: "string" }, splitField: { type: "string" }, valueA: { type: "string" }, valueB: { type: "string" }, toCanvas: { type: "boolean" } }, required: ["scopeGrouping", "scopeValue", "splitField", "valueA", "valueB"] } },
 ];
 
 async function systemPrompt(app: App): Promise<string> {
@@ -107,6 +109,23 @@ async function execTool(app: App, name: string, input: any): Promise<string> {
       if (typeof input.scopeGrouping === "string" && typeof input.scopeValue === "string") patch.scope = { kind: "category", grouping: input.scopeGrouping, value: input.scopeValue };
       app.configurePanel(input.panelId, patch);
       return `configured panel ${input.panelId}: ${JSON.stringify(patch)}`;
+    }
+    case "add_panel": {
+      const view: any = {};
+      if (typeof input.colorBy === "string") view.colorBy = input.colorBy;
+      if (typeof input.scopeGrouping === "string" && typeof input.scopeValue === "string") view.scope = { kind: "category", grouping: input.scopeGrouping, value: input.scopeValue };
+      const id = app.addPanel({ type: input.type, title: input.title || input.type, bind: input.type === "Embedding" ? "embedding:main" : undefined, view: Object.keys(view).length ? view : undefined });
+      return `added panel #${id} (${input.type})${view.colorBy ? ` colorBy=${view.colorBy}` : ""}${view.scope ? ` scope=${input.scopeValue}` : ""}`;
+    }
+    case "de_between": {
+      const A = app.ctx.cellsOfCategories([{ grouping: input.scopeGrouping, value: input.scopeValue }, { grouping: input.splitField, value: input.valueA }]);
+      const B = app.ctx.cellsOfCategories([{ grouping: input.scopeGrouping, value: input.scopeValue }, { grouping: input.splitField, value: input.valueB }]);
+      if (!A.length || !B.length) return `no cells for ${input.scopeValue} split ${input.valueA}/${input.valueB} (${A.length} vs ${B.length})`;
+      const { ranked, panel } = await app.ctx.view.subsampleDE(Array.from(A), Array.from(B));
+      const rows = ranked.slice(0, 20).map((r: any) => ({ gene: r.gene, symbol: r.symbol, lfc: r.lfc, padj: Math.exp(-Math.abs(r.lfc) * 2) }));
+      const spec = { type: "DeTable", title: `Residual batch · ${input.scopeValue}`, cap: `${input.valueA} vs ${input.valueB}${panel ? " · panel" : " · approx"}`, bind: "de:selection", rows };
+      if (input.toCanvas) app.addPanel(spec); else ag.addRail(spec);
+      return `DE within ${input.scopeValue} (${input.valueA} ${A.length} vs ${input.valueB} ${B.length} cells). Top donor-split genes: ${rows.slice(0, 8).map((r: any) => r.symbol).join(", ")} — ribosomal/MT among them = residual batch.`;
     }
     default: return `unknown tool ${name}`;
   }
