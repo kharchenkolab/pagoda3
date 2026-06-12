@@ -17,6 +17,7 @@ export interface Panel {
   id: number; type: string; title: string; cap?: string; full?: boolean;
   bind?: string; text?: string; q?: string; group?: string; gene?: string;
   view?: PanelView;
+  split?: { levels: string[]; genes: string[]; means: number[][] };   // gene × donor concordance matrix (SplitHeat)
   rows?: { gene?: number; symbol: string; lfc?: number; padj?: number; score?: number }[];
 }
 
@@ -47,6 +48,7 @@ export async function bodyFor(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bu
     case "BoxBySample": return boxBody(p, ctx);
     case "Overdispersion": return overdispBody(ctx, hooks);
     case "Heatmap": return heatmapBody(p, ctx, hooks);
+    case "SplitHeat": return splitHeatBody(p);
     case "GeneList": return geneListBody(p, hooks);
     case "Note": { const d = mk("div", "notebody"); d.innerHTML = p.text || ""; d.style.cssText = "font-size:12.5px;line-height:1.5"; return { el: d }; }
     default: return { el: mk("div", undefined, p.type) };
@@ -250,6 +252,26 @@ async function overdispBody(ctx: Ctx, hooks: PanelHooks): Promise<BuiltBody> {
   }
   t.appendChild(tb);
   return { el: t };
+}
+
+// Per-donor concordance heat (gene × donor mean expression, row-normalised). A marker reading the SAME across
+// donors = a genuinely merged cell type; bright in one donor and dim in the other = residual batch / divergence.
+function splitHeatBody(p: Panel): BuiltBody {
+  const d = p.split; if (!d || !d.genes.length || !d.levels.length) return { el: mk("div", undefined, "no split data") };
+  const D = d.levels.length, padL = 96, padT = 26, cw = Math.max(42, Math.min(70, (320 - padL) / D)), rh = 17;
+  const W = padL + D * cw + 6, H = padT + d.genes.length * rh + 6;
+  let g = "";
+  d.levels.forEach((lv, j) => { const short = lv.length > 9 ? "…" + lv.slice(-6) : lv; g += `<text class="axis" x="${padL + j * cw + cw / 2}" y="${padT - 9}" text-anchor="middle">${esc(short)}</text>`; });
+  d.genes.forEach((gene, i) => {
+    const row = d.means[i], mx = Math.max(...row, 1e-9);
+    g += `<text class="axis" x="${padL - 6}" y="${padT + i * rh + rh - 5}" text-anchor="end">${esc(gene)}</text>`;
+    row.forEach((v, j) => { const t = v / mx;
+      g += `<rect x="${padL + j * cw}" y="${padT + i * rh}" width="${cw - 2}" height="${rh - 2}" rx="1" fill="rgb(${Math.round(22 + t * 202)},${Math.round(28 + t * 176)},${Math.round(38 + t * 52)})"/>`;
+      g += `<text x="${padL + j * cw + cw / 2}" y="${padT + i * rh + rh - 5}" text-anchor="middle" style="font-size:8px;font-family:var(--mono)" fill="${t > 0.55 ? "#0d1117" : "#7d8a9a"}">${v.toFixed(1)}</text>`;
+    });
+  });
+  const svg = S("svg", { viewBox: `0 0 ${W} ${H}` }); svg.innerHTML = g; (svg as any).style.cssText = "width:100%;height:auto;max-width:340px";
+  const w = mk("div"); w.appendChild(svg); return { el: w };
 }
 
 async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltBody> {

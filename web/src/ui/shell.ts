@@ -231,7 +231,7 @@ export class App {
     }
   }
 
-  newPanel(p: Partial<Panel>): Panel { return { id: ++this.uid, type: p.type!, title: p.title || p.type!, cap: p.cap, full: p.full, bind: p.bind, text: p.text, q: p.q, group: p.group, gene: p.gene, view: p.view, rows: p.rows }; }
+  newPanel(p: Partial<Panel>): Panel { return { id: ++this.uid, type: p.type!, title: p.title || p.type!, cap: p.cap, full: p.full, bind: p.bind, text: p.text, q: p.q, group: p.group, gene: p.gene, view: p.view, split: p.split, rows: p.rows }; }
 
   // Add a configured panel to the canvas — the composition atom (the agent's add_panel). Additive and
   // checkpointed (so it's non-disorienting and reversible); returns the new id so it can be configure_panel'd.

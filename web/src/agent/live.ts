@@ -27,6 +27,7 @@ const TOOLS: Tool[] = [
   { name: "configure_panel", description: "DEEP per-panel view control — fine-tune ONE panel in place, leaving the others alone. Use it to build a focused evidence view (e.g. take a copy of the embedding, zoom it to one cluster, colour it by donor). panelId comes from the LAYOUT line. colorBy is a handle (meta:sample, meta:cell_type, gene:CD8A, qc:mito…) and overrides that panel's colour only. scopeGrouping+scopeValue restrict the panel to a group's cells (e.g. cell_type + \"CD8+ T cells\"): the embedding reframes to those cells and greys the rest. The smallest way to make a bespoke view — prefer it over a new workspace.", input_schema: { type: "object", properties: { panelId: { type: "number" }, colorBy: { type: "string" }, scopeGrouping: { type: "string" }, scopeValue: { type: "string" } }, required: ["panelId"] } },
   { name: "add_panel", description: "Compose a NEW configured panel onto the workbench (additive — nothing existing moves; reversible checkpoint). type is a component: Embedding, CompositionBars, Heatmap. colorBy + scopeGrouping/scopeValue configure it just like configure_panel (e.g. an Embedding scoped to one cluster, coloured by donor). Use to build a focused multi-panel evidence board — e.g. the same cluster coloured by donor beside it coloured by a marker gene. Returns the new panel id.", input_schema: { type: "object", properties: { type: { type: "string" }, title: { type: "string" }, colorBy: { type: "string" }, scopeGrouping: { type: "string" }, scopeValue: { type: "string" } }, required: ["type"] } },
   { name: "de_between", description: "Differential expression WITHIN one group, between two values of a splitting factor — e.g. within the CD8+ T cells, donor GSM5746259 vs GSM5746260. The integration-verification move: genes still split by donor INSIDE one cell type (look for ribosomal RPS/RPL or MT-) are RESIDUAL BATCH, not biology. Adds a DE table (toCanvas=true → onto the workbench as part of an evidence board; else the disposable rail).", input_schema: { type: "object", properties: { scopeGrouping: { type: "string" }, scopeValue: { type: "string" }, splitField: { type: "string" }, valueA: { type: "string" }, valueB: { type: "string" }, toCanvas: { type: "boolean" } }, required: ["scopeGrouping", "scopeValue", "splitField", "valueA", "valueB"] } },
+  { name: "concordance_panel", description: "Per-donor MARKER concordance for one cell type — the companion to de_between. Takes that cell type's top markers and shows their mean expression split by donor (a gene × donor heat). Markers reading the SAME across donors confirm a genuinely merged population; divergent ones are suspect. scopeGrouping/scopeValue = the cell type (e.g. cell_type, \"CD8+ T cells\"); splitField = the donor/batch field (sample). Adds the panel to the workbench.", input_schema: { type: "object", properties: { scopeGrouping: { type: "string" }, scopeValue: { type: "string" }, splitField: { type: "string" } }, required: ["scopeGrouping", "scopeValue", "splitField"] } },
 ];
 
 async function systemPrompt(app: App): Promise<string> {
@@ -126,6 +127,16 @@ async function execTool(app: App, name: string, input: any): Promise<string> {
       const spec = { type: "DeTable", title: `Residual batch · ${input.scopeValue}`, cap: `${input.valueA} vs ${input.valueB}${panel ? " · panel" : " · approx"}`, bind: "de:selection", rows };
       if (input.toCanvas) app.addPanel(spec); else ag.addRail(spec);
       return `DE within ${input.scopeValue} (${input.valueA} ${A.length} vs ${input.valueB} ${B.length} cells). Top donor-split genes: ${rows.slice(0, 8).map((r: any) => r.symbol).join(", ")} — ribosomal/MT among them = residual batch.`;
+    }
+    case "concordance_panel": {
+      const mm = await app.ctx.markers(input.scopeGrouping);
+      const genes = (mm.get(input.scopeValue) || []).slice(0, 12).map((m: any) => m.symbol);
+      if (!genes.length) return `no precomputed markers for "${input.scopeValue}" in ${input.scopeGrouping}`;
+      const cells = app.ctx.cellsOfCategory(input.scopeGrouping, input.scopeValue);
+      const split = await app.ctx.groupStatsSplit(genes, cells, input.splitField);
+      if (!split.levels.length) return `no ${input.splitField} levels found in "${input.scopeValue}"`;
+      app.addPanel({ type: "SplitHeat", title: `Concordance · ${input.scopeValue}`, cap: `markers × ${input.splitField}`, bind: "concordance", split });
+      return `per-donor marker concordance for "${input.scopeValue}" (${genes.slice(0, 6).join(", ")}…) across ${split.levels.join(", ")} — matching columns = merged cleanly; divergent = batch.`;
     }
     default: return `unknown tool ${name}`;
   }
