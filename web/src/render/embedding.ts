@@ -6,8 +6,11 @@ import { CollisionFilterExtension } from "@deck.gl/extensions";
 
 export class EmbeddingView {
   private deck: Deck;
-  private positions: Float32Array;     // 2n
-  private colors: Uint8Array;          // 4n
+  private positions: Float32Array;     // 2n (native cell order — picking/selection/brush use this)
+  private colors: Uint8Array;          // 4n (native cell order)
+  private draw!: Uint32Array;          // shuffled draw order for the cells layer (slot k → cell draw[k])
+  private drawPos!: Float32Array;      // 2n positions in draw order
+  private drawColors!: Uint8Array;     // 4n colours in draw order
   private selected: Uint8Array;        // n (0/1)
   private n: number;
   private radius = 2.4;
@@ -24,6 +27,15 @@ export class EmbeddingView {
     for (let i = 0; i < n; i++) this.colors[i * 4 + 3] = 230;
     this.selected = new Uint8Array(n);
 
+    // Randomized DRAW ORDER for the cells layer. Cells are stored in per-sample blocks, so without this the
+    // last sample overdraws the rest and "colour by sample" reads as one donor even when well integrated.
+    // Draw-order only — picking, selection and the brush stay in native cell-index space (separate layers).
+    this.draw = new Uint32Array(n); for (let i = 0; i < n; i++) this.draw[i] = i;
+    for (let i = n - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)), t = this.draw[i]; this.draw[i] = this.draw[j]; this.draw[j] = t; }
+    this.drawPos = new Float32Array(n * 2);
+    for (let k = 0; k < n; k++) { const c = this.draw[k]; this.drawPos[k * 2] = emb[c * 2]; this.drawPos[k * 2 + 1] = emb[c * 2 + 1]; }
+    this.drawColors = new Uint8Array(n * 4).fill(180); for (let k = 0; k < n; k++) this.drawColors[k * 4 + 3] = 230;
+
     this.container = container;
     this.viewState = this.computeView();   // fit all cells initially; fitTo(ids) reframes to a subset (scope)
 
@@ -39,9 +51,9 @@ export class EmbeddingView {
       controller: { dragPan: true, scrollZoom: true, doubleClickZoom: false },
       layers: this.layers(),
       // hover IS available in pan mode — picking fires on move, not drag. Emit the picked cell (or null).
-      onHover: (info: any) => this.onHover?.(info && info.index != null && info.index >= 0 ? info.index : null),
+      onHover: (info: any) => this.onHover?.(info && info.index != null && info.index >= 0 ? this.draw[info.index] : null),    // draw slot → cell
       // plain click selects the clicked cell's cluster; click on empty space deselects. Shift-clicks are the brush.
-      onClick: (info: any) => { if (info?.srcEvent?.shiftKey) return; this.onPick?.(info && info.index != null && info.index >= 0 ? info.index : null); },
+      onClick: (info: any) => { if (info?.srcEvent?.shiftKey) return; this.onPick?.(info && info.index != null && info.index >= 0 ? this.draw[info.index] : null); },
       getCursor: ({ isDragging, isHovering }: any) => (isDragging ? "grabbing" : isHovering ? "crosshair" : "grab"),
     });
     canvas.addEventListener("pointerleave", () => this.onHover?.(null));
@@ -56,8 +68,8 @@ export class EmbeddingView {
         data: {
           length: this.n,
           attributes: {
-            getPosition: { value: this.positions, size: 2 },
-            getFillColor: { value: this.colors, size: 4 },
+            getPosition: { value: this.drawPos, size: 2 },
+            getFillColor: { value: this.drawColors, size: 4 },
           },
         },
         radiusUnits: "pixels",
@@ -140,7 +152,7 @@ export class EmbeddingView {
   /** Reframe the viewport to a cell set (the `scope` property / focus_view primitive); no ids = fit all. */
   fitTo(ids?: Int32Array) { this.viewState = this.computeView(ids); this.deck.setProps({ viewState: this.viewState }); }
 
-  setColors(rgba: Uint8Array) { this.colors = rgba; this.colorVersion++; this.redraw(); }
+  setColors(rgba: Uint8Array) { this.colors = rgba; const d = this.draw, dc = this.drawColors; for (let k = 0; k < this.n; k++) { const c = d[k] * 4, o = k * 4; dc[o] = rgba[c]; dc[o + 1] = rgba[c + 1]; dc[o + 2] = rgba[c + 2]; dc[o + 3] = rgba[c + 3]; } this.colorVersion++; this.redraw(); }
 
   setSelection(ids: Int32Array | null) {
     this.selected.fill(0);
