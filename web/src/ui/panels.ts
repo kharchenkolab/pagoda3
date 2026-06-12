@@ -175,7 +175,7 @@ async function compositionBody(ctx: Ctx, hooks: PanelHooks): Promise<BuiltBody> 
   const nameAt = (e: Event) => ((e.target as Element).closest(".cseg, .lgi") as HTMLElement | null)?.dataset.g || null;
   w.addEventListener("pointermove", (e) => { const n = nameAt(e); if (n) ctx.coord.setHint(grouping, n); else ctx.coord.clearHint(); });
   w.addEventListener("pointerleave", () => ctx.coord.clearHint());
-  w.addEventListener("click", (e) => { const n = nameAt(e); if (n) ctx.coord.setSelection({ kind: "category", grouping, value: n }); });
+  w.addEventListener("click", (e) => { const n = nameAt(e); ctx.coord.setSelection(n ? { kind: "category", grouping, value: n } : null); });   // block → select; empty → deselect (mirrors the UMAP)
 
   return { el: w, afterAttach: () => hooks.registerComposition({ grouping, setSelect: (v) => { selSet = v; render(); }, setHover: (v) => { hovSet = v; render(); } }) };
 }
