@@ -356,3 +356,16 @@ app/                         ← local git repo (this folder)
 
 lstar changes are committed to the **lstar** repo (with conformance); the **app** repo holds
 the pipeline scripts, the web app, and the proxy.
+
+---
+
+## Implementation status (autonomous build, 2026-06-12)
+
+Built and verified end-to-end (see [`README.md`](README.md)): the Vite/TS app, the lstar
+TS reader + pure-TS view, deck.gl embedding (validated at **50k cells**), the full generative
+viewer ported from the mock onto real-schema data, the **live Anthropic Opus agent** via the
+proxy (tool-use loop driving the coordination space; cacoa-aware), and the auth proxy
+(borrowed Claude Code OAuth token). Phases 0/3/4/6/7 done; 2/5 partial (pure-TS kernels +
+subsample DE; cell-major panel + WASM remain); 1 (real GSE192391) and 8 (v3/sharding,
+browser sign-in) remain. Develops against a synthetic store with the **canonical schema**, so
+real data slots in unchanged.
