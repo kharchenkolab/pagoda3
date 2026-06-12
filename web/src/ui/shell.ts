@@ -117,7 +117,9 @@ export class App {
   }
 
   async panelEl(p: Panel): Promise<{ dom: HTMLElement; afterAttach?: () => void }> {
-    const d = mk("div", "panel" + (p.full ? " full" : "") + (p.type === "Embedding" ? " embpanel" : ""));
+    // a lone panel fills the canvas (no point keeping it in one half of a 2-col grid)
+    const isFull = p.full || this.canvas.length === 1;
+    const d = mk("div", "panel" + (isFull ? " full" : "") + (p.type === "Embedding" ? " embpanel" : ""));
     d.dataset.pid = String(p.id);
     const h = mk("div", "ph");
     const grip = mk("span", "grip", "⠿"); h.appendChild(grip);
@@ -132,8 +134,8 @@ export class App {
       s.onchange = () => this.coord.setColor(s.value);
       sp.appendChild(s);
     }
-    const span = Object.assign(mk("button", "mini", p.full ? "◫" : "▦"), { title: "resize" }) as HTMLButtonElement;
-    span.onclick = () => { p.full = !p.full; this.fullRender(); this.checkpoint((p.full ? "widen · " : "narrow · ") + p.title, "You resized a panel — the layout is yours to shape."); };
+    const span = Object.assign(mk("button", "mini", isFull ? "◫" : "▦"), { title: "maximize" }) as HTMLButtonElement;
+    span.onclick = () => { p.full = !isFull; this.fullRender(); this.checkpoint((p.full ? "maximize · " : "restore · ") + p.title, "You resized a panel — the layout is yours to shape."); };
     const close = Object.assign(mk("button", "mini", "✕"), { title: "remove" }) as HTMLButtonElement;
     close.onclick = () => { this.canvas = this.canvas.filter((z) => z.id !== p.id); this.fullRender(); this.checkpoint("remove " + p.title, "You removed a panel — direct edits to your own layout always win."); };
     sp.appendChild(span); sp.appendChild(close);
