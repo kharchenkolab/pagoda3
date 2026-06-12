@@ -80,43 +80,105 @@ export class LstarView {
     return { values: out, max, col };
   }
 
-  // Precomputed cluster sufficient stats (viewer profile) -> per (group, gene) mean/frac.
-  async groupStats(grouping = "leiden"): Promise<{
-    groups: string[]; nGenes: number; n: Int32Array;
-    mean: Float32Array; frac: Float32Array; // flat (G x nGenes), log1p-space mean
-  }> {
-    const groups = await this.ds.axisLabels(`groups_${grouping}`);
-    const G = groups.length, ng = this.nGenes;
-    const sum = (await this.ds.fieldDense(`stats_${grouping}_sum`)).data as Float32Array;
-    const nexpr = (await this.ds.fieldDense(`stats_${grouping}_nexpr`)).data as Float32Array;
-    const md = await this.metadata(grouping);
-    const n = new Int32Array(G);
-    if (md.kind === "categorical") {
-      const gi = new Map(groups.map((g, i) => [g, i]));
-      for (const code of md.codes) { const idx = gi.get(md.categories[code]); if (idx !== undefined) n[idx]++; }
+  // Full counts in CSC (gene-major), loaded + cached once. Backs the group-stats / DE fallbacks.
+  private async countsCSC() {
+    if (!this.cscCache) {
+      const sp = await this.ds.fieldSparse("counts");
+      this.cscCache = {
+        data: sp.data instanceof Float64Array ? sp.data : Float64Array.from(sp.data as any),
+        indices: sp.indices instanceof Int32Array ? sp.indices : Int32Array.from(sp.indices as any),
+        indptr: sp.indptr instanceof Int32Array ? sp.indptr : Int32Array.from(sp.indptr as any),
+        nGenes: sp.shape[1],
+      };
     }
+    return this.cscCache;
+  }
+
+  // Per-(group, gene) sufficient stats over log1p — read from the viewer profile when present, else
+  // computed in-browser from counts via the libstar WASM kernel (so a *bare* L* store, with no
+  // precomputed navigators, is fully viewable; precompute is an optimization, not a requirement).
+  private gssCache = new Map<string, { groups: string[]; n: Int32Array; S: Float64Array; SS: Float64Array; NE: Float64Array }>();
+  private async groupSufficientStats(grouping: string) {
+    const cached = this.gssCache.get(grouping);
+    if (cached) return cached;
+    const ng = this.nGenes;
+    const md = await this.metadata(grouping);
+    if (md.kind !== "categorical") throw new Error(`grouping ${grouping} is not categorical`);
+    let groups: string[], S: Float64Array, SS: Float64Array, NE: Float64Array;
+    if (this.ds.hasField(`stats_${grouping}_sum`) && this.ds.axisNames().includes(`groups_${grouping}`)) {
+      groups = await this.ds.axisLabels(`groups_${grouping}`);
+      const f64 = (a: any) => (a instanceof Float64Array ? a : Float64Array.from(a));
+      S = f64((await this.ds.fieldDense(`stats_${grouping}_sum`)).data);
+      SS = f64((await this.ds.fieldDense(`stats_${grouping}_sumsq`)).data);
+      NE = f64((await this.ds.fieldDense(`stats_${grouping}_nexpr`)).data);
+    } else {
+      groups = md.categories.slice();
+      const G = groups.length, code = md.codes;          // 0-based into categories (== groups order)
+      const cc = await this.countsCSC();
+      const M = await kernels();
+      if (M) {
+        const g = M.colSumByGroup(cc.data, cc.indptr, cc.indices, this.nCells, cc.nGenes, Int32Array.from(code), G, true);
+        S = g.sum as Float64Array; SS = g.sumsq as Float64Array; NE = g.n_expr as Float64Array;
+      } else {
+        S = new Float64Array(G * ng); SS = new Float64Array(G * ng); NE = new Float64Array(G * ng);
+        const { data, indices, indptr } = cc;
+        for (let gene = 0; gene < ng; gene++) for (let k = indptr[gene]; k < indptr[gene + 1]; k++) {
+          const grp = code[indices[k]]; if (grp < 0) continue;
+          const v = Math.log1p(data[k]), o = grp * ng + gene; S[o] += v; SS[o] += v * v; NE[o]++;
+        }
+      }
+    }
+    const gi = new Map(groups.map((g, i) => [g, i]));
+    const n = new Int32Array(groups.length);
+    for (const c of md.codes) { const idx = gi.get(md.categories[c]); if (idx !== undefined) n[idx]++; }
+    const r = { groups, n, S, SS, NE };
+    this.gssCache.set(grouping, r);
+    return r;
+  }
+
+  // Cluster sufficient stats -> per (group, gene) mean/frac (precomputed or on the fly).
+  async groupStats(grouping = "leiden"): Promise<{
+    groups: string[]; nGenes: number; n: Int32Array; mean: Float32Array; frac: Float32Array;
+  }> {
+    const { groups, n, S, NE } = await this.groupSufficientStats(grouping);
+    const G = groups.length, ng = this.nGenes;
     const mean = new Float32Array(G * ng), frac = new Float32Array(G * ng);
     for (let g = 0; g < G; g++) {
       const nn = Math.max(n[g], 1);
-      for (let j = 0; j < ng; j++) { mean[g * ng + j] = sum[g * ng + j] / nn; frac[g * ng + j] = nexpr[g * ng + j] / nn; }
+      for (let j = 0; j < ng; j++) { mean[g * ng + j] = S[g * ng + j] / nn; frac[g * ng + j] = NE[g * ng + j] / nn; }
     }
     return { groups, nGenes: ng, n, mean, frac };
   }
 
-  // Precomputed marker tables (viewer profile) -> ranked genes per group.
+  // Ranked marker genes per group. Reads the precomputed table when present, else derives markers
+  // (group mean(log1p) vs rest) from on-the-fly group stats — so a bare store still gets markers.
   async markers(grouping = "leiden", topN = 25): Promise<Map<string, { gene: number; symbol: string; lfc: number; padj: number }[]>> {
-    const groups = await this.ds.axisLabels(`groups_${grouping}`);
     const genes = await this.genes();
-    const lfcF = await this.ds.fieldDense(`markers_${grouping}_lfc`); // (nGenes, G)
-    const padjF = await this.ds.fieldDense(`markers_${grouping}_padj`);
-    const lfc = lfcF.data as Float32Array, padj = padjF.data as Float32Array;
-    const G = groups.length, ng = genes.length;
     const out = new Map<string, { gene: number; symbol: string; lfc: number; padj: number }[]>();
+    if (this.ds.hasField(`markers_${grouping}_lfc`) && this.ds.axisNames().includes(`groups_${grouping}`)) {
+      const groups = await this.ds.axisLabels(`groups_${grouping}`);
+      const lfc = (await this.ds.fieldDense(`markers_${grouping}_lfc`)).data as ArrayLike<number>;
+      const padj = (await this.ds.fieldDense(`markers_${grouping}_padj`)).data as ArrayLike<number>;
+      const G = groups.length, ng = genes.length;
+      for (let g = 0; g < G; g++) {
+        const rows = []; for (let j = 0; j < ng; j++) rows.push({ gene: j, symbol: genes[j], lfc: lfc[j * G + g], padj: padj[j * G + g] });
+        rows.sort((a, b) => b.lfc - a.lfc); out.set(groups[g], rows.slice(0, topN));
+      }
+      return out;
+    }
+    const { groups, n, S, NE } = await this.groupSufficientStats(grouping);
+    const G = groups.length, ng = this.nGenes, N = this.nCells;
+    const grand = new Float64Array(ng);
+    for (let g = 0; g < G; g++) for (let j = 0; j < ng; j++) grand[j] += S[g * ng + j];
     for (let g = 0; g < G; g++) {
-      const rows: { gene: number; symbol: string; lfc: number; padj: number }[] = [];
-      for (let j = 0; j < ng; j++) rows.push({ gene: j, symbol: genes[j], lfc: lfc[j * G + g], padj: padj[j * G + g] });
-      rows.sort((a, b) => b.lfc - a.lfc);
-      out.set(groups[g], rows.slice(0, topN));
+      const ng1 = Math.max(n[g], 1), nr = Math.max(N - n[g], 1);
+      const rows = [];
+      for (let j = 0; j < ng; j++) {
+        const mu = S[g * ng + j] / ng1, mr = (grand[j] - S[g * ng + j]) / nr, lfc = mu - mr;
+        const padj = Math.min(Math.max(Math.exp(-Math.abs(lfc * Math.sqrt(NE[g * ng + j] + 1))), 1e-12), 1);
+        rows.push({ gene: j, symbol: genes[j], lfc, padj });
+      }
+      rows.sort((a, b) => b.lfc - a.lfc); out.set(groups[g], rows.slice(0, topN));
     }
     return out;
   }
@@ -155,16 +217,7 @@ export class LstarView {
     }
 
     // Fallback: load counts CSC once (cached), per-group sums via the libstar WASM kernel.
-    if (!this.cscCache) {
-      const sp = await this.ds.fieldSparse("counts");
-      this.cscCache = {
-        data: sp.data instanceof Float64Array ? sp.data : Float64Array.from(sp.data as any),
-        indices: sp.indices instanceof Int32Array ? sp.indices : Int32Array.from(sp.indices as any),
-        indptr: sp.indptr instanceof Int32Array ? sp.indptr : Int32Array.from(sp.indptr as any),
-        nGenes: sp.shape[1],
-      };
-    }
-    const { data, indices, indptr, nGenes } = this.cscCache;
+    const { data, indices, indptr, nGenes } = await this.countsCSC();
     let sumA: Float64Array, sumB: Float64Array;
     const M = await kernels();
     if (M) {
@@ -189,14 +242,28 @@ export class LstarView {
     return { ranked, nA: A.length, nB: B.length, approx, panel: false, nGenesRanked: nGenes };
   }
 
-  // Load + cache the cell-major counts panel (CSR over (cells, genes)) once; null if the store
-  // carries no such field. `counts_cellmajor` is the current name; `de_panel` (a legacy od-genes
-  // subset, log1p) is still read if present. The gene axis and lognorm-vs-raw come off the field.
+  // Load + cache the cell-major counts panel (CSR over (cells, genes)) once. `counts_cellmajor` is
+  // the current name; `de_panel` (a legacy od-genes subset, log1p) is still read if present. For a
+  // BARE store (neither field), the panel is built in-browser by transposing counts CSC->CSR with
+  // the libstar WASM kernel — so on-the-fly DE / overdispersion work without any precompute.
   private async dePanel() {
     if (this.dePanelCache !== undefined) return this.dePanelCache;
     const name = this.ds.hasField("counts_cellmajor") ? "counts_cellmajor"
       : (this.ds.hasField("de_panel") ? "de_panel" : null);
-    if (!name) { this.dePanelCache = null; return null; }
+    if (!name) {
+      const M = await kernels();
+      if (!M || !this.ds.hasField("counts")) { this.dePanelCache = null; return null; }
+      const cc = await this.countsCSC();                  // counts CSC (cells,genes) -> CSR cell-major
+      const r = M.cscToCsr(cc.data, cc.indices, cc.indptr, this.nCells, cc.nGenes);
+      const symbols = await this.genes();
+      this.dePanelCache = {
+        data: r.data instanceof Float64Array ? r.data : Float64Array.from(r.data as any),
+        indices: r.indices instanceof Int32Array ? r.indices : Int32Array.from(r.indices as any),
+        indptr: r.indptr instanceof Int32Array ? r.indptr : Int32Array.from(r.indptr as any),
+        symbols, geneCol: null, nGenes: symbols.length, lognorm: false,
+      };
+      return this.dePanelCache;
+    }
     const fm = this.ds.field(name)!;
     const geneAxis = fm.span[1] ?? "genes";
     const allGenes = geneAxis === "genes";
