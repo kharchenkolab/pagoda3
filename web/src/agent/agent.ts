@@ -63,10 +63,11 @@ export class Agent {
     if (sc && sc.type === "selection") {
       if (/\bde\b|differential|chang|marker/.test(q)) {
         const ids = sc.ids!; const setB = new Set(ids); const rest: number[] = []; for (let i = 0; i < this.ctx.n; i++) if (!setB.has(i)) rest.push(i);
-        const { ranked, nA, nB, approx } = await this.ctx.view.subsampleDE(ids, rest);
+        const { ranked, nA, nB, approx, panel, nGenesRanked } = await this.ctx.view.subsampleDE(ids, rest);
         const rows = ranked.slice(0, 20).map((r) => ({ gene: r.gene, symbol: r.symbol, lfc: r.lfc, padj: Math.exp(-Math.abs(r.lfc) * 2) }));
         this.addRail({ type: "DeTable", title: `DE · selection (${ids.length} cells)`, cap: `vs rest${approx ? " · approx" : ""}`, bind: "de:selection", rows }, qraw);
-        this.app.toast(`DE for your ${ids.length}-cell selection is in the rail`, `Subsampled (n=${nA} vs ${nB}), ranking-grade. You gave the agent a referent by selecting — the selection carried the 'what', your words the verb. The donor caveat rides on the handle.`);
+        const how = panel ? `read only your ${nA + nB} sampled rows from the cell-major panel — O(rows) over ${nGenesRanked} overdispersed genes` : `subsampled n=${nA} vs ${nB}`;
+        this.app.toast(`DE for your ${ids.length}-cell selection is in the rail`, `${how}, ranking-grade. You gave the agent a referent by selecting — the selection carried the 'what', your words the verb. The donor caveat rides on the handle.`);
         return this.app.checkpoint("DE on selection", "Subsample DE scoped to your selection, in the rail.");
       }
       if (/type|are these|identit/.test(q)) { const m: any = await this.ctx.metaOf("cell_type"); const cts: Record<string, number> = {}; sc.ids!.forEach((i) => cts[m.categories[m.codes[i]]] = (cts[m.categories[m.codes[i]]] || 0) + 1); const tot = sc.ids!.length; const txt = Object.entries(cts).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}: <b>${Math.round(v / tot * 100)}%</b>`).join(" · "); this.addRail({ type: "Note", title: `Selection · ${tot} cells`, text: txt }, qraw); return this.app.checkpoint("identity of selection", "Composition of your selection."); }

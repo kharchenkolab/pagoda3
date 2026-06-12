@@ -9,7 +9,7 @@ dist/
 *.rds
 *.mtx
 *.mtx.gz
-data/
+/data-pipeline/data/
 web/public/*.lstar.zarr/
 
 # os / editor

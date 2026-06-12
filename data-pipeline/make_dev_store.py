@@ -5,10 +5,10 @@ real GSE192391 pipeline lands. Deterministic.
 Usage:  python make_dev_store.py [out_path] [n_cells] [n_genes]
 
 Schema (the contract the app binds to; the real store matches it):
-  axes:   cells, genes, umap(coord), pca(coord), groups_leiden(derived),
-          aspects(derived)
+  axes:   cells, genes, umap(coord), groups_leiden(derived), aspects(derived),
+          od_genes(derived)                                              [viewer profile]
   fields: counts            measure (cells, genes)   CSC, state=raw
-          umap / pca        embedding
+          umap              embedding
           leiden/cell_type/sample/condition  label (cells)
           mito/n_umi/n_gene measure (cells)           QC
           od_score          measure (genes)           overdispersion
@@ -16,6 +16,10 @@ Schema (the contract the app binds to; the real store matches it):
           aspect_adjvar     measure (aspects)
           stats_leiden_{sum,sumsq,nexpr}  measure (groups_leiden, genes)  [viewer profile]
           markers_leiden_{lfc,padj}       measure (genes, groups_leiden)  [viewer profile]
+          cell_order        measure (cells)            cluster-coherent order [viewer profile]
+          de_panel          measure (cells, od_genes)  CSR log1p; O(rows) DE   [viewer profile]
+
+The viewer-profile fields (the last block) are produced by lstar.write_viewer().
 """
 import json, os, sys
 import numpy as np
@@ -94,25 +98,9 @@ def main():
     g_var = np.maximum(g_sq - g_mean ** 2, 0)
     od_score = (g_var / (g_mean + 1e-3)).astype("f4")
 
-    # --- viewer profile: cluster sufficient stats over (groups_leiden, genes) ---
+    # --- cluster label; the viewer profile (cluster stats, marker tables, the cell-major
+    #     DE panel + od_genes) is computed once by lstar.write_viewer() below. ---
     leiden = np.array([f"c{c}" for c in cell_cluster])
-    groups = np.array([f"c{c}" for c in range(K)])
-    S = np.zeros((K, NGENES), "f8"); SS = np.zeros((K, NGENES), "f8"); NE = np.zeros((K, NGENES), "f8")
-    for c in range(K):
-        sub = Xl[cell_cluster == c]
-        S[c] = np.asarray(sub.sum(axis=0)).ravel()
-        SS[c] = np.asarray(sub.multiply(sub).sum(axis=0)).ravel()
-        NE[c] = np.asarray((sub > 0).sum(axis=0)).ravel()
-    # marker tables: lfc = cluster mean(log1p) - rest mean(log1p); padj a monotone proxy
-    n_c = np.array([(cell_cluster == c).sum() for c in range(K)])
-    grand = g_mean
-    lfc = np.zeros((NGENES, K), "f4"); padj = np.ones((NGENES, K), "f4")
-    for c in range(K):
-        mu_c = S[c] / max(n_c[c], 1)
-        mu_rest = (Xl.sum(axis=0).A1 - S[c]) / max(NCELLS - n_c[c], 1)
-        lfc[:, c] = (mu_c - mu_rest).astype("f4")
-        z = lfc[:, c] * np.sqrt(NE[c] + 1)
-        padj[:, c] = np.clip(np.exp(-np.abs(z)), 1e-12, 1).astype("f4")
 
     # --- aspects (geneset programs) scored per cell ---
     ASPECTS = ["Inflammatory response", "T-cell activation", "B-cell program",
@@ -130,7 +118,6 @@ def main():
     ds.add_axis("cells", [f"cell{i}" for i in range(NCELLS)], role="observation")
     ds.add_axis("genes", genes.tolist(), role="feature")
     ds.add_axis("umap", ["umap0", "umap1"], origin="derived", role="coordinate")
-    ds.add_axis("groups_leiden", groups.tolist(), origin="derived", role="feature")
     ds.add_axis("aspects", ASPECTS, origin="derived", role="feature")
 
     ds.add_field("counts", X, role="measure", span=["cells", "genes"], state="raw")
@@ -145,12 +132,11 @@ def main():
     ds.add_field("od_score", od_score, role="measure", span=["genes"])
     ds.add_field("aspect_scores", aspect_scores, role="measure", span=["cells", "aspects"])
     ds.add_field("aspect_adjvar", aspect_adjvar, role="measure", span=["aspects"])
-    ds.add_field("stats_leiden_sum", S.astype("f4"), role="measure", span=["groups_leiden", "genes"])
-    ds.add_field("stats_leiden_sumsq", SS.astype("f4"), role="measure", span=["groups_leiden", "genes"])
-    ds.add_field("stats_leiden_nexpr", NE.astype("f4"), role="measure", span=["groups_leiden", "genes"])
-    ds.add_field("markers_leiden_lfc", lfc, role="measure", span=["genes", "groups_leiden"])
-    ds.add_field("markers_leiden_padj", padj, role="measure", span=["genes", "groups_leiden"])
-    ds.profiles = list(getattr(ds, "profiles", [])) + ["viewer@0.1", "pagoda2.synthetic@0.1"]
+
+    # viewer profile: cluster stats, marker tables, groups_leiden axis, od_genes + the
+    # cell-major de_panel (CSR, log1p) that powers O(rows) subsample DE on selections.
+    lstar.write_viewer(ds, "leiden", n_od=min(300, NGENES))
+    ds.profiles = list(ds.profiles) + ["pagoda2.synthetic@0.1"]
 
     out = os.path.abspath(OUT)
     if os.path.exists(out):

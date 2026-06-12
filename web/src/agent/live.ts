@@ -58,10 +58,11 @@ async function execTool(app: App, name: string, input: any): Promise<string> {
     case "run_de_on_selection": {
       const ids = app.coord.state.selection; if (!ids?.length) return "no selection — ask the user to drag-select cells first";
       const set = new Set(ids); const rest: number[] = []; for (let i = 0; i < app.ctx.n; i++) if (!set.has(i)) rest.push(i);
-      const { ranked, nA, nB } = await app.ctx.view.subsampleDE(Array.from(ids), rest);
+      const { ranked, nA, nB, panel, nGenesRanked } = await app.ctx.view.subsampleDE(Array.from(ids), rest);
       const rows = ranked.slice(0, 20).map((r) => ({ gene: r.gene, symbol: r.symbol, lfc: r.lfc, padj: Math.exp(-Math.abs(r.lfc) * 2) }));
-      ag.addRail({ type: "DeTable", title: `DE · selection (${ids.length})`, cap: "vs rest · approx", bind: "de:selection", rows });
-      return `subsample DE (n=${nA} vs ${nB}, ranking-grade); top up: ${rows.filter((r) => r.lfc > 0).slice(0, 6).map((r) => r.symbol).join(", ")}`;
+      ag.addRail({ type: "DeTable", title: `DE · selection (${ids.length})`, cap: panel ? "vs rest · panel" : "vs rest · approx", bind: "de:selection", rows });
+      const how = panel ? `O(rows) cell-major panel, ${nGenesRanked} overdispersed genes` : "ranking-grade";
+      return `subsample DE (n=${nA} vs ${nB}, ${how}); top up: ${rows.filter((r) => r.lfc > 0).slice(0, 6).map((r) => r.symbol).join(", ")}`;
     }
     case "get_composition": {
       const comp = await app.ctx.composition("leiden"); ag.addRail({ type: "CompositionBars", title: "Composition by sample", cap: "compositional", bind: "composition:bySample" });
