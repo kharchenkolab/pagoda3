@@ -14,8 +14,10 @@ export class LstarView {
   private geneLabels?: string[];
   private geneIndex?: Map<string, number>;
   private cscCache?: { data: Float64Array; indices: Int32Array; indptr: Int32Array; nGenes: number };
-  // cell-major DE panel (viewer profile): undefined = not checked, null = absent in this store.
-  private dePanelCache?: { data: Float64Array; indices: Int32Array; indptr: Int32Array; symbols: string[]; globalCol: Int32Array; nOd: number } | null;
+  // cell-major counts panel (viewer profile): undefined = not checked, null = absent in this store.
+  // `lognorm` = values already log1p (legacy) vs raw (log1p on read); `geneCol` maps the panel's
+  // gene axis to global gene indices when it's a subset (legacy od_genes), else null (all genes).
+  private dePanelCache?: { data: Float64Array; indices: Int32Array; indptr: Int32Array; symbols: string[]; geneCol: Int32Array | null; nGenes: number; lognorm: boolean } | null;
 
   constructor(ds: LstarDataset) { this.ds = ds; }
 
@@ -119,11 +121,11 @@ export class LstarView {
     return out;
   }
 
-  // Subsample DE on arbitrary selections.
-  //  Fast path — the viewer profile's cell-major DE panel (CSR, log1p, restricted to od_genes):
-  //  read only the sampled rows, so cost is O(sampled cells) and independent of the gene count.
-  //  Fallback — a one-time full-counts CSC load + the libstar WASM colSumByGroup kernel, for
-  //  stores written without a panel. `panel` reports which path ran; `nGenesRanked` the breadth.
+  // Subsample DE on arbitrary selections — the gene scope is the WHOLE transcriptome.
+  //  Fast path — the cell-major counts panel (counts_cellmajor, CSR over all genes): subsample the
+  //  cells, read only their rows, reduce over EVERY gene. Cost is O(sampled cells); the gene scope
+  //  is never restricted, because a global overdispersed subset would miss the genes that actually
+  //  distinguish a local selection (e.g. T-cell subsets). Fallback — full-counts CSC + WASM kernel.
   async subsampleDE(cellsA: number[], cellsB: number[], maxPerGroup = 400):
       Promise<{ ranked: DEResult[]; nA: number; nB: number; approx: boolean; panel: boolean; nGenesRanked: number }> {
     const A = sample(cellsA, maxPerGroup), B = sample(cellsB, maxPerGroup);
@@ -132,21 +134,24 @@ export class LstarView {
 
     const dp = await this.dePanel();
     if (dp) {
-      // Deliberately a zero-copy JS loop, NOT the WASM subsample_de_rank kernel: the panel is
-      // cached whole in JS memory and we touch only the sampled rows (O(rows)). Handing it to
-      // WASM would copy the entire panel into the heap each call — O(full panel), a regression.
-      // (data is already log1p — de_panel state=lognorm — so we sum it directly.)
-      const { data, indices, indptr, symbols, globalCol, nOd } = dp;
-      const sumA = new Float64Array(nOd), sumB = new Float64Array(nOd);
-      for (const i of A) for (let k = indptr[i]; k < indptr[i + 1]; k++) sumA[indices[k]] += data[k];
-      for (const i of B) for (let k = indptr[i]; k < indptr[i + 1]; k++) sumB[indices[k]] += data[k];
-      const ranked: DEResult[] = new Array(nOd);
-      for (let g = 0; g < nOd; g++) {
+      // Zero-copy JS loop over the cached cell-major panel, touching only the sampled rows (O(rows)).
+      // The panel is raw counts (state=raw) -> log1p here; a legacy log1p panel is summed directly.
+      const { data, indices, indptr, symbols, geneCol, nGenes, lognorm } = dp;
+      const sumA = new Float64Array(nGenes), sumB = new Float64Array(nGenes);
+      if (lognorm) {
+        for (const i of A) for (let k = indptr[i]; k < indptr[i + 1]; k++) sumA[indices[k]] += data[k];
+        for (const i of B) for (let k = indptr[i]; k < indptr[i + 1]; k++) sumB[indices[k]] += data[k];
+      } else {
+        for (const i of A) for (let k = indptr[i]; k < indptr[i + 1]; k++) sumA[indices[k]] += Math.log1p(data[k]);
+        for (const i of B) for (let k = indptr[i]; k < indptr[i + 1]; k++) sumB[indices[k]] += Math.log1p(data[k]);
+      }
+      const ranked: DEResult[] = new Array(nGenes);
+      for (let g = 0; g < nGenes; g++) {
         const ma = sumA[g] / na, mb = sumB[g] / nb;
-        ranked[g] = { gene: globalCol[g], symbol: symbols[g], meanA: ma, meanB: mb, lfc: ma - mb };
+        ranked[g] = { gene: geneCol ? geneCol[g] : g, symbol: symbols[g], meanA: ma, meanB: mb, lfc: ma - mb };
       }
       ranked.sort((a, b) => Math.abs(b.lfc) - Math.abs(a.lfc));
-      return { ranked, nA: A.length, nB: B.length, approx, panel: true, nGenesRanked: nOd };
+      return { ranked, nA: A.length, nB: B.length, approx, panel: true, nGenesRanked: nGenes };
     }
 
     // Fallback: load counts CSC once (cached), per-group sums via the libstar WASM kernel.
@@ -184,20 +189,26 @@ export class LstarView {
     return { ranked, nA: A.length, nB: B.length, approx, panel: false, nGenesRanked: nGenes };
   }
 
-  // Load + cache the cell-major DE panel (CSR over (cells, od_genes), log1p) once; null if the
-  // store carries no viewer panel. Cheap to hold: bounded by od_genes, not the full gene count.
+  // Load + cache the cell-major counts panel (CSR over (cells, genes)) once; null if the store
+  // carries no such field. `counts_cellmajor` is the current name; `de_panel` (a legacy od-genes
+  // subset, log1p) is still read if present. The gene axis and lognorm-vs-raw come off the field.
   private async dePanel() {
     if (this.dePanelCache !== undefined) return this.dePanelCache;
-    if (!this.ds.hasField("de_panel") || !this.ds.axisNames().includes("od_genes")) { this.dePanelCache = null; return null; }
-    const sp = await this.ds.fieldSparse("de_panel");
-    const symbols = await this.ds.axisLabels("od_genes");
-    await this.genes();
-    const globalCol = Int32Array.from(symbols.map((s) => this.geneIndex!.get(s) ?? -1));
+    const name = this.ds.hasField("counts_cellmajor") ? "counts_cellmajor"
+      : (this.ds.hasField("de_panel") ? "de_panel" : null);
+    if (!name) { this.dePanelCache = null; return null; }
+    const fm = this.ds.field(name)!;
+    const geneAxis = fm.span[1] ?? "genes";
+    const allGenes = geneAxis === "genes";
+    const symbols = allGenes ? await this.genes() : await this.ds.axisLabels(geneAxis);
+    let geneCol: Int32Array | null = null;
+    if (!allGenes) { await this.genes(); geneCol = Int32Array.from(symbols.map((s) => this.geneIndex!.get(s) ?? -1)); }
+    const sp = await this.ds.fieldSparse(name);
     this.dePanelCache = {
       data: sp.data instanceof Float64Array ? sp.data : Float64Array.from(sp.data as any),
       indices: sp.indices instanceof Int32Array ? sp.indices : Int32Array.from(sp.indices as any),
       indptr: sp.indptr instanceof Int32Array ? sp.indptr : Int32Array.from(sp.indptr as any),
-      symbols, globalCol, nOd: symbols.length,
+      symbols, geneCol, nGenes: symbols.length, lognorm: fm.state === "lognorm",
     };
     return this.dePanelCache;
   }

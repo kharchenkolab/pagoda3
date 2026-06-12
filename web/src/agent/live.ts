@@ -61,7 +61,7 @@ async function execTool(app: App, name: string, input: any): Promise<string> {
       const { ranked, nA, nB, panel, nGenesRanked } = await app.ctx.view.subsampleDE(Array.from(ids), rest);
       const rows = ranked.slice(0, 20).map((r) => ({ gene: r.gene, symbol: r.symbol, lfc: r.lfc, padj: Math.exp(-Math.abs(r.lfc) * 2) }));
       ag.addRail({ type: "DeTable", title: `DE · selection (${ids.length})`, cap: panel ? "vs rest · panel" : "vs rest · approx", bind: "de:selection", rows });
-      const how = panel ? `O(rows) cell-major panel, ${nGenesRanked} overdispersed genes` : "ranking-grade";
+      const how = panel ? `O(rows) cell-major counts, all ${nGenesRanked} genes` : "ranking-grade";
       return `subsample DE (n=${nA} vs ${nB}, ${how}); top up: ${rows.filter((r) => r.lfc > 0).slice(0, 6).map((r) => r.symbol).join(", ")}`;
     }
     case "get_composition": {

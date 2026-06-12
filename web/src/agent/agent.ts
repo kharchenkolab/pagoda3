@@ -66,7 +66,7 @@ export class Agent {
         const { ranked, nA, nB, approx, panel, nGenesRanked } = await this.ctx.view.subsampleDE(ids, rest);
         const rows = ranked.slice(0, 20).map((r) => ({ gene: r.gene, symbol: r.symbol, lfc: r.lfc, padj: Math.exp(-Math.abs(r.lfc) * 2) }));
         this.addRail({ type: "DeTable", title: `DE · selection (${ids.length} cells)`, cap: `vs rest${approx ? " · approx" : ""}`, bind: "de:selection", rows }, qraw);
-        const how = panel ? `read only your ${nA + nB} sampled rows from the cell-major panel — O(rows) over ${nGenesRanked} overdispersed genes` : `subsampled n=${nA} vs ${nB}`;
+        const how = panel ? `read only your ${nA + nB} sampled rows from the cell-major counts — O(rows) over all ${nGenesRanked} genes` : `subsampled n=${nA} vs ${nB}`;
         this.app.toast(`DE for your ${ids.length}-cell selection is in the rail`, `${how}, ranking-grade. You gave the agent a referent by selecting — the selection carried the 'what', your words the verb. The donor caveat rides on the handle.`);
         return this.app.checkpoint("DE on selection", "Subsample DE scoped to your selection, in the rail.");
       }
