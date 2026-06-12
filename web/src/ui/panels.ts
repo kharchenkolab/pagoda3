@@ -14,13 +14,15 @@ export interface PanelHooks {
   onGeneClick: (symbol: string) => void;
   onSelect: (ids: Int32Array, anchor: { left: number; top: number }) => void;
   registerEmbedding: (ev: EmbeddingView) => void;
-  onCellHover: (index: number | null) => void;                 // embedding → cross-panel hint
-  registerComposition: (r: CompReactor) => void;               // a panel that highlights a category on hint
+  onCellHover: (index: number | null) => void;                 // embedding → cross-panel hint (hover tier)
+  onCellClick: (index: number | null) => void;                 // embedding click → select cluster, or deselect (empty)
+  registerComposition: (r: CompReactor) => void;               // a panel that reacts to selection + hint
 }
 
-// A vocabulary-bound panel that reacts to a coord hint: `grouping` is the categorical it stacks/keys on,
-// `highlight` lifts the given category values (translated in via cells when they differ). null = clear.
-export interface CompReactor { grouping: string; highlight: (values: Set<string> | null) => void; }
+// A vocabulary-bound panel that reacts to the two tiers, distinctly: `setSelect` is the committed selection
+// (strong), `setHover` the ephemeral hint (light). `grouping` is the categorical it stacks/keys on; each set
+// holds the category values to lift (translated in via cells when vocabularies differ). null = clear that tier.
+export interface CompReactor { grouping: string; setSelect: (values: Set<string> | null) => void; setHover: (values: Set<string> | null) => void; }
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
 
@@ -49,6 +51,7 @@ function embeddingBody(ctx: Ctx, hooks: PanelHooks): BuiltBody {
     const ev = new EmbeddingView(host, ctx.embedding.data, ctx.embedding.n);
     ev.onSelect = (ids) => { const r = host.getBoundingClientRect(); hooks.onSelect(ids, { left: r.left + r.width * 0.55, top: r.top + 40 }); };
     ev.onHover = (idx) => hooks.onCellHover(idx);
+    ev.onPick = (idx) => hooks.onCellClick(idx);
     (ev as any)._legend = legend;
     hooks.registerEmbedding(ev);
   };
@@ -57,7 +60,11 @@ function embeddingBody(ctx: Ctx, hooks: PanelHooks): BuiltBody {
 
 export async function paintEmbedding(ev: EmbeddingView, ctx: Ctx) {
   const c = ctx.coord.state;
-  const mask = await focusMaskFor(ctx.view, c.focus, ctx.n);
+  // dim mask: the committed SELECTION when present (its cells stay bright, the rest grey out as context),
+  // else the agent's metadata focus. A cluster selected from ANY panel → same selection → same reaction.
+  let mask: Uint8Array | undefined;
+  if (c.selection) { mask = new Uint8Array(ctx.n); for (let j = 0; j < c.selection.length; j++) mask[c.selection[j]] = 1; }
+  else mask = await focusMaskFor(ctx.view, c.focus, ctx.n);
   const { rgba, legend } = await colorsFor(ctx.view, c.colorBy, mask);
   ev.setColors(rgba);
   ev.setSelection(c.selection);
@@ -141,27 +148,35 @@ async function compositionBody(ctx: Ctx, hooks: PanelHooks): Promise<BuiltBody> 
   const leg = mk("div", "legend"); leg.innerHTML = groups.map((gr, i) => `<span class="lgi" data-g="${esc(gr)}"><span class="sw" style="background:rgb(${catColor(i).join(",")})"></span>${esc(gr)}</span>`).join("");
   const w = mk("div"); w.appendChild(host); w.appendChild(leg);
 
-  // consume hints: lift the named categories, dim the rest, ribbon each across the sample bars
+  // React to BOTH tiers, distinctly: select = committed (heavy dim + bold + bright ribbon), hover = ephemeral
+  // (soft dim + thin cue + faint ribbon). State is internal; re-rendered when either tier updates.
   const ribbons = host.querySelector(".cribbons") as SVGGElement;
-  const highlight = (values: Set<string> | null) => {
-    const segs = host.querySelectorAll<SVGRectElement>(".cseg");
-    if (!values || !values.size) { segs.forEach((s) => s.classList.remove("dim", "hl")); leg.querySelectorAll(".lgi").forEach((e) => e.classList.remove("hl")); ribbons.innerHTML = ""; return; }
-    segs.forEach((s) => { const on = values.has(s.dataset.g!); s.classList.toggle("hl", on); s.classList.toggle("dim", !on); });
-    leg.querySelectorAll<HTMLElement>(".lgi").forEach((e) => e.classList.toggle("hl", values.has(e.dataset.g!)));
+  let selSet: Set<string> | null = null, hovSet: Set<string> | null = null;
+  const ribbonOf = (name: string, opacity: number) => {
+    const t = groups.indexOf(name); if (t < 0) return "";
+    let d = ""; for (let i = 0; i + 1 < samples.length; i++) { const a = seg[t][i], b = seg[t][i + 1]; if (!a || !b) continue;
+      const xr = a.x + bw, xl = b.x, mx = (xr + xl) / 2;
+      d += `<path d="M${xr} ${a.yTop.toFixed(1)} C${mx} ${a.yTop.toFixed(1)} ${mx} ${b.yTop.toFixed(1)} ${xl} ${b.yTop.toFixed(1)} L${xl} ${b.yBot.toFixed(1)} C${mx} ${b.yBot.toFixed(1)} ${mx} ${a.yBot.toFixed(1)} ${xr} ${a.yBot.toFixed(1)} Z" fill="rgb(${catColor(t).join(",")})" fill-opacity="${opacity}"/>`; }
+    return d;
+  };
+  const render = () => {
+    const hasSel = !!(selSet && selSet.size), hasHov = !!(hovSet && hovSet.size);
+    host.querySelectorAll<SVGRectElement>(".cseg").forEach((s) => { const n = s.dataset.g!, inSel = !!selSet?.has(n), inHov = !!hovSet?.has(n);
+      s.classList.toggle("sel", inSel); s.classList.toggle("seldim", hasSel && !inSel);
+      s.classList.toggle("hov", inHov && !inSel); s.classList.toggle("hovdim", !hasSel && hasHov && !inHov); });
+    leg.querySelectorAll<HTMLElement>(".lgi").forEach((e) => { const n = e.dataset.g!; e.classList.toggle("sel", !!selSet?.has(n)); e.classList.toggle("hov", !!hovSet?.has(n)); });
     let paths = "";
-    for (const name of values) { const t = groups.indexOf(name); if (t < 0) continue; const col = catColor(t);
-      for (let i = 0; i + 1 < samples.length; i++) { const a = seg[t][i], b = seg[t][i + 1]; if (!a || !b) continue;
-        const xr = a.x + bw, xl = b.x, mx = (xr + xl) / 2;
-        paths += `<path d="M${xr} ${a.yTop.toFixed(1)} C${mx} ${a.yTop.toFixed(1)} ${mx} ${b.yTop.toFixed(1)} ${xl} ${b.yTop.toFixed(1)} L${xl} ${b.yBot.toFixed(1)} C${mx} ${b.yBot.toFixed(1)} ${mx} ${a.yBot.toFixed(1)} ${xr} ${a.yBot.toFixed(1)} Z" fill="rgb(${col.join(",")})" fill-opacity=".3"/>`; } }
+    if (hasSel) for (const n of selSet!) paths += ribbonOf(n, 0.42);
+    if (hasHov) for (const n of hovSet!) if (!selSet?.has(n)) paths += ribbonOf(n, 0.16);
     ribbons.innerHTML = paths;
   };
-  // emit hints on hover (the bus + translator do the rest); click commits a focus (cell-mediated → dims the UMAP)
+  // emit on hover (hint, light); click commits a SELECTION — the exact cell-set any panel would produce
   const nameAt = (e: Event) => ((e.target as Element).closest(".cseg, .lgi") as HTMLElement | null)?.dataset.g || null;
   w.addEventListener("pointermove", (e) => { const n = nameAt(e); if (n) ctx.coord.setHint(grouping, n); else ctx.coord.clearHint(); });
   w.addEventListener("pointerleave", () => ctx.coord.clearHint());
-  host.addEventListener("click", (e) => { const r = (e.target as Element).closest(".cseg") as HTMLElement | null; if (r) ctx.coord.setFocus(grouping, r.dataset.g!); });
+  w.addEventListener("click", (e) => { const n = nameAt(e); if (n) ctx.coord.setSelection(ctx.cellsOfCategory(grouping, n)); });
 
-  return { el: w, afterAttach: () => hooks.registerComposition({ grouping, highlight }) };
+  return { el: w, afterAttach: () => hooks.registerComposition({ grouping, setSelect: (v) => { selSet = v; render(); }, setHover: (v) => { hovSet = v; render(); } }) };
 }
 
 function volcanoBody(p: Panel, _ctx: Ctx): BuiltBody {

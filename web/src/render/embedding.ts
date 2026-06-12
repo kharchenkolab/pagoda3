@@ -13,6 +13,7 @@ export class EmbeddingView {
   private radius = 2.4;
   onSelect?: (ids: Int32Array) => void;
   onHover?: (index: number | null) => void;   // a cell under the cursor (or null) — emits the cross-panel hint
+  onPick?: (index: number | null) => void;    // a plain click: a cell (→ select its cluster) or empty (→ deselect)
 
   constructor(container: HTMLElement, emb: Float32Array, n: number) {
     this.n = n;
@@ -45,6 +46,8 @@ export class EmbeddingView {
       layers: this.layers(),
       // hover IS available in pan mode — picking fires on move, not drag. Emit the picked cell (or null).
       onHover: (info: any) => this.onHover?.(info && info.index != null && info.index >= 0 ? info.index : null),
+      // plain click selects the clicked cell's cluster; click on empty space deselects. Shift-clicks are the brush.
+      onClick: (info: any) => { if (info?.srcEvent?.shiftKey) return; this.onPick?.(info && info.index != null && info.index >= 0 ? info.index : null); },
       getCursor: ({ isDragging, isHovering }: any) => (isDragging ? "grabbing" : isHovering ? "crosshair" : "grab"),
     });
     canvas.addEventListener("pointerleave", () => this.onHover?.(null));
@@ -76,8 +79,8 @@ export class EmbeddingView {
             id: "sel",
             data: { length: this.n },
             getPosition: (_: any, { index }: any) => (this.selected[index] ? [this.positions[index * 2], this.positions[index * 2 + 1]] : [1e9, 1e9]),
-            radiusUnits: "pixels", getRadius: this.radius + 1.6,
-            stroked: true, filled: false, getLineColor: [92, 200, 255, 255], lineWidthUnits: "pixels", getLineWidth: 1.2,
+            radiusUnits: "pixels", getRadius: this.radius + 2.2,
+            stroked: true, filled: false, getLineColor: [120, 224, 255, 255], lineWidthUnits: "pixels", getLineWidth: 1.6,
             updateTriggers: { getPosition: this.selVersion },
           }) as any
         : null,

@@ -99,6 +99,7 @@ export class App {
       onSelect: (ids, anchor) => { this.coord.setSelection(ids); this.lastSelAnchor = anchor; this.openSelpop(); },
       registerEmbedding: (ev) => this.embeddings.push(ev),
       onCellHover: (idx) => this.onCellHover(idx),
+      onCellClick: (idx) => this.onCellClick(idx),
       registerComposition: (r) => this.compReactors.push(r),
     };
   }
@@ -108,6 +109,13 @@ export class App {
     if (index == null) { this.coord.clearHint(); return; }
     const g = this.ctx.keyGrouping(), v = this.ctx.categoryAt(g, index);
     if (v) this.coord.setHint(g, v); else this.coord.clearHint();
+  }
+  // embedding click → select the clicked cell's whole cluster (the same cell-set a panel click makes);
+  // a click on empty space clears the selection. Origin-independent: any "select cluster" → one reaction.
+  onCellClick(index: number | null) {
+    if (index == null) { this.coord.setSelection(null); return; }
+    const g = this.ctx.keyGrouping(), v = this.ctx.categoryAt(g, index);
+    this.coord.setSelection(v ? this.ctx.cellsOfCategory(g, v) : null);
   }
 
   async fullRender() {
@@ -189,7 +197,13 @@ export class App {
     this.fullRender(); this.checkpoint("reorder · " + m.title, "You dragged a panel — direct edits to your own layout always win.");
   }
 
-  async repaint() { for (const ev of this.embeddings) await paintEmbedding(ev, this.ctx); this.$("railBtn").innerHTML = "Answers" + (this.rail.length ? ` <span class="badge">${this.rail.length}</span>` : ""); }
+  async repaint() {
+    for (const ev of this.embeddings) await paintEmbedding(ev, this.ctx);
+    // committed selection → its blocks on every vocabulary-bound panel (read the cell-set in their grouping)
+    const sel = this.coord.state.selection;
+    for (const r of this.compReactors) r.setSelect(sel ? new Set(this.ctx.cellsToCategories(sel, r.grouping).filter((t) => t.frac >= 0.08).map((t) => t.value)) : null);
+    this.$("railBtn").innerHTML = "Answers" + (this.rail.length ? ` <span class="badge">${this.rail.length}</span>` : "");
+  }
 
   // The light hover path — no recolour, no checkpoint: a locator ring on the embedding at the hinted
   // category's cell centroid, plus a category highlight on any vocabulary-bound panel. Cross-vocabulary
@@ -199,10 +213,10 @@ export class App {
     const xy = hint ? this.ctx.categoryCentroid(hint.grouping, hint.value) : null;
     for (const ev of this.embeddings) ev.setHint(xy);
     for (const r of this.compReactors) {
-      if (!hint) { r.highlight(null); continue; }
-      if (hint.grouping === r.grouping) { r.highlight(new Set([hint.value])); continue; }   // same vocabulary — direct
-      if (this.ctx.translateCheap()) r.highlight(new Set(this.ctx.translate(hint.grouping, hint.value, r.grouping).filter((t) => t.frac >= 0.08).map((t) => t.value)));
-      else r.highlight(null);   // translation too costly for hover — the link commits on click
+      if (!hint) { r.setHover(null); continue; }
+      if (hint.grouping === r.grouping) { r.setHover(new Set([hint.value])); continue; }   // same vocabulary — direct
+      if (this.ctx.translateCheap()) r.setHover(new Set(this.ctx.translate(hint.grouping, hint.value, r.grouping).filter((t) => t.frac >= 0.08).map((t) => t.value)));
+      else r.setHover(null);   // translation too costly for hover — the link commits on click
     }
   }
 

@@ -361,14 +361,18 @@ function sample(arr: number[], k: number): number[] {
 
 // ----- color helpers -----
 const RAMP_LO = [27, 34, 48], RAMP_HI = [224, 164, 88]; // inset -> amber (matches the mock)
+// out-of-selection cells go to a desaturated slate (kept VISIBLE as context) so the in-selection cells
+// pop by colour + halo — clearer than dropping alpha toward invisible (the old behaviour).
+const DIM_RGB = [62, 68, 80], DIM_A = 150;
 export function scalarToRGBA(values: ArrayLike<number>, max: number, focusMask?: Uint8Array): Uint8Array {
   const n = values.length, out = new Uint8Array(n * 4), m = max || 1;
   for (let i = 0; i < n; i++) {
+    if (focusMask && !focusMask[i]) { out[i * 4] = DIM_RGB[0]; out[i * 4 + 1] = DIM_RGB[1]; out[i * 4 + 2] = DIM_RGB[2]; out[i * 4 + 3] = DIM_A; continue; }
     const t = Math.max(0, Math.min(1, values[i] / m));
     out[i * 4] = RAMP_LO[0] + (RAMP_HI[0] - RAMP_LO[0]) * t;
     out[i * 4 + 1] = RAMP_LO[1] + (RAMP_HI[1] - RAMP_LO[1]) * t;
     out[i * 4 + 2] = RAMP_LO[2] + (RAMP_HI[2] - RAMP_LO[2]) * t;
-    out[i * 4 + 3] = focusMask && !focusMask[i] ? 40 : 230;
+    out[i * 4 + 3] = 230;
   }
   return out;
 }
@@ -397,9 +401,9 @@ function hslToRgb(h: number, s: number, l: number): [number, number, number] {
 export function codesToRGBA(codes: Int32Array, focusMask?: Uint8Array): Uint8Array {
   const n = codes.length, out = new Uint8Array(n * 4);
   for (let i = 0; i < n; i++) {
+    if (focusMask && !focusMask[i]) { out[i * 4] = DIM_RGB[0]; out[i * 4 + 1] = DIM_RGB[1]; out[i * 4 + 2] = DIM_RGB[2]; out[i * 4 + 3] = DIM_A; continue; }
     const c = catColor(codes[i]);
-    out[i * 4] = c[0]; out[i * 4 + 1] = c[1]; out[i * 4 + 2] = c[2];
-    out[i * 4 + 3] = focusMask && !focusMask[i] ? 40 : 230;
+    out[i * 4] = c[0]; out[i * 4 + 1] = c[1]; out[i * 4 + 2] = c[2]; out[i * 4 + 3] = 230;
   }
   return out;
 }

@@ -171,12 +171,15 @@ button{font-family:inherit}
 /* shared bits */
 svg{display:block;width:100%;height:auto}
 .axis{fill:var(--faint);font-family:var(--mono);font-size:9px} .gl{stroke:var(--line);stroke-width:1}
-/* composition cross-panel link: dim the off-categories, lift the hinted one, ribbon it across the sample bars */
-.comphost .cseg{fill-opacity:.9;transition:fill-opacity .12s}
-.comphost .cseg.dim{fill-opacity:.12}
-.comphost .cseg.hl{fill-opacity:1;stroke:var(--text);stroke-width:.5}
+/* composition cross-panel link — two tiers. hover = light (soft dim, thin cyan cue); select = strong
+   (heavy dim, bold outline). select dominates when both are present. ribbons drawn in the .cribbons group. */
+.comphost .cseg{fill-opacity:.9;transition:fill-opacity .1s,stroke-width .1s}
+.comphost .cseg.hovdim{fill-opacity:.5}
+.comphost .cseg.hov{fill-opacity:1;stroke:var(--cyan);stroke-width:.5}
+.comphost .cseg.seldim{fill-opacity:.1}
+.comphost .cseg.sel{fill-opacity:1;stroke:var(--text);stroke-width:.9}
 .comphost .cribbons{pointer-events:none}
-.legend .lgi.hl{color:var(--text)} .legend .lgi.hl .sw{box-shadow:0 0 0 1.5px var(--text)}
+.legend .lgi{cursor:pointer} .legend .lgi.hov{color:var(--dim)} .legend .lgi.sel{color:var(--text)} .legend .lgi.sel .sw{box-shadow:0 0 0 1.5px var(--text)}
 .legend{display:flex;flex-wrap:wrap;gap:9px;margin-top:8px;font-size:11px;color:var(--dim)}
 .legend span{display:flex;align-items:center;gap:5px} .sw{width:9px;height:9px;border-radius:3px;display:inline-block}
 table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:11px}
