@@ -4,6 +4,7 @@ import { Coord, handleLabel } from "../data/coord.ts";
 import { Panel, PanelHooks, bodyFor, paintEmbedding } from "./panels.ts";
 import { EmbeddingView } from "../render/embedding.ts";
 import { Agent, Scope } from "../agent/agent.ts";
+import { checkLive } from "../agent/live.ts";
 
 interface Checkpoint { i: number; q: string; why: string; state: any; }
 interface WS { colorBy: string; panels: Partial<Panel>[]; }
@@ -79,6 +80,8 @@ export class App {
     this.switchWS("Overview", false);
     this.checkpoint("session start", "Baseline Overview workspace.");
     setTimeout(() => this.toast("Drag with Shift to select cells · ⌘K to ask · right-click a panel", null), 500);
+    // connect the live Anthropic planner if the proxy + token are reachable
+    checkLive().then((ok) => { this.agent.live = ok; if (ok) this.toast("Live agent connected · Opus", "The agent is the real Anthropic planner now — it drives the coordination space through tools, at the lowest sufficient rung."); });
     // boot nudge (Mode 5) from a real confound in the data
     setTimeout(() => this.agent.armBootNudge(), 2600);
   }

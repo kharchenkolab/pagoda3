@@ -33,6 +33,6 @@ function zarrStorePlugin() {
 
 export default defineConfig({
   plugins: [zarrStorePlugin()],
-  server: { port: 8787, fs: { allow: ["..", "../..", "../../lstar"] } },
+  server: { port: 8787, fs: { allow: ["..", "../..", "../../lstar"] }, proxy: { "/api": "http://localhost:8786" } },
   build: { target: "es2022" },
 });

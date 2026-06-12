@@ -6,6 +6,7 @@ import type { App } from "../ui/shell.ts";
 import { mk } from "../ui/dom.ts";
 import { handleLabel } from "../data/coord.ts";
 import type { Panel } from "../ui/panels.ts";
+import { runLive } from "./live.ts";
 
 export interface Scope { type: "selection" | "panel"; summary: string; ids?: number[]; }
 
@@ -13,8 +14,29 @@ const REGISTRY: Record<string, number> = { Embedding: 1, CompositionBars: 1, DeT
 
 export class Agent {
   app: App;
+  live = false;                 // set true when the proxy + token are reachable
+  private abortCtrl?: AbortController;
   constructor(app: App) { this.app = app; }
   get ctx() { return this.app.ctx; }
+
+  // dispatcher: real Anthropic planner when available, faithful mock otherwise
+  async ask(qraw: string, sc?: Scope | null) {
+    if (this.live) return this.askLive(qraw, sc);
+    return this.askMock(qraw, sc);
+  }
+  async askLive(qraw: string, sc?: Scope | null) {
+    this.app.hideSelpop();
+    this.abortCtrl = new AbortController();
+    try { await runLive(this.app, qraw, this.abortCtrl.signal); }
+    catch (e) {
+      this.live = false;
+      if (this.app.thread) this.settleThread(null);
+      this.app.setPip("idle");
+      this.app.toast("Live agent unavailable — using local planner", String((e as any)?.message || e));
+      return this.askMock(qraw, sc);
+    }
+  }
+  stopLive() { this.abortCtrl?.abort(); }
 
   validate(p: Partial<Panel>) {
     if (!REGISTRY[p.type!]) return { ok: false, reason: `unknown component type “${p.type}” — not in the validated registry` };
@@ -34,8 +56,8 @@ export class Agent {
 
   addRail(p: Partial<Panel>, q?: string) { const panel = this.app.newPanel({ ...p, q }); this.app.rail.unshift(panel); this.app.renderRail(); return panel; }
 
-  // ---- the planner ----
-  async ask(qraw: string, sc?: Scope | null) {
+  // ---- the mock planner (fallback) ----
+  async askMock(qraw: string, sc?: Scope | null) {
     const q = qraw.toLowerCase().trim(); if (!q) return; this.app.hideSelpop();
     // selection-scoped
     if (sc && sc.type === "selection") {
@@ -102,8 +124,14 @@ export class Agent {
     const hd = mk("div", "thrhd"); hd.appendChild(mk("span", undefined, t.kind === "autopilot" ? "AUTOPILOT" : t.kind === "nudge" ? "FROM THE AGENT" : "CONVERSATION"));
     const live = mk("div", "live" + (t.live ? "" : " idle")); live.innerHTML = `<span class="d"></span>${t.kind === "autopilot" ? (t.paused ? "paused" : t.live ? "working" : "done") : t.live ? "live" : "resolved"}`; hd.appendChild(live);
     if (t.kind === "autopilot" && t.live) { const c = mk("div", "ctrls"); const pz = mk("button", undefined, t.paused ? "Resume" : "Pause"); pz.onclick = () => this.toggleAutopilot(); const st = mk("button", undefined, "Stop"); st.onclick = () => this.stopAutopilot(); c.appendChild(pz); c.appendChild(st); hd.appendChild(c); }
+    if (t.kind === "live" && t.live) { const c = mk("div", "ctrls"); const st = mk("button", undefined, "Stop"); st.onclick = () => this.stopLive(); c.appendChild(st); hd.appendChild(c); }
     inner.appendChild(hd);
-    if (t.kind === "autopilot") {
+    if (t.kind === "live") {
+      for (const e of t.entries) {
+        if (e.tool) { const m = e.status === "done" ? "✓" : "◐"; const d = mk("div", "step " + (e.status || "active")); d.innerHTML = `<span class="mk">${m}</span><div><div>${e.label}</div>${e.detail ? `<div class="sd">${e.detail}</div>` : ""}</div>`; inner.appendChild(d); }
+        else { const d = mk("div", "turn " + e.role); d.innerHTML = `<span class="ava">${e.role === "user" ? "me" : "✦"}</span><div class="msg">${e.text}</div>`; inner.appendChild(d); }
+      }
+    } else if (t.kind === "autopilot") {
       for (const s of t.steps) {
         if (s.proposal) { const d = mk("div", "step proposal"); d.innerHTML = `<div><b>${s.label}</b>${s.detail ? `<div class="sd">${s.detail}</div>` : ""}</div>`; if (s.status === "active") { const a = mk("div", "pacts"); const ok = mk("button", "ok", "Apply"); ok.onclick = s.onApply; const sk = mk("button", undefined, "Skip"); sk.onclick = s.onSkip; a.appendChild(ok); a.appendChild(sk); d.appendChild(a); } inner.appendChild(d); continue; }
         const m = s.status === "done" ? "✓" : s.status === "active" ? "◐" : s.status === "skipped" ? "–" : "○"; const d = mk("div", "step " + s.status); d.innerHTML = `<span class="mk">${m}</span><div><div>${s.label}</div>${s.detail ? `<div class="sd">${s.detail}</div>` : ""}</div>`; inner.appendChild(d);
