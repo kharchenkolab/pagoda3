@@ -18,7 +18,9 @@ SRC = os.path.join(HERE, "data", "GSM5746259")
 PFX = "GSM5746259_MGI0369_1_SLAB-145-0"
 OUT = os.path.join(HERE, "..", "web", "public", "real.lstar.zarr")
 sys.path.insert(0, os.path.join(HERE, "..", "..", "lstar", "python", "src"))
+sys.path.insert(0, os.path.join(HERE, "..", "py", "src"))
 import lstar
+import pagoda3
 NHVG = 3000
 
 
@@ -124,7 +126,7 @@ def main():
     ds.add_field("markers_leiden_padj", padj, role="measure", span=["genes", "groups_leiden"])
     # top up the viewer profile: od_genes + the cell-major de_panel (CSR log1p) for O(rows)
     # selection DE. Idempotent — skips the cluster stats/markers already added above.
-    lstar.write_viewer(ds, "leiden")
+    pagoda3.write_viewer(ds, "leiden")
     ds.profiles = list(ds.profiles) + ["scanpy@1"]
     out = os.path.abspath(OUT)
     if os.path.exists(out):

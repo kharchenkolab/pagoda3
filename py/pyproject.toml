@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pagoda3"
+version = "0.0.1"
+description = "pagoda3 — an agent-driven, browser-native viewer for single-cell data (via the L* / lstar store format)"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Peter Kharchenko and the pagoda3 authors" }]
+dependencies = ["numpy", "scipy", "lstar"]
+
+[project.optional-dependencies]
+anndata = ["anndata"]
+dev = ["pytest"]
+
+[tool.setuptools.packages.find]
+where = ["src"]

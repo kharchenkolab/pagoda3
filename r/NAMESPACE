@@ -1,0 +1,4 @@
+export(write_viewer)
+export(view)
+importFrom(methods, as, is)
+importFrom(stats, loess, predict)

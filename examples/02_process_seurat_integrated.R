@@ -4,7 +4,7 @@
 # builds the profile; lstar_write() serializes. No Python in the loop.
 #
 #   Seurat object -> read_seurat -> adapt to the app's canonical names -> write_viewer -> .lstar.zarr
-suppressMessages({ library(Seurat); library(SeuratObject); library(lstar) })
+suppressMessages({ library(Seurat); library(SeuratObject); library(lstar); library(pagoda3) })
 
 SRC <- "/Users/peter.kharchenko/.aba/runtime/projects/prj_ab1b55fe/work/ana_237baddd/seurat_integrated.rds"
 OUT <- "/Users/peter.kharchenko/pagoda/pagoda3/web/public/pbmc_integrated.lstar.zarr"
@@ -49,7 +49,7 @@ for (ax in c("pca", "integrated.cca")) ds$axes[[ax]] <- NULL
 
 # --- viewer profile (R, kernel-backed): per-annotation stats+markers (leiden AND cell_type),
 #     whole-dataset od_score navigator, cell_order, counts_cellmajor ---
-ds <- write_viewer(ds, grouping = "leiden", also = "cell_type")
+ds <- pagoda3::write_viewer(ds, grouping = "leiden", also = "cell_type")
 message("fields: ", paste(names(ds$fields), collapse = ", "))
 message("cells x genes: ", length(ds$axes$cells$labels), " x ", length(ds$axes$genes$labels),
         " | clusters: ", length(ds$axes$groups_leiden$labels))

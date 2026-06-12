@@ -1,0 +1,14 @@
+Package: pagoda3
+Title: An Agent-Driven Browser Viewer for Single-Cell Data (via L*/lstar)
+Version: 0.0.1
+Authors@R: person("Peter", "Kharchenko", role = c("aut", "cre"),
+                  email = "peter.kharchenko@gmail.com")
+Description: Launcher and browsable-store preparation for the pagoda3 single-cell viewer.
+    The viewer is a browser app; this package turns a single-cell object (or an L* store) into
+    something it opens fast and launches it locally. lstar is the substrate (format conversion and
+    compute kernels); pagoda3 owns the viewer policy (which navigators to precompute).
+License: MIT + file LICENSE
+Encoding: UTF-8
+Imports: lstar, Matrix, methods, stats, utils
+Suggests: testthat (>= 3.0.0)
+RoxygenNote: 7.3.1

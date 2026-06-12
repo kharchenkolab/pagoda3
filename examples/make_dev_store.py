@@ -26,7 +26,9 @@ import numpy as np
 import scipy.sparse as sp
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "lstar", "python", "src"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "py", "src"))
 import lstar
+import pagoda3
 
 OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(__file__), "..", "web", "public", "sample.lstar.zarr")
 NCELLS = int(sys.argv[2]) if len(sys.argv) > 2 else 8000
@@ -135,7 +137,7 @@ def main():
 
     # viewer profile: cluster stats, marker tables, groups_leiden axis, od_genes + the
     # cell-major de_panel (CSR, log1p) that powers O(rows) subsample DE on selections.
-    lstar.write_viewer(ds, "leiden", n_od=min(300, NGENES))
+    pagoda3.write_viewer(ds, "leiden", also=["cell_type"])
     ds.profiles = list(ds.profiles) + ["pagoda2.synthetic@0.1"]
 
     out = os.path.abspath(OUT)
