@@ -79,6 +79,18 @@ export class Agent {
     if (/take it from here|set everything up|set it all up|optimi[sz]e|compare conditions|do the (whole|full)/.test(q)) { if (this.app.locked) return this.app.toast("Layout is locked — unlock to let autopilot reconfigure", "You hold the wheel."); return this.startAutopilot(qraw); }
     // validation / refusal
     if (/\b3d\b|three.?d|sankey|chord|word ?cloud|raw ?html|<\w+>/.test(q)) { const type = /3d|three/.test(q) ? "Embedding3D" : /sankey/.test(q) ? "Sankey" : "RawHTML"; this.addRail({ type, title: type + " (requested)" } as any, qraw); this.app.toast("That isn't in the validated component set", "The agent authors a spec the viewer validates against a fixed registry — an unknown type becomes a visible inert placeholder, never raw markup. I'd compose existing components instead."); return this.app.checkpoint("rejected · " + type, "An unknown component was refused — shown as a placeholder, not executed."); }
+    // examine the markers OF a set of clusters / cell types -> a marker heatmap (+ colour for context)
+    if (/marker|defin|signature|which gene/.test(q) && !/selection/.test(q)) {
+      const groupings = this.ctx.groupings();
+      const grouping = /cell ?type|annotation|proposed|these type/.test(q) && groupings.includes("cell_type") ? "cell_type"
+        : (groupings.includes("leiden") ? "leiden" : groupings[0] || "leiden");
+      this.app.coord.setColor("meta:" + grouping);
+      this.addRail({ type: "Heatmap", title: `Marker heatmap · ${grouping}`, cap: `top genes × ${grouping}`, group: grouping, bind: "markers:" + grouping, full: true }, qraw);
+      const mk = await this.ctx.markers(grouping);
+      const eg = [...mk.entries()].slice(0, 3).map(([g, r]) => `<b>${g}</b>: ${r.slice(0, 3).map((x) => x.symbol).join(", ")}`).join(" · ");
+      this.app.toast(`Marker heatmap for the ${grouping} groups is in the rail`, `Top genes per group (precomputed cluster-vs-rest over the ${grouping} grouping); click a gene to colour by it. Coloured the embedding by ${grouping} for context. ${eg}`);
+      return this.app.checkpoint(`markers · ${grouping}`, `Marker heatmap for the ${grouping} grouping.`);
+    }
     // rung 0 — coordinate
     if (/il6/.test(q) && !/donor|sample|driv/.test(q)) return this.setColorVerb("gene:IL6", "Asked to show IL6", "Your request mapped to the smallest edit — a colour change on the shared scope — so no panel or layout moved.");
     if (/cd3d|t.?cell/.test(q)) return this.setColorVerb("gene:CD3D", "Asked for CD3D", "Coordinated recolour.");

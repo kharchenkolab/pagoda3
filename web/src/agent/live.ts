@@ -18,6 +18,7 @@ const TOOLS: Tool[] = [
   { name: "get_markers", description: "Add a ranked marker-gene table for a group (cluster or annotation) to the disposable answer rail, and return the top genes. Rung-1 answer.", input_schema: { type: "object", properties: { cluster: { type: "string", description: "group id, e.g. a leiden cluster (c0 / 5) or a cell type name" }, grouping: { type: "string", description: "which precomputed grouping the id belongs to (e.g. leiden or cell_type); defaults to leiden" } }, required: ["cluster"] } },
   { name: "run_de_on_selection", description: "Run subsample differential expression on the current cell selection vs the rest, ranked over ALL genes (scope-correct, ranking-grade). Adds a DE table to the rail. Only valid when the user has a selection.", input_schema: { type: "object", properties: {} } },
   { name: "get_overdispersed_genes", description: "Compute the most overdispersed (highly variable) genes for a scope — the current selection if there is one, else the whole dataset — recomputed for that scope (residual above the mean-variance trend), not a global shortlist. Adds a ranked gene list to the rail. Use when asked what varies / what's heterogeneous within a subset.", input_schema: { type: "object", properties: {} } },
+  { name: "show_marker_heatmap", description: "Add a marker heatmap (top genes per group, gene × group) for a grouping to the rail — the canonical view to examine which genes define each cluster or cell type. Use when asked to examine/see the markers OF a set of clusters or cell types. grouping is one of the precomputed groupings (e.g. leiden, cell_type).", input_schema: { type: "object", properties: { grouping: { type: "string", description: "a precomputed grouping: leiden or cell_type" } }, required: ["grouping"] } },
   { name: "get_composition", description: "Add a per-sample cluster-composition panel (compositional) to the rail and return the disease-vs-control cluster fractions. Rung-1.", input_schema: { type: "object", properties: {} } },
   { name: "get_overdispersion", description: "Add the overdispersed gene-program list to the rail. Rung-1.", input_schema: { type: "object", properties: {} } },
   { name: "propose_workspace", description: "Propose switching to a named workspace (a bigger, reversible layout change the human confirms). name is one of: Overview, Markers, QC triage, Aspects.", input_schema: { type: "object", properties: { name: { type: "string" } }, required: ["name"] } },
@@ -30,7 +31,7 @@ async function systemPrompt(app: App): Promise<string> {
 
 PRINCIPLE OF RESTRAINT — always prefer the SMALLEST change that answers the question:
 - recolour/focus in place (set_color, set_focus) — the default;
-- a disposable answer in the rail (get_markers, run_de_on_selection, get_overdispersed_genes, get_composition, get_overdispersion, add_note) when a new view is needed;
+- a disposable answer in the rail (get_markers, show_marker_heatmap, run_de_on_selection, get_overdispersed_genes, get_composition, get_overdispersion, add_note) when a new view is needed;
 - a workspace proposal (propose_workspace) only for a deliberate layout change — and it is a PROPOSAL the human confirms.
 The change itself is visible, so keep your prose to ONE short sentence. Never narrate state the user can already see.
 
@@ -69,6 +70,14 @@ async function execTool(app: App, name: string, input: any): Promise<string> {
       const scope = sel?.length ? `selection (${sel.length} cells)` : "whole dataset";
       ag.addRail({ type: "GeneList", title: `Overdispersed · ${scope}`, cap: "od (resid)", bind: "hvg:scope", rows });
       return `top overdispersed genes for the ${scope}, recomputed for this scope: ${hv.slice(0, 10).map((h) => h.symbol).join(", ")}`;
+    }
+    case "show_marker_heatmap": {
+      const grouping = app.ctx.groupings().includes(input.grouping) ? input.grouping : "leiden";
+      app.coord.setColor("meta:" + grouping);
+      ag.addRail({ type: "Heatmap", title: `Marker heatmap · ${grouping}`, cap: `top genes × ${grouping}`, group: grouping, bind: "markers:" + grouping, full: true });
+      const mk = await app.ctx.markers(grouping);
+      const eg = [...mk.entries()].slice(0, 3).map(([g, r]) => `${g}: ${r.slice(0, 3).map((x) => x.symbol).join("/")}`).join("; ");
+      return `added a marker heatmap for the ${grouping} grouping (${[...mk.keys()].length} groups) and coloured the embedding by it; e.g. ${eg}`;
     }
     case "run_de_on_selection": {
       const ids = app.coord.state.selection; if (!ids?.length) return "no selection — ask the user to drag-select cells first";
@@ -145,6 +154,7 @@ function toolLabel(tu: any): string {
   if (tu.name === "set_color") return `recolour → ${i.handle}`;
   if (tu.name === "get_markers") return `markers · ${i.cluster}`;
   if (tu.name === "get_overdispersed_genes") return `overdispersed genes`;
+  if (tu.name === "show_marker_heatmap") return `marker heatmap · ${i.grouping}`;
   if (tu.name === "propose_workspace") return `propose workspace · ${i.name}`;
   if (tu.name === "set_focus") return `focus · ${i.dim}=${i.value}`;
   return tu.name.replace(/_/g, " ");
