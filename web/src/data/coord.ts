@@ -8,12 +8,15 @@ export interface CoordState {
   // ephemeral cross-panel hover cue (a group a linked panel is pointing at) — a light correspondence
   // hint, NOT a committed change: panels show a subtle locator, no recolour, no checkpoint.
   hint: { grouping: string; value: string } | null;
+  // view options live HERE (not hardcoded in paint) so the agent AND direct manipulation both drive them
+  // — the generative-UX premise. legend:null = auto (key for numeric colourings, hidden when labels carry it).
+  display: { labels: boolean; legend: boolean | null };
 }
 
 type Listener = (s: CoordState, changed: (keyof CoordState)[]) => void;
 
 export class Coord {
-  private s: CoordState = { colorBy: "meta:leiden", focus: null, selection: null, geneFocus: null, hint: null };
+  private s: CoordState = { colorBy: "meta:leiden", focus: null, selection: null, geneFocus: null, hint: null, display: { labels: true, legend: null } };
   private listeners = new Set<Listener>();
 
   get state() { return this.s; }
@@ -31,8 +34,9 @@ export class Coord {
   setFocus(dim: string, value: string) { this.set({ focus: { dim, value } }); }
   clearFocus() { this.set({ focus: null, selection: null }); }
   setSelection(ids: Int32Array | null) { this.set({ selection: ids }); }
-  setHint(grouping: string, value: string) { this.set({ hint: { grouping, value } }); }
+  setHint(grouping: string, value: string) { const h = this.s.hint; if (h && h.grouping === grouping && h.value === value) return; this.set({ hint: { grouping, value } }); }
   clearHint() { if (this.s.hint) this.set({ hint: null }); }
+  setDisplay(patch: Partial<CoordState["display"]>) { this.set({ display: { ...this.s.display, ...patch } }); }
 }
 
 export function handleLabel(handle: string): string {

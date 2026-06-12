@@ -23,6 +23,7 @@ const TOOLS: Tool[] = [
   { name: "get_overdispersion", description: "Add the overdispersed gene-program list to the rail. Rung-1.", input_schema: { type: "object", properties: {} } },
   { name: "propose_workspace", description: "Propose switching to a named workspace (a bigger, reversible layout change the human confirms). name is one of: Overview, Markers, QC triage, Aspects.", input_schema: { type: "object", properties: { name: { type: "string" } }, required: ["name"] } },
   { name: "add_note", description: "Add a short text note to the rail (for an answer that needs no view).", input_schema: { type: "object", properties: { text: { type: "string" } }, required: ["text"] } },
+  { name: "set_display", description: "Toggle embedding view options: on-plot category labels and the colour legend. Defaults are automatic (labels on for categorical colourings; legend shown for gene/numeric colourings, hidden when labels carry identity). Pass only the field(s) to change. Use when the human asks to show/hide the labels or bring back / hide the legend.", input_schema: { type: "object", properties: { labels: { type: "boolean", description: "show on-plot cell-type/cluster labels" }, legend: { type: "boolean", description: "show the colour legend (swatches for categorical, low→high for numeric)" } } } },
 ];
 
 async function systemPrompt(app: App): Promise<string> {
@@ -97,6 +98,7 @@ async function execTool(app: App, name: string, input: any): Promise<string> {
     case "get_overdispersion": { ag.addRail({ type: "Overdispersion", title: "Overdispersed programs", cap: "gene programs", bind: "aspect:overdispersion" }); return "added overdispersed-programs list"; }
     case "propose_workspace": { ag.proposeWorkspace(input.name); return `proposed workspace ${input.name} (awaiting the human's OK)`; }
     case "add_note": { ag.addRail({ type: "Note", title: "Note", text: input.text }); return "added note"; }
+    case "set_display": { const p: any = {}; if (typeof input.labels === "boolean") p.labels = input.labels; if (typeof input.legend === "boolean") p.legend = input.legend; app.coord.setDisplay(p); return `display ${JSON.stringify(p)}`; }
     default: return `unknown tool ${name}`;
   }
 }

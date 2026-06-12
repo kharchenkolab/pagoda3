@@ -55,6 +55,15 @@ export class Ctx {
     return this.markerCache.get(grouping)!;
   }
 
+  // Is the active colouring a categorical annotation (vs a gene/qc gradient)? Drives the labels/legend
+  // defaults — read by both the header toggles and paintEmbedding so they agree.
+  colorIsCategorical(): boolean {
+    const cb = this.coord.state.colorBy;
+    if (!cb.startsWith("meta:")) return false;
+    const m = this.meta.get(cb.slice(5));
+    return !!m && m.kind === "categorical";
+  }
+
   // Which precomputed groupings the store carries (markers/stats navigators), e.g. leiden, cell_type.
   groupings(): string[] {
     return this.view.ds.axisNames()

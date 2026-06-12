@@ -136,6 +136,17 @@ export class App {
       s.innerHTML = opts.map(([v, l]) => `<option value="${v}"${v === cur ? " selected" : ""}>${l}</option>`).join("");
       s.onchange = () => this.coord.setColor(s.value);
       sp.appendChild(s);
+      // view-option toggles — the direct-manipulation tier of display state (the agent drives the same via set_display).
+      // data-tg lets syncToggles() refresh their on/off when the agent flips display, so both tiers stay in step.
+      const disp = this.coord.state.display, cat = this.ctx.colorIsCategorical();
+      const lblBtn = Object.assign(mk("button", "mini" + (disp.labels && cat ? " on" : ""), "labels"), { title: "toggle on-plot labels" }) as HTMLButtonElement;
+      lblBtn.dataset.tg = "labels";
+      lblBtn.onclick = () => this.coord.setDisplay({ labels: !this.coord.state.display.labels });
+      const legBtn = Object.assign(mk("button", "mini" + ((disp.legend ?? !cat) ? " on" : ""), "legend"), { title: "toggle colour legend" }) as HTMLButtonElement;
+      legBtn.dataset.tg = "legend";
+      legBtn.onclick = () => this.coord.setDisplay({ legend: !(this.coord.state.display.legend ?? !this.ctx.colorIsCategorical()) });
+      if (cat) sp.appendChild(lblBtn);
+      sp.appendChild(legBtn);
     }
     const span = Object.assign(mk("button", "mini", isFull ? "◫" : "▦"), { title: "maximize" }) as HTMLButtonElement;
     span.onclick = () => { p.full = !isFull; this.fullRender(); this.checkpoint((p.full ? "maximize · " : "restore · ") + p.title, "You resized a panel — the layout is yours to shape."); };
@@ -350,10 +361,18 @@ export class App {
     });
     this.coord.subscribe((_s, changed) => {
       if (changed.length === 1 && changed[0] === "hint") { this.repaintHint(); return; }  // light hover path
-      this.repaint(); this.syncColorSelects();
+      this.repaint(); this.syncColorSelects(); this.syncToggles();
     });
   }
   syncColorSelects() { const v = this.coord.state.colorBy; document.querySelectorAll<HTMLSelectElement>("select.inline").forEach((s) => { if ([...s.options].some((o) => o.value === v)) s.value = v; }); }
+  // reflect display state (set by the agent or a toggle) onto the header toggle buttons — keeps both tiers in step
+  syncToggles() {
+    const d = this.coord.state.display, cat = this.ctx.colorIsCategorical();
+    document.querySelectorAll<HTMLButtonElement>("button.mini[data-tg]").forEach((b) => {
+      const on = b.dataset.tg === "labels" ? (d.labels && cat) : (d.legend ?? !cat);
+      b.classList.toggle("on", on);
+    });
+  }
 
   // expose thread rendering for the agent
   renderThread() { this.agent.renderThread(); }

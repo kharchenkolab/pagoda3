@@ -52,11 +52,12 @@ export async function paintEmbedding(ev: EmbeddingView, ctx: Ctx) {
   const { rgba, legend } = await colorsFor(ctx.view, c.colorBy, mask);
   ev.setColors(rgba);
   ev.setSelection(c.selection);
-  ev.setLabels(await categoryLabels(ctx, c.colorBy));
+  // view options come from the coordination space (agent- and user-drivable), never decided here.
+  const isCat = legend.kind === "categorical";
+  ev.setLabels(c.display.labels && isCat ? await categoryLabels(ctx, c.colorBy) : []);
+  const showLegend = c.display.legend ?? !isCat;   // auto: key for numeric colourings; hidden when on-plot labels carry identity
   const lg = (ev as any)._legend as HTMLElement | undefined;
-  // Categorical identity now lives on the plot (centroid labels), so the swatch legend is redundant
-  // clutter that occludes cells — show the key only for numeric colourings (the low→high gradient).
-  if (lg) lg.innerHTML = legend.kind === "numeric"
+  if (lg) lg.innerHTML = showLegend
     ? `<span class="lt">${legend.title}</span>` + legend.items.map((it) => `<span><span class="sw" style="background:rgb(${it.rgb.join(",")})"></span>${it.label}</span>`).join("")
     : "";
 }

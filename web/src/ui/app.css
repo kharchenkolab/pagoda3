@@ -48,6 +48,7 @@ button{font-family:inherit}
 .ph .sp{margin-left:auto;display:flex;align-items:center;gap:6px}
 .mini{background:var(--inset);color:var(--dim);border:1px solid var(--line);border-radius:6px;font-size:11px;padding:3px 7px;cursor:pointer;font-family:var(--mono);line-height:1}
 .mini:hover{color:var(--text)}
+.mini.on{color:var(--cyan);border-color:var(--cyan)}   /* an engaged view-option toggle (labels / legend) */
 .pbody{padding:11px;min-height:0}
 .workbench .pbody{flex:1 1 auto;overflow:auto}      /* canvas panel bodies fill their (stretched) cell */
 .embpanel .pbody{padding:0;position:relative}
