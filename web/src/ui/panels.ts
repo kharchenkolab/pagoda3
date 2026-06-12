@@ -168,44 +168,67 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
   const seen = new Set<number>(); const rows: { gene: number; symbol: string }[] = [];
   for (const grp of gs.groups) for (const m of (markers.get(grp) || []).slice(0, 3)) if (!seen.has(m.gene)) { seen.add(m.gene); rows.push({ gene: m.gene, symbol: m.symbol }); }
   const G = gs.groups.length, R = rows.length, cw = Math.min(28, 360 / G), ch = 13, x0 = 70, y0 = 6;
-  // scale each gene row to its max-across-groups for contrast; cells/labels carry the gene + group
-  // so the panel can coordinate with the embedding (hover preview, click to pin).
+  // scale each gene row to its max-across-groups for contrast. Cells/labels carry their row+col
+  // index so hover can read the names (axis labels go faint — unreadable when dense — and the
+  // names are revealed legibly on hover instead).
   const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
   let g = "";
   rows.forEach((r, ri) => {
     let mx = 1e-6; for (let c = 0; c < G; c++) mx = Math.max(mx, gs.mean[c * gs.nGenes + r.gene]);
     for (let c = 0; c < G; c++) {
       const t = Math.min(1, gs.mean[c * gs.nGenes + r.gene] / mx); const col = ramp(t);
-      g += `<rect class="hcell" data-sym="${esc(r.symbol)}" data-grp="${esc(gs.groups[c])}" x="${x0 + c * cw}" y="${y0 + ri * ch}" width="${cw - 0.5}" height="${ch - 0.5}" fill="${col}"><title>${esc(r.symbol)} · ${esc(gs.groups[c])}</title></rect>`;
+      g += `<rect class="hcell" data-ri="${ri}" data-c="${c}" x="${x0 + c * cw}" y="${y0 + ri * ch}" width="${cw - 0.5}" height="${ch - 0.5}" fill="${col}"/>`;
     }
-    g += `<text class="axis hgene" data-sym="${esc(r.symbol)}" x="${x0 - 4}" y="${y0 + ri * ch + 10}" text-anchor="end">${esc(r.symbol)}</text>`;
+    g += `<text class="axis hgene" data-ri="${ri}" x="${x0 - 4}" y="${y0 + ri * ch + 10}" text-anchor="end">${esc(r.symbol)}</text>`;
   });
-  gs.groups.forEach((grp, c) => { g += `<text class="axis hgrp" data-grp="${esc(grp)}" x="${x0 + c * cw + cw / 2}" y="${y0 + R * ch + 10}" text-anchor="middle">${esc(grp)}</text>`; });
+  gs.groups.forEach((grp, c) => { g += `<text class="axis hgrp" data-c="${c}" x="${x0 + c * cw + cw / 2}" y="${y0 + R * ch + 10}" text-anchor="middle">${esc(grp)}</text>`; });
+  // row + column highlight bands, shown only while hovering (so you can see which cell you're on)
+  g += `<rect class="hrowg" x="${x0}" width="${G * cw}" height="${ch}" fill="rgba(150,225,255,.14)" pointer-events="none" style="display:none"/>`;
+  g += `<rect class="hcolg" y="${y0}" width="${cw}" height="${R * ch}" fill="rgba(150,225,255,.14)" pointer-events="none" style="display:none"/>`;
   const H = y0 + R * ch + 16, W = x0 + G * cw + 6;
   const svg = S("svg", { viewBox: `0 0 ${W} ${H}` }); svg.innerHTML = g; (svg as any).style.maxHeight = "320px";
+  const rowg = svg.querySelector<SVGRectElement>(".hrowg")!, colg = svg.querySelector<SVGRectElement>(".hcolg")!;
 
-  // coordinate with the embedding, two-tier. HOVER is an ephemeral cue: a subtle locator ring on the
-  // UMAP at the hovered cell type (no recolour, no checkpoint) — for scanning correspondences.
-  // CLICK is the committed act: recolour by the gene, or recolour + focus the cell type.
-  svg.addEventListener("pointerleave", () => ctx.coord.clearHint());
+  const w = mk("div"); w.style.position = "relative"; w.appendChild(svg);
+  // a legible readout that follows the cursor — the actual gene/cell-type names, however dense the axes
+  const tip = mk("div"); tip.style.cssText = "position:absolute;display:none;background:var(--ink);border:1px solid var(--line2);border-radius:6px;padding:3px 8px;font-size:11px;color:var(--text);pointer-events:none;z-index:20;white-space:nowrap;box-shadow:0 4px 14px rgba(0,0,0,.45)";
+  w.appendChild(tip);
+  const showTip = (e: PointerEvent, html: string) => {
+    tip.innerHTML = html; tip.style.display = "block";
+    const r = w.getBoundingClientRect(); let x = e.clientX - r.left + 13;
+    if (x + tip.offsetWidth > r.width - 4) x = e.clientX - r.left - tip.offsetWidth - 8;
+    tip.style.left = Math.max(2, x) + "px"; tip.style.top = (e.clientY - r.top + 13) + "px";
+  };
+  const clear = () => { tip.style.display = "none"; rowg.style.display = colg.style.display = "none"; ctx.coord.clearHint(); };
+  svg.addEventListener("pointerleave", clear);
+
+  // two-tier coordination. HOVER: a row/col guide + a name readout + a subtle locator ring on the UMAP
+  // (no recolour). CLICK: the committed act — recolour by the gene, or recolour + focus the cell type.
+  svg.querySelectorAll<SVGElement>(".hcell").forEach((el) => {
+    const ri = +el.getAttribute("data-ri")!, c = +el.getAttribute("data-c")!;
+    const sym = rows[ri].symbol, grp = gs.groups[c]; el.style.cursor = "pointer";
+    el.addEventListener("pointermove", (e) => {
+      rowg.setAttribute("y", String(y0 + ri * ch)); colg.setAttribute("x", String(x0 + c * cw));
+      rowg.style.display = colg.style.display = "block";
+      const mean = gs.mean[c * gs.nGenes + rows[ri].gene];
+      showTip(e, `<b>${esc(sym)}</b> · ${esc(grp)} <span style="color:var(--faint)">${mean.toFixed(2)}</span>`);
+      ctx.coord.setHint(grouping, grp);
+    });
+    el.addEventListener("click", () => hooks.onGeneClick(sym));
+  });
   svg.querySelectorAll<SVGElement>(".hgene").forEach((el) => {
-    const sym = el.getAttribute("data-sym")!; el.style.cursor = "pointer";
-    el.addEventListener("click", () => hooks.onGeneClick(sym));                          // commit: colour by gene
+    const ri = +el.getAttribute("data-ri")!; const sym = rows[ri].symbol; el.style.cursor = "pointer";
+    el.addEventListener("pointermove", (e) => { rowg.setAttribute("y", String(y0 + ri * ch)); rowg.style.display = "block"; colg.style.display = "none"; showTip(e, `<b>${esc(sym)}</b>`); });
+    el.addEventListener("click", () => hooks.onGeneClick(sym));
   });
   svg.querySelectorAll<SVGElement>(".hgrp").forEach((el) => {
-    const grp = el.getAttribute("data-grp")!; el.style.cursor = "pointer";
-    el.addEventListener("pointerenter", () => ctx.coord.setHint(grouping, grp));          // locate the group
-    el.addEventListener("click", () => { ctx.coord.setColor("meta:" + grouping); ctx.coord.setFocus(grouping, grp); }); // commit
-  });
-  svg.querySelectorAll<SVGElement>(".hcell").forEach((el) => {
-    const sym = el.getAttribute("data-sym")!, grp = el.getAttribute("data-grp")!; el.style.cursor = "pointer";
-    el.addEventListener("pointerenter", () => ctx.coord.setHint(grouping, grp));          // locate the group this cell is in
-    el.addEventListener("click", () => hooks.onGeneClick(sym));                          // commit: colour by gene
+    const c = +el.getAttribute("data-c")!; const grp = gs.groups[c]; el.style.cursor = "pointer";
+    el.addEventListener("pointermove", (e) => { colg.setAttribute("x", String(x0 + c * cw)); colg.style.display = "block"; rowg.style.display = "none"; showTip(e, `<b>${esc(grp)}</b>`); ctx.coord.setHint(grouping, grp); });
+    el.addEventListener("click", () => { ctx.coord.setColor("meta:" + grouping); ctx.coord.setFocus(grouping, grp); });
   });
 
-  const w = mk("div"); w.appendChild(svg);
   const hint = mk("div"); hint.style.cssText = "font-size:10.5px;color:var(--faint);padding:5px 7px 2px;line-height:1.4";
-  hint.textContent = "hover → locate that cell type in the UMAP · click a gene to colour by it · click a column to focus the type";
+  hint.textContent = "hover a cell to read its gene × cell type · click a gene to colour by it · click a column to focus the type";
   w.appendChild(hint);
   return { el: w };
 }

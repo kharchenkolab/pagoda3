@@ -51,8 +51,9 @@ button{font-family:inherit}
 .embpanel .pbody{padding:0;height:380px;position:relative}
 /* a maximized (full-width) embedding also grows tall, filling the canvas — not just wider */
 .embpanel.full .pbody{height:calc(100vh - 150px)}
-/* coordinated heatmap: gene/group labels + cells highlight on hover (they drive the embedding) */
-.hgene:hover,.hgrp:hover{fill:var(--cyan)} .hcell:hover{stroke:var(--text);stroke-width:1px}
+/* coordinated heatmap: dense axis labels go faint (read them on hover), bright + cyan on hover */
+.hgene,.hgrp{opacity:.55;transition:opacity .1s} .hgene:hover,.hgrp:hover{opacity:1;fill:var(--cyan)}
+.hcell:hover{stroke:var(--text);stroke-width:1px}
 .prov{font-family:var(--mono);font-size:10px;color:var(--faint);padding:6px 11px;border-top:1px solid var(--line2)}
 .caveat{display:flex;gap:8px;padding:9px 11px;background:rgba(224,164,88,.08);border-left:3px solid var(--amber);font-size:12px;color:#f0d9b6}
 .caveat b{color:var(--amber)}
