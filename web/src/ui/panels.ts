@@ -184,30 +184,28 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
   const H = y0 + R * ch + 16, W = x0 + G * cw + 6;
   const svg = S("svg", { viewBox: `0 0 ${W} ${H}` }); svg.innerHTML = g; (svg as any).style.maxHeight = "320px";
 
-  // coordinate with the embedding: hover a gene -> colour the UMAP by it (preview where it's high);
-  // hover a cell type -> focus those cells (see where they are); click a gene -> pin the colour;
-  // leaving the heatmap restores whatever the shared scope was resting on.
-  let resting = ctx.coord.state.colorBy;
-  svg.addEventListener("pointerenter", () => { resting = ctx.coord.state.colorBy; });
-  svg.addEventListener("pointerleave", () => { ctx.coord.setColor(resting); ctx.coord.clearFocus(); });
+  // coordinate with the embedding, two-tier. HOVER is an ephemeral cue: a subtle locator ring on the
+  // UMAP at the hovered cell type (no recolour, no checkpoint) — for scanning correspondences.
+  // CLICK is the committed act: recolour by the gene, or recolour + focus the cell type.
+  svg.addEventListener("pointerleave", () => ctx.coord.clearHint());
   svg.querySelectorAll<SVGElement>(".hgene").forEach((el) => {
     const sym = el.getAttribute("data-sym")!; el.style.cursor = "pointer";
-    el.addEventListener("pointerenter", () => { ctx.coord.clearFocus(); ctx.coord.setColor("gene:" + sym); });
-    el.addEventListener("click", () => { hooks.onGeneClick(sym); resting = ctx.coord.state.colorBy; });
+    el.addEventListener("click", () => hooks.onGeneClick(sym));                          // commit: colour by gene
   });
   svg.querySelectorAll<SVGElement>(".hgrp").forEach((el) => {
     const grp = el.getAttribute("data-grp")!; el.style.cursor = "pointer";
-    el.addEventListener("pointerenter", () => ctx.coord.setFocus(grouping, grp));
+    el.addEventListener("pointerenter", () => ctx.coord.setHint(grouping, grp));          // locate the group
+    el.addEventListener("click", () => { ctx.coord.setColor("meta:" + grouping); ctx.coord.setFocus(grouping, grp); }); // commit
   });
   svg.querySelectorAll<SVGElement>(".hcell").forEach((el) => {
     const sym = el.getAttribute("data-sym")!, grp = el.getAttribute("data-grp")!; el.style.cursor = "pointer";
-    el.addEventListener("pointerenter", () => { ctx.coord.setColor("gene:" + sym); ctx.coord.setFocus(grouping, grp); });
-    el.addEventListener("click", () => { hooks.onGeneClick(sym); resting = ctx.coord.state.colorBy; });
+    el.addEventListener("pointerenter", () => ctx.coord.setHint(grouping, grp));          // locate the group this cell is in
+    el.addEventListener("click", () => hooks.onGeneClick(sym));                          // commit: colour by gene
   });
 
   const w = mk("div"); w.appendChild(svg);
   const hint = mk("div"); hint.style.cssText = "font-size:10.5px;color:var(--faint);padding:5px 7px 2px;line-height:1.4";
-  hint.textContent = "hover a gene → preview it in the UMAP · a column → locate that group · click a gene to pin the colour";
+  hint.textContent = "hover → locate that cell type in the UMAP · click a gene to colour by it · click a column to focus the type";
   w.appendChild(hint);
   return { el: w };
 }

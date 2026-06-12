@@ -75,13 +75,27 @@ export class EmbeddingView {
             updateTriggers: { getPosition: this.selVersion },
           }) as any
         : null,
+      // ephemeral hover locator — a subtle ring at the centroid of a hinted group (cross-panel cue)
+      this.hintXY
+        ? new ScatterplotLayer({
+            id: "hint", data: [{ p: this.hintXY }], getPosition: (d: any) => d.p,
+            radiusUnits: "pixels", getRadius: 15, stroked: true, filled: false,
+            getLineColor: [150, 225, 255, 220], lineWidthUnits: "pixels", getLineWidth: 1.8,
+            updateTriggers: { getPosition: this.hintVersion },
+          }) as any
+        : null,
     ].filter(Boolean);
   }
 
   private colorVersion = 0;
   private selVersion = 0;
+  private hintXY: [number, number] | null = null;
+  private hintVersion = 0;
   private selCount() { let c = 0; for (let i = 0; i < this.n; i++) c += this.selected[i]; return c; }
   private redraw() { this.deck.setProps({ layers: this.layers() }); }
+
+  /** Show (or clear) a subtle locator ring at a data-space point — the cross-panel hover cue. */
+  setHint(xy: [number, number] | null) { this.hintXY = xy; this.hintVersion++; this.redraw(); }
 
   setColors(rgba: Uint8Array) { this.colors = rgba; this.colorVersion++; this.redraw(); }
 

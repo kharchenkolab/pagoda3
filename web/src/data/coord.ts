@@ -5,12 +5,15 @@ export interface CoordState {
   focus: { dim: string; value: string } | null;
   selection: Int32Array | null;
   geneFocus: string | null;
+  // ephemeral cross-panel hover cue (a group a linked panel is pointing at) — a light correspondence
+  // hint, NOT a committed change: panels show a subtle locator, no recolour, no checkpoint.
+  hint: { grouping: string; value: string } | null;
 }
 
 type Listener = (s: CoordState, changed: (keyof CoordState)[]) => void;
 
 export class Coord {
-  private s: CoordState = { colorBy: "meta:leiden", focus: null, selection: null, geneFocus: null };
+  private s: CoordState = { colorBy: "meta:leiden", focus: null, selection: null, geneFocus: null, hint: null };
   private listeners = new Set<Listener>();
 
   get state() { return this.s; }
@@ -28,6 +31,8 @@ export class Coord {
   setFocus(dim: string, value: string) { this.set({ focus: { dim, value } }); }
   clearFocus() { this.set({ focus: null, selection: null }); }
   setSelection(ids: Int32Array | null) { this.set({ selection: ids }); }
+  setHint(grouping: string, value: string) { this.set({ hint: { grouping, value } }); }
+  clearHint() { if (this.s.hint) this.set({ hint: null }); }
 }
 
 export function handleLabel(handle: string): string {

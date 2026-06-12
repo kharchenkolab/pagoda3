@@ -167,6 +167,22 @@ export class App {
 
   async repaint() { for (const ev of this.embeddings) await paintEmbedding(ev, this.ctx); this.$("railBtn").innerHTML = "Answers" + (this.rail.length ? ` <span class="badge">${this.rail.length}</span>` : ""); }
 
+  // The light hover path: place a subtle locator ring at the hinted group's centroid — no recolour.
+  async repaintHint() {
+    const hint = this.coord.state.hint;
+    let xy: [number, number] | null = null;
+    if (hint) {
+      const md: any = await this.ctx.metaOf(hint.grouping);
+      const ci = md.categories.indexOf(hint.value);
+      if (ci >= 0) {
+        const emb = this.ctx.embedding.data; let sx = 0, sy = 0, cnt = 0;
+        for (let i = 0; i < this.ctx.n; i++) if (md.codes[i] === ci) { sx += emb[i * 2]; sy += emb[i * 2 + 1]; cnt++; }
+        if (cnt) xy = [sx / cnt, sy / cnt];
+      }
+    }
+    for (const ev of this.embeddings) ev.setHint(xy);
+  }
+
   newPanel(p: Partial<Panel>): Panel { return { id: ++this.uid, type: p.type!, title: p.title || p.type!, cap: p.cap, full: p.full, bind: p.bind, text: p.text, q: p.q, group: p.group, gene: p.gene, rows: p.rows }; }
 
   // ---------- rail ----------
@@ -329,7 +345,10 @@ export class App {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); this.openPalette(); }
       else if (e.key === "Escape") { this.closePalette(); this.hideSelpop(); this.$("ctx").classList.remove("show"); }
     });
-    this.coord.subscribe(() => { this.repaint(); this.syncColorSelects(); });
+    this.coord.subscribe((_s, changed) => {
+      if (changed.length === 1 && changed[0] === "hint") { this.repaintHint(); return; }  // light hover path
+      this.repaint(); this.syncColorSelects();
+    });
   }
   syncColorSelects() { const v = this.coord.state.colorBy; document.querySelectorAll<HTMLSelectElement>("select.inline").forEach((s) => { if ([...s.options].some((o) => o.value === v)) s.value = v; }); }
 
