@@ -62,12 +62,13 @@ export async function paintEmbedding(ev: EmbeddingView, ctx: Ctx) {
   const c = ctx.coord.state;
   // dim mask: the committed SELECTION when present (its cells stay bright, the rest grey out as context),
   // else the agent's metadata focus. A cluster selected from ANY panel → same selection → same reaction.
+  const selCells = ctx.refToCells(c.selection);   // this panel is cell-space — read the selection as cells
   let mask: Uint8Array | undefined;
-  if (c.selection) { mask = new Uint8Array(ctx.n); for (let j = 0; j < c.selection.length; j++) mask[c.selection[j]] = 1; }
+  if (selCells.length) { mask = new Uint8Array(ctx.n); for (let j = 0; j < selCells.length; j++) mask[selCells[j]] = 1; }
   else mask = await focusMaskFor(ctx.view, c.focus, ctx.n);
   const { rgba, legend } = await colorsFor(ctx.view, c.colorBy, mask);
   ev.setColors(rgba);
-  ev.setSelection(c.selection);
+  ev.setSelection(selCells.length ? selCells : null);
   // view options come from the coordination space (agent- and user-drivable), never decided here.
   const isCat = legend.kind === "categorical";
   ev.setLabels(c.display.labels && isCat ? await categoryLabels(ctx, c.colorBy) : []);
@@ -174,7 +175,7 @@ async function compositionBody(ctx: Ctx, hooks: PanelHooks): Promise<BuiltBody> 
   const nameAt = (e: Event) => ((e.target as Element).closest(".cseg, .lgi") as HTMLElement | null)?.dataset.g || null;
   w.addEventListener("pointermove", (e) => { const n = nameAt(e); if (n) ctx.coord.setHint(grouping, n); else ctx.coord.clearHint(); });
   w.addEventListener("pointerleave", () => ctx.coord.clearHint());
-  w.addEventListener("click", (e) => { const n = nameAt(e); if (n) ctx.coord.setSelection(ctx.cellsOfCategory(grouping, n)); });
+  w.addEventListener("click", (e) => { const n = nameAt(e); if (n) ctx.coord.setSelection({ kind: "category", grouping, value: n }); });
 
   return { el: w, afterAttach: () => hooks.registerComposition({ grouping, setSelect: (v) => { selSet = v; render(); }, setHover: (v) => { hovSet = v; render(); } }) };
 }

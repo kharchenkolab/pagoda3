@@ -1,9 +1,16 @@
 // The coordination space (plan1.md §I.2): slow-changing layout is elsewhere; this is
 // the fast, agent-driven shared state every linked view reads. Tiny reactive store.
+// A typed reference to a set of entities, placed on the bus by a selection. Receivers interpret it in
+// THEIR vocabulary: directly if they speak its type, via cell-mediated translation if not, or ignore it.
+// Native-typed — a category when you clicked a category, raw cells when you brushed — not collapsed at source.
+export type EntityRef =
+  | { kind: "category"; grouping: string; value: string }
+  | { kind: "cells"; ids: Int32Array };
+
 export interface CoordState {
   colorBy: string;            // "meta:leiden" | "gene:IL6" | "qc:mito" | "geneset:Inflammatory response"
   focus: { dim: string; value: string } | null;
-  selection: Int32Array | null;
+  selection: EntityRef | null;
   geneFocus: string | null;
   // ephemeral cross-panel hover cue (a group a linked panel is pointing at) — a light correspondence
   // hint, NOT a committed change: panels show a subtle locator, no recolour, no checkpoint.
@@ -33,7 +40,7 @@ export class Coord {
   setColor(handle: string) { this.set({ colorBy: handle }); }
   setFocus(dim: string, value: string) { this.set({ focus: { dim, value } }); }
   clearFocus() { this.set({ focus: null, selection: null }); }
-  setSelection(ids: Int32Array | null) { this.set({ selection: ids }); }
+  setSelection(ref: EntityRef | null) { this.set({ selection: ref }); }
   setHint(grouping: string, value: string) { const h = this.s.hint; if (h && h.grouping === grouping && h.value === value) return; this.set({ hint: { grouping, value } }); }
   clearHint() { if (this.s.hint) this.set({ hint: null }); }
   setDisplay(patch: Partial<CoordState["display"]>) { this.set({ display: { ...this.s.display, ...patch } }); }

@@ -45,7 +45,7 @@ METHODOLOGY (cacoa — encode these, don't forget them):
 
 DATASET (read from the loaded store — do not assume any other dataset): ${brief}. Markers are precomputed for: ${app.ctx.groupings().join(", ") || "—"}.
 
-CURRENT STATE: colouring by "${app.coord.state.colorBy}", workspace "${app.currentWS}", ${app.coord.state.selection ? app.coord.state.selection.length + " cells selected" : "no selection"}.`;
+CURRENT STATE: colouring by "${app.coord.state.colorBy}", workspace "${app.currentWS}", ${app.ctx.selectedCells().length ? app.ctx.selectedCells().length + " cells selected" : "no selection"}.`;
 }
 
 // ---- tool executors (side effects on the app + a compact result for the model) ----
@@ -63,12 +63,12 @@ async function execTool(app: App, name: string, input: any): Promise<string> {
       return `added marker table for ${grouping}=${input.cluster}; top genes: ${rows.slice(0, 8).map((r) => r.symbol).join(", ")}`;
     }
     case "get_overdispersed_genes": {
-      const sel = app.coord.state.selection;
-      const ids = sel?.length ? Array.from(sel) : Array.from({ length: app.ctx.n }, (_, i) => i);
+      const selCells = app.ctx.selectedCells();
+      const ids = selCells.length ? Array.from(selCells) : Array.from({ length: app.ctx.n }, (_, i) => i);
       const hv = await app.ctx.view.overdispersedGenes(ids, 25);
       if (!hv.length) return "no overdispersion (store has no cell-major counts panel)";
       const rows = hv.map((h) => ({ symbol: h.symbol, score: h.resid }));
-      const scope = sel?.length ? `selection (${sel.length} cells)` : "whole dataset";
+      const scope = selCells.length ? `selection (${selCells.length} cells)` : "whole dataset";
       ag.addRail({ type: "GeneList", title: `Overdispersed · ${scope}`, cap: "od (resid)", bind: "hvg:scope", rows });
       return `top overdispersed genes for the ${scope}, recomputed for this scope: ${hv.slice(0, 10).map((h) => h.symbol).join(", ")}`;
     }
@@ -81,7 +81,7 @@ async function execTool(app: App, name: string, input: any): Promise<string> {
       return `added a marker heatmap for the ${grouping} grouping (${[...mk.keys()].length} groups) and coloured the embedding by it; e.g. ${eg}`;
     }
     case "run_de_on_selection": {
-      const ids = app.coord.state.selection; if (!ids?.length) return "no selection — ask the user to drag-select cells first";
+      const ids = app.ctx.selectedCells(); if (!ids.length) return "no selection — ask the user to drag-select cells first";
       const set = new Set(ids); const rest: number[] = []; for (let i = 0; i < app.ctx.n; i++) if (!set.has(i)) rest.push(i);
       const { ranked, nA, nB, panel, nGenesRanked } = await app.ctx.view.subsampleDE(Array.from(ids), rest);
       const rows = ranked.slice(0, 20).map((r) => ({ gene: r.gene, symbol: r.symbol, lfc: r.lfc, padj: Math.exp(-Math.abs(r.lfc) * 2) }));

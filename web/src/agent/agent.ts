@@ -102,10 +102,10 @@ export class Agent {
     if (/clear|reset|show all|unfocus/.test(q)) { this.app.coord.clearFocus(); this.app.toast("Cleared focus", null); return this.app.checkpoint("clear focus", "Cleared coordination state."); }
     // rung 1 — answers
     if (/highly variable|variable gene|\bhvg\b|overdispersed gene|most variable/.test(q)) {
-      const sel = this.app.coord.state.selection;
-      const ids = sel?.length ? Array.from(sel) : Array.from({ length: this.ctx.n }, (_, i) => i);
+      const selCells = this.ctx.selectedCells();
+      const ids = selCells.length ? Array.from(selCells) : Array.from({ length: this.ctx.n }, (_, i) => i);
       const hv = await this.ctx.view.overdispersedGenes(ids, 25);
-      const scope = sel?.length ? `selection (${sel.length} cells)` : "whole dataset";
+      const scope = selCells.length ? `selection (${selCells.length} cells)` : "whole dataset";
       this.addRail({ type: "GeneList", title: `Overdispersed · ${scope}`, cap: "od (resid)", bind: "hvg:scope", rows: hv.map((h) => ({ symbol: h.symbol, score: h.resid })) }, qraw);
       this.app.toast(`Overdispersed genes for the ${scope}`, `Recomputed for this scope — residual above the mean-variance trend over all ${this.ctx.view.nGenes.toLocaleString()} genes, not a global shortlist.${hv.length ? " Top: " + hv.slice(0, 6).map((h) => h.symbol).join(", ") : ""}`);
       return this.app.checkpoint("overdispersed genes", "Scope-aware HVG in the rail.");

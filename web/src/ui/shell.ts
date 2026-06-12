@@ -96,7 +96,7 @@ export class App {
   hooks(): PanelHooks {
     return {
       onGeneClick: (sym) => this.agent.coordinateGene(sym),
-      onSelect: (ids, anchor) => { this.coord.setSelection(ids); this.lastSelAnchor = anchor; this.openSelpop(); },
+      onSelect: (ids, anchor) => { this.coord.setSelection({ kind: "cells", ids }); this.lastSelAnchor = anchor; this.openSelpop(); },   // brush has no category — raw cells
       registerEmbedding: (ev) => this.embeddings.push(ev),
       onCellHover: (idx) => this.onCellHover(idx),
       onCellClick: (idx) => this.onCellClick(idx),
@@ -115,7 +115,7 @@ export class App {
   onCellClick(index: number | null) {
     if (index == null) { this.coord.setSelection(null); return; }
     const g = this.ctx.keyGrouping(), v = this.ctx.categoryAt(g, index);
-    this.coord.setSelection(v ? this.ctx.cellsOfCategory(g, v) : null);
+    this.coord.setSelection(v ? { kind: "category", grouping: g, value: v } : null);   // emit the category, not cells
   }
 
   async fullRender() {
@@ -199,9 +199,10 @@ export class App {
 
   async repaint() {
     for (const ev of this.embeddings) await paintEmbedding(ev, this.ctx);
-    // committed selection → its blocks on every vocabulary-bound panel (read the cell-set in their grouping)
+    // committed selection → each vocabulary-bound panel reads the ref in ITS grouping (direct when the
+    // selection is a category of that grouping — no scan; else translated via cells). Committed: ungated.
     const sel = this.coord.state.selection;
-    for (const r of this.compReactors) r.setSelect(sel ? new Set(this.ctx.cellsToCategories(sel, r.grouping).filter((t) => t.frac >= 0.08).map((t) => t.value)) : null);
+    for (const r of this.compReactors) r.setSelect(sel ? new Set(this.ctx.refToCategories(sel, r.grouping).filter((t) => t.frac >= 0.08).map((t) => t.value)) : null);
     this.$("railBtn").innerHTML = "Answers" + (this.rail.length ? ` <span class="badge">${this.rail.length}</span>` : "");
   }
 
@@ -315,7 +316,7 @@ export class App {
 
   // ---------- selection popover ----------
   openSelpop() {
-    const ids = this.coord.state.selection; if (!ids || !ids.length) return;
+    const ids = this.ctx.selectedCells(); if (!ids.length) return;
     this.ctx.metaOf("cell_type").then((m: any) => {
       const cts: Record<string, number> = {}; for (const i of ids) cts[m.categories[m.codes[i]]] = (cts[m.categories[m.codes[i]]] || 0) + 1;
       const top = Object.entries(cts).sort((a, b) => b[1] - a[1])[0];
