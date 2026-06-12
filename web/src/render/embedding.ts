@@ -2,6 +2,7 @@
 // Binary attributes (no per-point accessors) so coloring a million cells is a buffer swap.
 import { Deck, OrthographicView } from "@deck.gl/core";
 import { ScatterplotLayer, TextLayer } from "@deck.gl/layers";
+import { CollisionFilterExtension } from "@deck.gl/extensions";
 
 export class EmbeddingView {
   private deck: Deck;
@@ -86,6 +87,8 @@ export class EmbeddingView {
         : null,
       // on-plot category labels at centroids — names ON the map, so orientation isn't swatch-matching.
       // Drawn last (on top); halo'd so they read over any cluster colour. Cleared for numeric colourings.
+      // CollisionFilterExtension declutters in screen space each frame: when labels overlap, the
+      // higher-priority one (larger cluster) wins; zooming in spreads them so more reveal. No pile-ups.
       this.labels.length
         ? new TextLayer({
             id: "labels", data: this.labels,
@@ -95,7 +98,13 @@ export class EmbeddingView {
             fontFamily: "-apple-system, BlinkMacSystemFont, system-ui, sans-serif", fontWeight: 700,
             fontSettings: { sdf: true, radius: 14, buffer: 6 }, outlineWidth: 2.4, outlineColor: [9, 13, 20, 255],
             billboard: true, pickable: false, characterSet: "auto",
-            updateTriggers: { getText: this.labelVersion, getPosition: this.labelVersion },
+            extensions: [new CollisionFilterExtension()],
+            collisionEnabled: true, collisionGroup: "labels",
+            // inflate the hit-box so kept labels keep clear air. sizeMaxPixels must be raised here too,
+            // else the base layer's 15px clamp cancels the scale-up and nothing gets decluttered.
+            collisionTestProps: { sizeScale: 3, sizeMaxPixels: 64 },
+            getCollisionPriority: (d: any) => d.priority,     // larger clusters outrank smaller when they clash
+            updateTriggers: { getText: this.labelVersion, getPosition: this.labelVersion, getCollisionPriority: this.labelVersion },
           }) as any
         : null,
     ].filter(Boolean);
@@ -105,7 +114,7 @@ export class EmbeddingView {
   private selVersion = 0;
   private hintXY: [number, number] | null = null;
   private hintVersion = 0;
-  private labels: { text: string; p: [number, number] }[] = [];
+  private labels: { text: string; p: [number, number]; priority: number }[] = [];
   private labelVersion = 0;
   private selCount() { let c = 0; for (let i = 0; i < this.n; i++) c += this.selected[i]; return c; }
   private redraw() { this.deck.setProps({ layers: this.layers() }); }
@@ -114,7 +123,7 @@ export class EmbeddingView {
   setHint(xy: [number, number] | null) { this.hintXY = xy; this.hintVersion++; this.redraw(); }
 
   /** Place category names at their centroids (categorical colouring); pass [] to clear (numeric colouring). */
-  setLabels(labels: { text: string; p: [number, number] }[]) { this.labels = labels; this.labelVersion++; this.redraw(); }
+  setLabels(labels: { text: string; p: [number, number]; priority: number }[]) { this.labels = labels; this.labelVersion++; this.redraw(); }
 
   setColors(rgba: Uint8Array) { this.colors = rgba; this.colorVersion++; this.redraw(); }
 

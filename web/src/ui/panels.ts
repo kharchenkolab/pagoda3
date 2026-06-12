@@ -61,18 +61,21 @@ export async function paintEmbedding(ev: EmbeddingView, ctx: Ctx) {
     : "";
 }
 
-// Centroid (mean position) of every category, for on-plot labels. Categorical colourings only —
-// returns [] for gene/qc/geneset so the embedding clears its labels. Mean is fine for blob-like
-// UMAP clusters; a multi-lobe cluster's label may sit between lobes (a later refinement: medoid).
-async function categoryLabels(ctx: Ctx, colorBy: string): Promise<{ text: string; p: [number, number] }[]> {
+// On-plot label per category, for categorical colourings only (returns [] for gene/qc so the
+// embedding clears its labels). Placement is the marginal MEDIAN (x,y) — robust to stray cells and
+// multi-lobe clusters where a mean drifts into empty space. priority = cluster size, normalised to
+// the [0,1000] the collision filter expects, so when two labels clash the larger cluster keeps its name.
+async function categoryLabels(ctx: Ctx, colorBy: string): Promise<{ text: string; p: [number, number]; priority: number }[]> {
   if (!colorBy.startsWith("meta:")) return [];
   const md = await ctx.metaOf(colorBy.slice(5)) as any;
   if (md.kind !== "categorical") return [];
   const K = md.categories.length, emb = ctx.embedding.data, n = ctx.n;
-  const sx = new Float64Array(K), sy = new Float64Array(K), cnt = new Int32Array(K);
-  for (let i = 0; i < n; i++) { const k = md.codes[i]; if (k < 0) continue; sx[k] += emb[i * 2]; sy[k] += emb[i * 2 + 1]; cnt[k]++; }
-  const out: { text: string; p: [number, number] }[] = [];
-  for (let k = 0; k < K; k++) if (cnt[k]) out.push({ text: md.categories[k], p: [sx[k] / cnt[k], sy[k] / cnt[k]] });
+  const xs: number[][] = Array.from({ length: K }, () => []), ys: number[][] = Array.from({ length: K }, () => []);
+  for (let i = 0; i < n; i++) { const k = md.codes[i]; if (k < 0) continue; xs[k].push(emb[i * 2]); ys[k].push(emb[i * 2 + 1]); }
+  const median = (a: number[]) => { a.sort((p, q) => p - q); const m = a.length >> 1; return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2; };
+  let maxC = 1; for (let k = 0; k < K; k++) if (xs[k].length > maxC) maxC = xs[k].length;
+  const out: { text: string; p: [number, number]; priority: number }[] = [];
+  for (let k = 0; k < K; k++) if (xs[k].length) out.push({ text: md.categories[k], p: [median(xs[k]), median(ys[k])], priority: (xs[k].length / maxC) * 1000 });
   return out;
 }
 
