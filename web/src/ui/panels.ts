@@ -168,17 +168,48 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
   const seen = new Set<number>(); const rows: { gene: number; symbol: string }[] = [];
   for (const grp of gs.groups) for (const m of (markers.get(grp) || []).slice(0, 3)) if (!seen.has(m.gene)) { seen.add(m.gene); rows.push({ gene: m.gene, symbol: m.symbol }); }
   const G = gs.groups.length, R = rows.length, cw = Math.min(28, 360 / G), ch = 13, x0 = 70, y0 = 6;
-  // scale each gene row to its max-across-groups for contrast
+  // scale each gene row to its max-across-groups for contrast; cells/labels carry the gene + group
+  // so the panel can coordinate with the embedding (hover preview, click to pin).
+  const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
   let g = "";
   rows.forEach((r, ri) => {
     let mx = 1e-6; for (let c = 0; c < G; c++) mx = Math.max(mx, gs.mean[c * gs.nGenes + r.gene]);
-    for (let c = 0; c < G; c++) { const t = Math.min(1, gs.mean[c * gs.nGenes + r.gene] / mx); const col = ramp(t); g += `<rect x="${x0 + c * cw}" y="${y0 + ri * ch}" width="${cw - 0.5}" height="${ch - 0.5}" fill="${col}"/>`; }
-    g += `<text class="axis" x="${x0 - 4}" y="${y0 + ri * ch + 10}" text-anchor="end">${r.symbol}</text>`;
+    for (let c = 0; c < G; c++) {
+      const t = Math.min(1, gs.mean[c * gs.nGenes + r.gene] / mx); const col = ramp(t);
+      g += `<rect class="hcell" data-sym="${esc(r.symbol)}" data-grp="${esc(gs.groups[c])}" x="${x0 + c * cw}" y="${y0 + ri * ch}" width="${cw - 0.5}" height="${ch - 0.5}" fill="${col}"><title>${esc(r.symbol)} · ${esc(gs.groups[c])}</title></rect>`;
+    }
+    g += `<text class="axis hgene" data-sym="${esc(r.symbol)}" x="${x0 - 4}" y="${y0 + ri * ch + 10}" text-anchor="end">${esc(r.symbol)}</text>`;
   });
-  gs.groups.forEach((grp, c) => { g += `<text class="axis" x="${x0 + c * cw + cw / 2}" y="${y0 + R * ch + 10}" text-anchor="middle">${grp}</text>`; });
+  gs.groups.forEach((grp, c) => { g += `<text class="axis hgrp" data-grp="${esc(grp)}" x="${x0 + c * cw + cw / 2}" y="${y0 + R * ch + 10}" text-anchor="middle">${esc(grp)}</text>`; });
   const H = y0 + R * ch + 16, W = x0 + G * cw + 6;
   const svg = S("svg", { viewBox: `0 0 ${W} ${H}` }); svg.innerHTML = g; (svg as any).style.maxHeight = "320px";
-  const w = mk("div"); w.appendChild(svg); return { el: w };
+
+  // coordinate with the embedding: hover a gene -> colour the UMAP by it (preview where it's high);
+  // hover a cell type -> focus those cells (see where they are); click a gene -> pin the colour;
+  // leaving the heatmap restores whatever the shared scope was resting on.
+  let resting = ctx.coord.state.colorBy;
+  svg.addEventListener("pointerenter", () => { resting = ctx.coord.state.colorBy; });
+  svg.addEventListener("pointerleave", () => { ctx.coord.setColor(resting); ctx.coord.clearFocus(); });
+  svg.querySelectorAll<SVGElement>(".hgene").forEach((el) => {
+    const sym = el.getAttribute("data-sym")!; el.style.cursor = "pointer";
+    el.addEventListener("pointerenter", () => { ctx.coord.clearFocus(); ctx.coord.setColor("gene:" + sym); });
+    el.addEventListener("click", () => { hooks.onGeneClick(sym); resting = ctx.coord.state.colorBy; });
+  });
+  svg.querySelectorAll<SVGElement>(".hgrp").forEach((el) => {
+    const grp = el.getAttribute("data-grp")!; el.style.cursor = "pointer";
+    el.addEventListener("pointerenter", () => ctx.coord.setFocus(grouping, grp));
+  });
+  svg.querySelectorAll<SVGElement>(".hcell").forEach((el) => {
+    const sym = el.getAttribute("data-sym")!, grp = el.getAttribute("data-grp")!; el.style.cursor = "pointer";
+    el.addEventListener("pointerenter", () => { ctx.coord.setColor("gene:" + sym); ctx.coord.setFocus(grouping, grp); });
+    el.addEventListener("click", () => { hooks.onGeneClick(sym); resting = ctx.coord.state.colorBy; });
+  });
+
+  const w = mk("div"); w.appendChild(svg);
+  const hint = mk("div"); hint.style.cssText = "font-size:10.5px;color:var(--faint);padding:5px 7px 2px;line-height:1.4";
+  hint.textContent = "hover a gene → preview it in the UMAP · a column → locate that group · click a gene to pin the colour";
+  w.appendChild(hint);
+  return { el: w };
 }
 
 function ramp(t: number): string {
