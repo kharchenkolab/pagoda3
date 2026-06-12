@@ -11,6 +11,8 @@ export class EmbeddingView {
   private selected: Uint8Array;        // n (0/1)
   private n: number;
   private radius = 2.4;
+  private container: HTMLElement;
+  private viewState: any;
   onSelect?: (ids: Int32Array) => void;
   onHover?: (index: number | null) => void;   // a cell under the cursor (or null) — emits the cross-panel hint
   onPick?: (index: number | null) => void;    // a plain click: a cell (→ select its cluster) or empty (→ deselect)
@@ -22,17 +24,8 @@ export class EmbeddingView {
     for (let i = 0; i < n; i++) this.colors[i * 4 + 3] = 230;
     this.selected = new Uint8Array(n);
 
-    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-    for (let i = 0; i < n; i++) {
-      const x = emb[i * 2], y = emb[i * 2 + 1];
-      if (x < minX) minX = x; if (x > maxX) maxX = x;
-      if (y < minY) minY = y; if (y > maxY) maxY = y;
-    }
-    const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
-    const spanX = maxX - minX || 1, spanY = maxY - minY || 1;
-    const rect = container.getBoundingClientRect();
-    const ppu = Math.min((rect.width || 800) / spanX, (rect.height || 600) / spanY) * 0.86;
-    const zoom = Math.log2(Math.max(ppu, 1e-3));
+    this.container = container;
+    this.viewState = this.computeView();   // fit all cells initially; fitTo(ids) reframes to a subset (scope)
 
     const canvas = document.createElement("canvas");
     canvas.style.width = "100%"; canvas.style.height = "100%"; canvas.style.display = "block";
@@ -41,7 +34,8 @@ export class EmbeddingView {
     this.deck = new Deck({
       canvas,
       views: [new OrthographicView({ flipY: false })],
-      initialViewState: { target: [cx, cy, 0], zoom },
+      viewState: this.viewState,
+      onViewStateChange: ({ viewState }: any) => { this.viewState = viewState; this.deck.setProps({ viewState }); },   // controlled: keeps pan/zoom while letting fitTo() reframe
       controller: { dragPan: true, scrollZoom: true, doubleClickZoom: false },
       layers: this.layers(),
       // hover IS available in pan mode — picking fires on move, not drag. Emit the picked cell (or null).
@@ -132,6 +126,19 @@ export class EmbeddingView {
 
   /** Place category names at their centroids (categorical colouring); pass [] to clear (numeric colouring). */
   setLabels(labels: { text: string; p: [number, number]; priority: number }[]) { this.labels = labels; this.labelVersion++; this.redraw(); }
+
+  /** A view state (target + zoom) that frames a cell SET — or all cells when ids is empty/undefined. */
+  private computeView(ids?: Int32Array): any {
+    const emb = this.positions, count = ids && ids.length ? ids.length : this.n;
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (let k = 0; k < count; k++) { const i = ids && ids.length ? ids[k] : k; const x = emb[i * 2], y = emb[i * 2 + 1];
+      if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y; }
+    const spanX = maxX - minX || 1, spanY = maxY - minY || 1, rect = this.container.getBoundingClientRect();
+    const ppu = Math.min((rect.width || 800) / spanX, (rect.height || 600) / spanY) * 0.86;
+    return { target: [(minX + maxX) / 2, (minY + maxY) / 2, 0], zoom: Math.log2(Math.max(ppu, 1e-3)) };
+  }
+  /** Reframe the viewport to a cell set (the `scope` property / focus_view primitive); no ids = fit all. */
+  fitTo(ids?: Int32Array) { this.viewState = this.computeView(ids); this.deck.setProps({ viewState: this.viewState }); }
 
   setColors(rgba: Uint8Array) { this.colors = rgba; this.colorVersion++; this.redraw(); }
 

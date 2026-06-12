@@ -3,10 +3,20 @@ import { Ctx } from "../data/ctx.ts";
 import { EmbeddingView } from "../render/embedding.ts";
 import { colorsFor, focusMaskFor } from "../render/colors.ts";
 import { catColor } from "../data/view.ts";
+import type { EntityRef } from "../data/coord.ts";
+
+// Per-panel view spec — the agent's deep-control surface (configure_panel). Each property overrides the
+// GLOBAL coord default for THIS panel only; the shared bus (selection/hint) stays global. See docs/deep-view-control.md.
+export interface PanelView {
+  colorBy?: string;     // override the panel's colouring handle (else falls back to coord.colorBy)
+  scope?: EntityRef;    // restrict the panel to a cell set — the embedding reframes to it + desaturates the rest
+  // (future: scale, clip, splitBy, highlight, colormap, overlays)
+}
 
 export interface Panel {
   id: number; type: string; title: string; cap?: string; full?: boolean;
   bind?: string; text?: string; q?: string; group?: string; gene?: string;
+  view?: PanelView;
   rows?: { gene?: number; symbol: string; lfc?: number; padj?: number; score?: number }[];
 }
 
@@ -30,7 +40,7 @@ export interface BuiltBody { el: HTMLElement; afterAttach?: () => void; }
 
 export async function bodyFor(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltBody> {
   switch (p.type) {
-    case "Embedding": return embeddingBody(ctx, hooks);
+    case "Embedding": return embeddingBody(p, ctx, hooks);
     case "DeTable": return deBody(p, ctx, hooks);
     case "Volcano": return volcanoBody(p, ctx);
     case "CompositionBars": return compositionBody(ctx, hooks);
@@ -43,7 +53,7 @@ export async function bodyFor(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bu
   }
 }
 
-function embeddingBody(ctx: Ctx, hooks: PanelHooks): BuiltBody {
+function embeddingBody(p: Panel, ctx: Ctx, hooks: PanelHooks): BuiltBody {
   const host = mk("div", "embhost");
   const legend = mk("div", "emblegend");
   const wrap = mk("div"); wrap.style.cssText = "position:absolute;inset:0"; wrap.appendChild(host); wrap.appendChild(legend);
@@ -53,6 +63,7 @@ function embeddingBody(ctx: Ctx, hooks: PanelHooks): BuiltBody {
     ev.onHover = (idx) => hooks.onCellHover(idx);
     ev.onPick = (idx) => hooks.onCellClick(idx);
     (ev as any)._legend = legend;
+    (ev as any)._panel = p;            // carry the panel so paintEmbedding can read its per-panel view spec
     hooks.registerEmbedding(ev);
   };
   return { el: wrap, afterAttach };
@@ -60,18 +71,26 @@ function embeddingBody(ctx: Ctx, hooks: PanelHooks): BuiltBody {
 
 export async function paintEmbedding(ev: EmbeddingView, ctx: Ctx) {
   const c = ctx.coord.state;
-  // dim mask: the committed SELECTION when present (its cells stay bright, the rest grey out as context),
-  // else the agent's metadata focus. A cluster selected from ANY panel → same selection → same reaction.
+  const view = (ev as any)._panel?.view as PanelView | undefined;
+  const colorBy = view?.colorBy ?? c.colorBy;            // per-panel override (configure_panel) → else the global default
+  // scope frames THIS panel on a cell set: reframe the viewport to it (once, on change — never fight the user's pan),
+  // and desaturate everything outside. A scoped panel is the evidence-board building block (e.g. "zoom to CD8-T").
+  const scopeCells = view?.scope ? ctx.refToCells(view.scope) : null;
+  const scopeKey = view?.scope ? (view.scope.kind === "category" ? `c:${view.scope.grouping}=${view.scope.value}` : `n:${scopeCells!.length}`) : "";
+  if ((ev as any)._scopeKey !== scopeKey) { (ev as any)._scopeKey = scopeKey; ev.fitTo(scopeCells && scopeCells.length ? scopeCells : undefined); }
+
+  // dim mask: scope frames the panel; else the committed SELECTION (bright cells, grey context); else metadata focus.
   const selCells = ctx.refToCells(c.selection);   // this panel is cell-space — read the selection as cells
   let mask: Uint8Array | undefined;
-  if (selCells.length) { mask = new Uint8Array(ctx.n); for (let j = 0; j < selCells.length; j++) mask[selCells[j]] = 1; }
+  if (scopeCells && scopeCells.length) { mask = new Uint8Array(ctx.n); for (let j = 0; j < scopeCells.length; j++) mask[scopeCells[j]] = 1; }
+  else if (selCells.length) { mask = new Uint8Array(ctx.n); for (let j = 0; j < selCells.length; j++) mask[selCells[j]] = 1; }
   else mask = await focusMaskFor(ctx.view, c.focus, ctx.n);
-  const { rgba, legend } = await colorsFor(ctx.view, c.colorBy, mask);
+  const { rgba, legend } = await colorsFor(ctx.view, colorBy, mask);
   ev.setColors(rgba);
   ev.setSelection(selCells.length ? selCells : null);
   // view options come from the coordination space (agent- and user-drivable), never decided here.
   const isCat = legend.kind === "categorical";
-  ev.setLabels(c.display.labels && isCat ? await categoryLabels(ctx, c.colorBy) : []);
+  ev.setLabels(c.display.labels && isCat ? await categoryLabels(ctx, colorBy) : []);
   const showLegend = c.display.legend ?? !isCat;   // auto: key for numeric colourings; hidden when on-plot labels carry identity
   const lg = (ev as any)._legend as HTMLElement | undefined;
   if (lg) lg.innerHTML = showLegend

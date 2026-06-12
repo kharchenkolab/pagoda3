@@ -1,7 +1,7 @@
 import { mk } from "./dom.ts";
 import { Ctx } from "../data/ctx.ts";
 import { Coord, handleLabel } from "../data/coord.ts";
-import { Panel, PanelHooks, CompReactor, bodyFor, paintEmbedding } from "./panels.ts";
+import { Panel, PanelView, PanelHooks, CompReactor, bodyFor, paintEmbedding } from "./panels.ts";
 import { EmbeddingView } from "../render/embedding.ts";
 import { Agent, Scope } from "../agent/agent.ts";
 import { checkLive } from "../agent/live.ts";
@@ -204,6 +204,16 @@ export class App {
     const sel = this.coord.state.selection;
     for (const r of this.compReactors) r.setSelect(sel ? new Set(this.ctx.refToCategories(sel, r.grouping).filter((t) => t.frac >= 0.08).map((t) => t.value)) : null);
     this.$("railBtn").innerHTML = "Answers" + (this.rail.length ? ` <span class="badge">${this.rail.length}</span>` : "");
+  }
+
+  // Deep per-panel view control — the agent's configure_panel verb (and the path the per-panel UI will use).
+  // Merges a view patch into ONE panel's spec and repaints in place; other panels untouched. A per-panel
+  // override wins over the global coord default AND over the agent's set_color (explicit/user authority).
+  configurePanel(panelId: number, patch: Partial<PanelView>) {
+    const p = this.canvas.find((z) => z.id === panelId) || this.rail.find((z) => z.id === panelId);
+    if (!p) return;
+    p.view = { ...p.view, ...patch };
+    this.repaint();
   }
 
   // The light hover path — no recolour, no checkpoint: a locator ring on the embedding at the hinted

@@ -24,6 +24,7 @@ const TOOLS: Tool[] = [
   { name: "propose_workspace", description: "Propose switching to a named workspace (a bigger, reversible layout change the human confirms). name is one of: Overview, Markers, QC triage, Aspects.", input_schema: { type: "object", properties: { name: { type: "string" } }, required: ["name"] } },
   { name: "add_note", description: "Add a short text note to the rail (for an answer that needs no view).", input_schema: { type: "object", properties: { text: { type: "string" } }, required: ["text"] } },
   { name: "set_display", description: "Toggle embedding view options: on-plot category labels and the colour legend. Defaults are automatic (labels on for categorical colourings; legend shown for gene/numeric colourings, hidden when labels carry identity). Pass only the field(s) to change. Use when the human asks to show/hide the labels or bring back / hide the legend.", input_schema: { type: "object", properties: { labels: { type: "boolean", description: "show on-plot cell-type/cluster labels" }, legend: { type: "boolean", description: "show the colour legend (swatches for categorical, low→high for numeric)" } } } },
+  { name: "configure_panel", description: "DEEP per-panel view control — fine-tune ONE panel in place, leaving the others alone. Use it to build a focused evidence view (e.g. take a copy of the embedding, zoom it to one cluster, colour it by donor). panelId comes from the LAYOUT line. colorBy is a handle (meta:sample, meta:cell_type, gene:CD8A, qc:mito…) and overrides that panel's colour only. scopeGrouping+scopeValue restrict the panel to a group's cells (e.g. cell_type + \"CD8+ T cells\"): the embedding reframes to those cells and greys the rest. The smallest way to make a bespoke view — prefer it over a new workspace.", input_schema: { type: "object", properties: { panelId: { type: "number" }, colorBy: { type: "string" }, scopeGrouping: { type: "string" }, scopeValue: { type: "string" } }, required: ["panelId"] } },
 ];
 
 async function systemPrompt(app: App): Promise<string> {
@@ -45,7 +46,8 @@ METHODOLOGY (cacoa — encode these, don't forget them):
 
 DATASET (read from the loaded store — do not assume any other dataset): ${brief}. Markers are precomputed for: ${app.ctx.groupings().join(", ") || "—"}.
 
-CURRENT STATE: colouring by "${app.coord.state.colorBy}", workspace "${app.currentWS}", ${app.ctx.selectedCells().length ? app.ctx.selectedCells().length + " cells selected" : "no selection"}.`;
+CURRENT STATE: colouring by "${app.coord.state.colorBy}", workspace "${app.currentWS}", ${app.ctx.selectedCells().length ? app.ctx.selectedCells().length + " cells selected" : "no selection"}.
+LAYOUT (panel ids for configure_panel): ${app.canvas.map((p) => `#${p.id} ${p.type}${p.view?.colorBy ? ` colorBy=${p.view.colorBy}` : ""}${p.view?.scope ? ` scope=${(p.view.scope as any).value}` : ""}`).join(", ") || "—"}.`;
 }
 
 // ---- tool executors (side effects on the app + a compact result for the model) ----
@@ -99,6 +101,13 @@ async function execTool(app: App, name: string, input: any): Promise<string> {
     case "propose_workspace": { ag.proposeWorkspace(input.name); return `proposed workspace ${input.name} (awaiting the human's OK)`; }
     case "add_note": { ag.addRail({ type: "Note", title: "Note", text: input.text }); return "added note"; }
     case "set_display": { const p: any = {}; if (typeof input.labels === "boolean") p.labels = input.labels; if (typeof input.legend === "boolean") p.legend = input.legend; app.coord.setDisplay(p); return `display ${JSON.stringify(p)}`; }
+    case "configure_panel": {
+      const patch: any = {};
+      if (typeof input.colorBy === "string") patch.colorBy = input.colorBy;
+      if (typeof input.scopeGrouping === "string" && typeof input.scopeValue === "string") patch.scope = { kind: "category", grouping: input.scopeGrouping, value: input.scopeValue };
+      app.configurePanel(input.panelId, patch);
+      return `configured panel ${input.panelId}: ${JSON.stringify(patch)}`;
+    }
     default: return `unknown tool ${name}`;
   }
 }
