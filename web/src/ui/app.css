@@ -35,9 +35,10 @@ button{font-family:inherit}
 
 /* ---------- stage: canvas + rail + docked convo ---------- */
 .stage{flex:1;display:flex;min-height:0}
-.canvas{flex:1;overflow:auto;padding:14px;min-width:0}
-.workbench{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-content:start}
-.panel{background:var(--panel);border:1px solid var(--line);border-radius:11px;overflow:hidden;animation:rise .3s ease;min-width:0}
+.canvas{flex:1;overflow:auto;padding:14px;min-width:0;display:flex;flex-direction:column}
+/* the workbench fills the canvas; rows stretch (>=300px) so panels use the space, not clump at top */
+.workbench{flex:1;display:grid;grid-template-columns:1fr 1fr;gap:12px;grid-auto-rows:minmax(300px,1fr)}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:11px;overflow:hidden;animation:rise .3s ease;min-width:0;display:flex;flex-direction:column}
 .panel.full{grid-column:1/-1}
 .panel.dragging{opacity:.45} .panel.dragover{box-shadow:0 0 0 2px var(--cyan) inset}
 @keyframes rise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
@@ -48,9 +49,13 @@ button{font-family:inherit}
 .mini{background:var(--inset);color:var(--dim);border:1px solid var(--line);border-radius:6px;font-size:11px;padding:3px 7px;cursor:pointer;font-family:var(--mono);line-height:1}
 .mini:hover{color:var(--text)}
 .pbody{padding:11px;min-height:0}
-.embpanel .pbody{padding:0;height:380px;position:relative}
-/* a maximized (full-width) embedding also grows tall, filling the canvas — not just wider */
-.embpanel.full .pbody{height:calc(100vh - 150px)}
+.workbench .pbody{flex:1 1 auto;overflow:auto}      /* canvas panel bodies fill their (stretched) cell */
+.embpanel .pbody{padding:0;position:relative}
+.workbench .embpanel .pbody{overflow:hidden}        /* the embedding fills its panel; deck.gl re-fits */
+/* maximizing the embedding grows it BOTH ways: its row goes tall, others flow below and the canvas scrolls.
+   Scoped to a full embedding that has siblings — a lone panel already fills via the 1fr rows above. */
+.workbench:has(.embpanel.full:not(:only-child)){grid-auto-rows:minmax(280px,auto)}
+.embpanel.full:not(:only-child) .pbody{height:calc(100vh - 200px)}
 /* coordinated heatmap: dense axis labels go faint (read them on hover), bright + cyan on hover */
 .hgene,.hgrp{opacity:.55;transition:opacity .1s} .hgene:hover,.hgrp:hover{opacity:1;fill:var(--cyan)}
 .hcell:hover{stroke:var(--text);stroke-width:1px}
