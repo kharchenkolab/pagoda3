@@ -89,6 +89,15 @@ export class Agent {
     if (/focus|disease only|only.*disease/.test(q)) { this.app.coord.setFocus("condition", "disease"); this.app.toast("Focused on disease", "Control cells dim everywhere at once — one change to the shared focus."); return this.app.checkpoint("focus disease", "Coordinated focus."); }
     if (/clear|reset|show all|unfocus/.test(q)) { this.app.coord.clearFocus(); this.app.toast("Cleared focus", null); return this.app.checkpoint("clear focus", "Cleared coordination state."); }
     // rung 1 — answers
+    if (/highly variable|variable gene|\bhvg\b|overdispersed gene|most variable/.test(q)) {
+      const sel = this.app.coord.state.selection;
+      const ids = sel?.length ? Array.from(sel) : Array.from({ length: this.ctx.n }, (_, i) => i);
+      const hv = await this.ctx.view.overdispersedGenes(ids, 25);
+      const scope = sel?.length ? `selection (${sel.length} cells)` : "whole dataset";
+      this.addRail({ type: "GeneList", title: `Overdispersed · ${scope}`, cap: "od (resid)", bind: "hvg:scope", rows: hv.map((h) => ({ symbol: h.symbol, score: h.resid })) }, qraw);
+      this.app.toast(`Overdispersed genes for the ${scope}`, `Recomputed for this scope — residual above the mean-variance trend over all ${this.ctx.view.nGenes.toLocaleString()} genes, not a global shortlist.${hv.length ? " Top: " + hv.slice(0, 6).map((h) => h.symbol).join(", ") : ""}`);
+      return this.app.checkpoint("overdispersed genes", "Scope-aware HVG in the rail.");
+    }
     if (/overdispers|gene ?set|pathway|aspect|program/.test(q)) { this.addRail({ type: "Overdispersion", title: "Overdispersed programs", cap: "gene programs", bind: "aspect:overdispersion" }, qraw); this.app.toast("Overdispersed programs added to the rail", "Significantly overdispersed gene programs — click one to colour the embedding by it."); return this.app.checkpoint("overdispersed programs", "Disposable aspects list."); }
     if (/composition|proportion|abundanc/.test(q)) { this.addRail({ type: "CompositionBars", title: "Composition by sample", cap: "compositional", bind: "composition:bySample" }, qraw); this.app.toast("Composition answer added to the rail", null); return this.app.checkpoint("composition?", "Disposable composition answer."); }
     if (/what.*chang|differential|\bde\b|marker/.test(q)) {

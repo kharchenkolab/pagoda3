@@ -15,20 +15,22 @@ const TOOLS: Tool[] = [
   { name: "set_color", description: "Recolour every embedding in place by a handle. The SMALLEST change — prefer this. handle is one of: meta:leiden, meta:cell_type, meta:condition, meta:sample, qc:mito, or gene:<SYMBOL> (e.g. gene:IL6), or geneset:<program name>.", input_schema: { type: "object", properties: { handle: { type: "string" } }, required: ["handle"] } },
   { name: "set_focus", description: "Dim all cells except those where a metadata dim equals value (e.g. dim=condition, value=disease). Coordinated focus.", input_schema: { type: "object", properties: { dim: { type: "string" }, value: { type: "string" } }, required: ["dim", "value"] } },
   { name: "clear_focus", description: "Clear focus/selection.", input_schema: { type: "object", properties: {} } },
-  { name: "get_markers", description: "Add a ranked marker-gene table for a leiden cluster (e.g. c0) to the disposable answer rail, and return the top genes. Rung-1 answer.", input_schema: { type: "object", properties: { cluster: { type: "string", description: "leiden cluster id like c0" } }, required: ["cluster"] } },
-  { name: "run_de_on_selection", description: "Run subsample differential expression on the current cell selection vs the rest (ranking-grade, approximate). Adds a DE table to the rail. Only valid when the user has a selection.", input_schema: { type: "object", properties: {} } },
+  { name: "get_markers", description: "Add a ranked marker-gene table for a group (cluster or annotation) to the disposable answer rail, and return the top genes. Rung-1 answer.", input_schema: { type: "object", properties: { cluster: { type: "string", description: "group id, e.g. a leiden cluster (c0 / 5) or a cell type name" }, grouping: { type: "string", description: "which precomputed grouping the id belongs to (e.g. leiden or cell_type); defaults to leiden" } }, required: ["cluster"] } },
+  { name: "run_de_on_selection", description: "Run subsample differential expression on the current cell selection vs the rest, ranked over ALL genes (scope-correct, ranking-grade). Adds a DE table to the rail. Only valid when the user has a selection.", input_schema: { type: "object", properties: {} } },
+  { name: "get_overdispersed_genes", description: "Compute the most overdispersed (highly variable) genes for a scope — the current selection if there is one, else the whole dataset — recomputed for that scope (residual above the mean-variance trend), not a global shortlist. Adds a ranked gene list to the rail. Use when asked what varies / what's heterogeneous within a subset.", input_schema: { type: "object", properties: {} } },
   { name: "get_composition", description: "Add a per-sample cluster-composition panel (compositional) to the rail and return the disease-vs-control cluster fractions. Rung-1.", input_schema: { type: "object", properties: {} } },
   { name: "get_overdispersion", description: "Add the overdispersed gene-program list to the rail. Rung-1.", input_schema: { type: "object", properties: {} } },
   { name: "propose_workspace", description: "Propose switching to a named workspace (a bigger, reversible layout change the human confirms). name is one of: Overview, Markers, QC triage, Aspects.", input_schema: { type: "object", properties: { name: { type: "string" } }, required: ["name"] } },
   { name: "add_note", description: "Add a short text note to the rail (for an answer that needs no view).", input_schema: { type: "object", properties: { text: { type: "string" } }, required: ["text"] } },
 ];
 
-function systemPrompt(app: App): string {
+async function systemPrompt(app: App): Promise<string> {
+  const brief = await app.ctx.describeForAgent();
   return `You are pagoda2's analysis copilot for an interactive single-cell RNA-seq viewer. The human owns a persistent spatial layout; you drive a shared COORDINATION SPACE (what colours things, what's focused/selected) and earn bigger moves.
 
 PRINCIPLE OF RESTRAINT — always prefer the SMALLEST change that answers the question:
 - recolour/focus in place (set_color, set_focus) — the default;
-- a disposable answer in the rail (get_markers, run_de_on_selection, get_composition, get_overdispersion, add_note) when a new view is needed;
+- a disposable answer in the rail (get_markers, run_de_on_selection, get_overdispersed_genes, get_composition, get_overdispersion, add_note) when a new view is needed;
 - a workspace proposal (propose_workspace) only for a deliberate layout change — and it is a PROPOSAL the human confirms.
 The change itself is visible, so keep your prose to ONE short sentence. Never narrate state the user can already see.
 
@@ -37,8 +39,9 @@ METHODOLOGY (cacoa — encode these, don't forget them):
 - For a population-level claim, use pseudobulk across donors, not pooled-cell tests; say so.
 - Cluster proportions are COMPOSITIONAL (sum to 1) — a rise in one forces others down; use a compositional test.
 - Refuse or caveat a design that can't support a claim (e.g. 1-vs-1). If a result carries such a caveat, state it briefly. When unsure whether a claim is population- vs subpopulation-level, ASK a one-line clarifying question instead of running the wrong test.
+- DE and overdispersion are scope-correct: ranked over ALL genes for the cells in question (a selection or subset), never a global gene shortlist — so they surface the genes that distinguish *that* scope.
 
-DATASET: ${app.ctx.n.toLocaleString()} cells, 12 leiden clusters c0..c11 mapped to cell types (c0=Macrophage, c1=T cell, c2=B cell, ...). Genes use symbols (IL6, CXCL10, SOD2, CCL2, CD3D, MS4A1, NKG7, CD14, ...). Samples D1-D6: D1-D3 control, D4-D6 disease. NOTE: cluster c0 is enriched in disease, but the enrichment leans heavily on a single donor (D5) — a textbook donor-driven confound; flag it when relevant.
+DATASET (read from the loaded store — do not assume any other dataset): ${brief}. Markers are precomputed for: ${app.ctx.groupings().join(", ") || "—"}.
 
 CURRENT STATE: colouring by "${app.coord.state.colorBy}", workspace "${app.currentWS}", ${app.coord.state.selection ? app.coord.state.selection.length + " cells selected" : "no selection"}.`;
 }
@@ -51,9 +54,21 @@ async function execTool(app: App, name: string, input: any): Promise<string> {
     case "set_focus": { app.coord.setFocus(input.dim, input.value); return `focused ${input.dim}=${input.value}`; }
     case "clear_focus": { app.coord.clearFocus(); return "cleared focus"; }
     case "get_markers": {
-      const markers = await app.ctx.markers("leiden"); const rows = (markers.get(input.cluster) || []).slice(0, 20);
-      ag.addRail({ type: "DeTable", title: `Markers · ${input.cluster}`, cap: "cluster vs rest", bind: `de:leiden:${input.cluster}`, group: input.cluster, rows });
-      return `added marker table for ${input.cluster}; top genes: ${rows.slice(0, 8).map((r) => r.symbol).join(", ")}`;
+      const grouping = input.grouping && app.ctx.groupings().includes(input.grouping) ? input.grouping : "leiden";
+      const markers = await app.ctx.markers(grouping); const rows = (markers.get(input.cluster) || []).slice(0, 20);
+      if (!rows.length) return `no group "${input.cluster}" in ${grouping} (have: ${[...markers.keys()].slice(0, 12).join(", ")})`;
+      ag.addRail({ type: "DeTable", title: `Markers · ${input.cluster}`, cap: `${grouping} vs rest`, bind: `de:${grouping}:${input.cluster}`, group: input.cluster, rows });
+      return `added marker table for ${grouping}=${input.cluster}; top genes: ${rows.slice(0, 8).map((r) => r.symbol).join(", ")}`;
+    }
+    case "get_overdispersed_genes": {
+      const sel = app.coord.state.selection;
+      const ids = sel?.length ? Array.from(sel) : Array.from({ length: app.ctx.n }, (_, i) => i);
+      const hv = await app.ctx.view.overdispersedGenes(ids, 25);
+      if (!hv.length) return "no overdispersion (store has no cell-major counts panel)";
+      const rows = hv.map((h) => ({ symbol: h.symbol, score: h.resid }));
+      const scope = sel?.length ? `selection (${sel.length} cells)` : "whole dataset";
+      ag.addRail({ type: "GeneList", title: `Overdispersed · ${scope}`, cap: "od (resid)", bind: "hvg:scope", rows });
+      return `top overdispersed genes for the ${scope}, recomputed for this scope: ${hv.slice(0, 10).map((h) => h.symbol).join(", ")}`;
     }
     case "run_de_on_selection": {
       const ids = app.coord.state.selection; if (!ids?.length) return "no selection — ask the user to drag-select cells first";
@@ -83,7 +98,7 @@ export async function runLive(app: App, userText: string, abort: AbortSignal): P
   const messages: any[] = [{ role: "user", content: userText }];
   app.thread = { kind: "live", live: true, entries: [{ role: "user", text: userText }] };
   ag.renderThread(); app.setPip("working", "thinking");
-  const sys = systemPrompt(app);
+  const sys = await systemPrompt(app);
 
   for (let turn = 0; turn < 8; turn++) {
     if (abort.aborted) break;
@@ -129,6 +144,7 @@ function toolLabel(tu: any): string {
   const i = tu.input || {};
   if (tu.name === "set_color") return `recolour → ${i.handle}`;
   if (tu.name === "get_markers") return `markers · ${i.cluster}`;
+  if (tu.name === "get_overdispersed_genes") return `overdispersed genes`;
   if (tu.name === "propose_workspace") return `propose workspace · ${i.name}`;
   if (tu.name === "set_focus") return `focus · ${i.dim}=${i.value}`;
   return tu.name.replace(/_/g, " ");

@@ -7,7 +7,7 @@ import { CAT_PALETTE } from "../data/view.ts";
 export interface Panel {
   id: number; type: string; title: string; cap?: string; full?: boolean;
   bind?: string; text?: string; q?: string; group?: string; gene?: string;
-  rows?: { gene: number; symbol: string; lfc: number; padj: number }[];
+  rows?: { gene?: number; symbol: string; lfc?: number; padj?: number; score?: number }[];
 }
 
 export interface PanelHooks {
@@ -27,6 +27,7 @@ export async function bodyFor(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bu
     case "BoxBySample": return boxBody(p, ctx);
     case "Overdispersion": return overdispBody(ctx, hooks);
     case "Heatmap": return heatmapBody(p, ctx, hooks);
+    case "GeneList": return geneListBody(p, hooks);
     case "Note": { const d = mk("div", "notebody"); d.innerHTML = p.text || ""; d.style.cssText = "font-size:12.5px;line-height:1.5"; return { el: d }; }
     default: return { el: mk("div", undefined, p.type) };
   }
@@ -63,8 +64,25 @@ function deBody(p: Panel, ctx: Ctx, hooks: PanelHooks): BuiltBody {
   const rows = (p.rows || []).slice(0, 20);
   for (const r of rows) {
     const tr = mk("tr", "gene");
-    const padj = r.padj < 1e-3 ? r.padj.toExponential(1) : r.padj.toFixed(3);
-    tr.innerHTML = `<td>${r.symbol}</td><td class="${r.lfc > 0 ? "up" : "dn"}">${r.lfc.toFixed(2)}</td><td>${padj}</td>`;
+    const lfc = r.lfc ?? 0, pj = r.padj ?? 1;
+    const padj = pj < 1e-3 ? pj.toExponential(1) : pj.toFixed(3);
+    tr.innerHTML = `<td>${r.symbol}</td><td class="${lfc > 0 ? "up" : "dn"}">${lfc.toFixed(2)}</td><td>${padj}</td>`;
+    tr.onclick = () => { [...tb.children].forEach((x) => x.classList.remove("on")); tr.classList.add("on"); hooks.onGeneClick(r.symbol); };
+    tb.appendChild(tr);
+  }
+  t.appendChild(tb);
+  return { el: t };
+}
+
+// A ranked gene list with a single score column (e.g. scope-aware overdispersion). Clicking a
+// row colours the embedding by that gene — the same gesture as the DE table.
+function geneListBody(p: Panel, hooks: PanelHooks): BuiltBody {
+  const t = document.createElement("table");
+  t.innerHTML = `<thead><tr><th>gene</th><th>${p.cap || "score"}</th></tr></thead>`;
+  const tb = document.createElement("tbody");
+  for (const r of (p.rows || []).slice(0, 25)) {
+    const tr = mk("tr", "gene");
+    tr.innerHTML = `<td>${r.symbol}</td><td class="up">${(r.score ?? 0).toFixed(2)}</td>`;
     tr.onclick = () => { [...tb.children].forEach((x) => x.classList.remove("on")); tr.classList.add("on"); hooks.onGeneClick(r.symbol); };
     tb.appendChild(tr);
   }
@@ -96,9 +114,10 @@ function volcanoBody(p: Panel, _ctx: Ctx): BuiltBody {
   const sy = (v: number) => H - pad - Math.min(v, ym) / ym * (H - 2 * pad);
   let g = `<line class="gl" x1="${sx(0)}" y1="6" x2="${sx(0)}" y2="${H - pad}"/>`;
   for (const r of rows) {
-    const y = -Math.log10(Math.max(r.padj, 1e-12)); const hit = Math.abs(r.lfc) >= lT && r.padj <= pT;
-    g += `<circle cx="${sx(r.lfc).toFixed(1)}" cy="${sy(y).toFixed(1)}" r="3.4" fill="${hit ? (r.lfc > 0 ? "var(--bad)" : "var(--cyan)") : "var(--faint)"}"/>`;
-    if (hit && Math.abs(r.lfc) > 1.4) g += `<text class="axis" x="${(sx(r.lfc) + 5).toFixed(1)}" y="${(sy(y) + 3).toFixed(1)}">${r.symbol}</text>`;
+    const lfc = r.lfc ?? 0, pj = r.padj ?? 1;
+    const y = -Math.log10(Math.max(pj, 1e-12)); const hit = Math.abs(lfc) >= lT && pj <= pT;
+    g += `<circle cx="${sx(lfc).toFixed(1)}" cy="${sy(y).toFixed(1)}" r="3.4" fill="${hit ? (lfc > 0 ? "var(--bad)" : "var(--cyan)") : "var(--faint)"}"/>`;
+    if (hit && Math.abs(lfc) > 1.4) g += `<text class="axis" x="${(sx(lfc) + 5).toFixed(1)}" y="${(sy(y) + 3).toFixed(1)}">${r.symbol}</text>`;
   }
   g += `<text class="axis" x="${W / 2}" y="${H - 3}" text-anchor="middle">log2 fold-change</text>`;
   const svg = S("svg", { viewBox: `0 0 ${W} ${H}` }); svg.innerHTML = g;

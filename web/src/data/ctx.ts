@@ -11,7 +11,7 @@ export class Ctx {
   coord: Coord;
   embedding!: { data: Float32Array; n: number };
   private meta = new Map<string, Metadata>();
-  private markerCache?: Map<string, { gene: number; symbol: string; lfc: number; padj: number }[]>;
+  private markerCache = new Map<string, Map<string, { gene: number; symbol: string; lfc: number; padj: number }[]>>();
 
   constructor(view: LstarView, coord: Coord) { this.view = view; this.coord = coord; }
 
@@ -51,8 +51,43 @@ export class Ctx {
   }
 
   async markers(grouping = "leiden") {
-    if (!this.markerCache) this.markerCache = await this.view.markers(grouping, 40);
-    return this.markerCache;
+    if (!this.markerCache.has(grouping)) this.markerCache.set(grouping, await this.view.markers(grouping, 40));
+    return this.markerCache.get(grouping)!;
+  }
+
+  // Which precomputed groupings the store carries (markers/stats navigators), e.g. leiden, cell_type.
+  groupings(): string[] {
+    return this.view.ds.axisNames()
+      .filter((a) => a.startsWith("groups_"))
+      .map((a) => a.slice("groups_".length))
+      .filter((g) => this.view.ds.hasField(g));
+  }
+
+  // A data-driven dataset brief for the agent's system prompt — derived from the actual store, so
+  // the agent never narrates a different dataset's story. Cached. Names the available groupings,
+  // the cell types, and the sample/condition design (incl. the n-per-condition cacoa caveat).
+  private agentBrief?: string;
+  async describeForAgent(): Promise<string> {
+    if (this.agentBrief) return this.agentBrief;
+    const parts: string[] = [`${this.n.toLocaleString()} cells, ${this.view.nGenes.toLocaleString()} genes (HGNC symbols)`];
+    for (const g of this.groupings()) {
+      const m = await this.metaOf(g) as any;
+      const list = m.categories.slice(0, 24).join(", ");
+      parts.push(`${g}: ${m.categories.length} groups${g === "cell_type" ? ` (${list})` : ""}`);
+    }
+    if (this.view.ds.hasField("sample")) {
+      const s = await this.metaOf("sample") as any;
+      let design = `samples: ${s.categories.join(", ")}`;
+      if (this.view.ds.hasField("condition")) {
+        const sc = await this.sampleConditions();
+        const byCond = new Map<string, number>();
+        for (const c of sc.values()) byCond.set(c, (byCond.get(c) || 0) + 1);
+        design += `; conditions: ${[...byCond].map(([c, n]) => `${c} (${n} sample${n > 1 ? "s" : ""})`).join(", ")}`;
+        if ([...byCond.values()].some((n) => n < 2)) design += " — n<2 per condition: a population-level condition claim is NOT supported (the donor is the replicate); say so";
+      }
+      parts.push(design);
+    }
+    return (this.agentBrief = parts.join(". "));
   }
 
   private gsCache = new Map<string, Awaited<ReturnType<LstarView["groupStats"]>>>();
