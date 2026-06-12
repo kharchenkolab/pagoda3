@@ -15,3 +15,6 @@ web/public/*.lstar.zarr/
 # os / editor
 .DS_Store
 *.log
+
+# wasm build artifact (built from ../lstar/js)
+web/public/wasm/

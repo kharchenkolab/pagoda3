@@ -7,6 +7,31 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.resolve(__dirname, "public");
 
+// Copy the built lstar WASM kernels (lstar/js/dist) into public/wasm so the app loads the
+// real libstar kernels at /wasm/lstar_kernels.mjs. Skipped if the dist isn't built (emsdk
+// absent) — the app then falls back to its pure-TS kernels.
+function wasmCopyPlugin() {
+  const dest = path.resolve(PUBLIC, "wasm");
+  return {
+    name: "copy-lstar-wasm",
+    configureServer(server: any) {
+      const dist = path.resolve(__dirname, "../../lstar/js/dist");
+      try {
+        if (fs.existsSync(dist)) { fs.mkdirSync(dest, { recursive: true }); for (const f of fs.readdirSync(dist)) fs.copyFileSync(path.join(dist, f), path.join(dest, f)); }
+      } catch (e) { console.warn("[wasm] copy skipped:", e); }
+      // Serve /wasm/* explicitly with correct MIME (Vite's SPA fallback otherwise shadows it).
+      server.middlewares.use((req: any, res: any, next: any) => {
+        const url = (req.url || "").split("?")[0];
+        if (!url.startsWith("/wasm/")) return next();
+        const file = path.join(dest, url.slice("/wasm/".length));
+        if (!file.startsWith(dest) || !fs.existsSync(file)) { res.statusCode = 404; return res.end("not found"); }
+        res.setHeader("Content-Type", file.endsWith(".wasm") ? "application/wasm" : "application/javascript");
+        fs.createReadStream(file).pipe(res);
+      });
+    },
+  };
+}
+
 // Spawn the agent proxy alongside the dev server (it exits quietly if already running).
 function agentProxyPlugin() {
   return {
@@ -46,7 +71,7 @@ function zarrStorePlugin() {
 }
 
 export default defineConfig({
-  plugins: [zarrStorePlugin(), agentProxyPlugin()],
+  plugins: [zarrStorePlugin(), wasmCopyPlugin(), agentProxyPlugin()],
   server: { port: 8787, fs: { allow: ["..", "../..", "../../lstar"] }, proxy: { "/api": "http://localhost:8786" } },
   build: { target: "es2022" },
 });

@@ -55,7 +55,7 @@ toast appears); otherwise the local mock planner runs. Try ⌘K → "colour by I
 ```
 data-pipeline/   make_dev_store.py (synthetic, canonical schema) · real-data scripts
 web/             Vite + TS app
-  src/data/      store.ts (lstar reader) · view.ts (pure-TS kernels) · ctx.ts · coord.ts
+  src/data/      store.ts (lstar reader) · view.ts (WASM kernels + pure-TS fallback) · kernels.ts · ctx.ts · coord.ts
   src/render/    embedding.ts (deck.gl) · colors.ts
   src/ui/        shell.ts · panels.ts · app.css · dom.ts
   src/agent/     agent.ts (dispatch + mock + presence) · live.ts (Opus tool-use loop)
@@ -67,7 +67,9 @@ server/proxy.mjs OAuth/API-key proxy + Messages API SSE relay
 - **Real:** the whole app + data layer + live Opus agent, on a synthetic store with the
   *canonical schema* (so the real GSE192391 store slots in unchanged).
 - **Approximate by design:** DE on arbitrary selections is subsampled / ranking-grade (labelled).
+- **Real WASM:** the libstar kernels (incl. the new `csc_col_sum_by_group` + `subsample_de_rank`)
+  are compiled to WebAssembly (`lstar/js/dist`, built via emcc) and drive the app's DE; numbers
+  match the C++/R/Python core. Pure-TS fallback if `/wasm` is absent.
 - **To build:** real GSE192391 sample 1 via pagoda2.1 (`lstar write_pagoda2` — see plan1.0
-  Part B); the lstar `viewer@0.1` profile + WASM kernels (currently pure-TS); the cell-major
-  DE panel + `csrRow` path so subsample DE reads O(rows) at 10⁶ cells; browser OAuth sign-in;
-  Zarr v3/sharding for remote scale.
+  Part B); the lstar `viewer@0.1` profile *exporter*; the cell-major DE panel + `csrRow` path
+  so subsample DE reads O(rows) at 10⁶ cells; browser OAuth sign-in; Zarr v3/sharding.
