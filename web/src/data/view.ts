@@ -212,6 +212,75 @@ export class LstarView {
     };
     return this.dePanelCache;
   }
+
+  // Scope-aware overdispersed genes (HVG). Subsamples the cells in `cellIds`, computes per-gene
+  // mean/var of log1p over that subsample from the cell-major counts, and ranks genes by their
+  // residual ABOVE the smoothed mean-variance trend — pagoda2's gene-relative overdispersion
+  // (log(v) ~ smooth(log(m)); res = observed - fitted). This is the *correct* HVG for a focused
+  // subset (T cells only, a lasso, ...): the trend and the residuals are recomputed for that scope,
+  // never read off a global precomputed list (which is dominated by major-lineage genes).
+  async overdispersedGenes(cellIds: number[], topN = 50, maxCells = 2000):
+      Promise<{ gene: number; symbol: string; mean: number; varr: number; resid: number; nobs: number }[]> {
+    const dp = await this.dePanel();
+    if (!dp) return [];
+    const { data, indices, indptr, symbols, geneCol, nGenes, lognorm } = dp;
+    const cells = sample(cellIds, maxCells);
+    const n = Math.max(cells.length, 1);
+    const sum = new Float64Array(nGenes), sumsq = new Float64Array(nGenes), nobs = new Int32Array(nGenes);
+    for (const i of cells) for (let k = indptr[i]; k < indptr[i + 1]; k++) {
+      const g = indices[k], v = lognorm ? data[k] : Math.log1p(data[k]);
+      sum[g] += v; sumsq[g] += v * v; nobs[g]++;
+    }
+    const mean = new Float64Array(nGenes), varr = new Float64Array(nGenes);
+    const xs: number[] = [], ys: number[] = [], gi: number[] = [];   // fit the trend on expressed genes
+    for (let g = 0; g < nGenes; g++) {
+      const m = sum[g] / n, vv = Math.max(sumsq[g] / n - (sum[g] / n) ** 2, 0);
+      mean[g] = m; varr[g] = vv;
+      if (m > 0 && vv > 0) { xs.push(Math.log(m)); ys.push(Math.log(vv)); gi.push(g); }
+    }
+    const trend = lowess(xs, ys);                                    // log(v) ~ smooth(log(m))
+    const out = gi.map((g, j) => ({
+      gene: geneCol ? geneCol[g] : g, symbol: symbols[g],
+      mean: mean[g], varr: varr[g], resid: ys[j] - trend(xs[j]), nobs: nobs[g],
+    }));
+    out.sort((a, b) => b.resid - a.resid);
+    return out.slice(0, topN);
+  }
+}
+
+// Compact LOWESS: tricube-weighted local linear fit of y~x, evaluated at `nAnchor` anchors across
+// the x-range and linearly interpolated. `span` = fraction of points per window. Returns a predictor.
+function lowess(xs: number[], ys: number[], span = 0.3, nAnchor = 200): (x: number) => number {
+  const n = xs.length;
+  if (n < 3) { const my = ys.reduce((s, v) => s + v, 0) / Math.max(n, 1); return () => my; }
+  const ord = Array.from({ length: n }, (_, i) => i).sort((a, b) => xs[a] - xs[b]);
+  const sx = ord.map((i) => xs[i]), sy = ord.map((i) => ys[i]);
+  const win = Math.max(2, Math.floor(span * n));
+  const ax: number[] = [], ay: number[] = [];
+  for (let a = 0; a < nAnchor; a++) {
+    const x0 = sx[0] + (sx[n - 1] - sx[0]) * a / (nAnchor - 1);
+    let l = Math.max(0, lowerBound(sx, x0) - (win >> 1)); const r = Math.min(n, l + win); l = Math.max(0, r - win);
+    let maxd = 1e-9; for (let i = l; i < r; i++) maxd = Math.max(maxd, Math.abs(sx[i] - x0));
+    let sw = 0, swx = 0, swy = 0, swxx = 0, swxy = 0;
+    for (let i = l; i < r; i++) {
+      const d = Math.abs(sx[i] - x0) / maxd, w = (1 - d * d * d) ** 3, xi = sx[i], yi = sy[i];
+      sw += w; swx += w * xi; swy += w * yi; swxx += w * xi * xi; swxy += w * xi * yi;
+    }
+    const denom = sw * swxx - swx * swx;
+    ay.push(Math.abs(denom) < 1e-12 ? swy / sw : ((swy - (sw * swxy - swx * swy) / denom * swx) / sw) + (sw * swxy - swx * swy) / denom * x0);
+    ax.push(x0);
+  }
+  return (x: number) => {
+    if (x <= ax[0]) return ay[0];
+    if (x >= ax[ax.length - 1]) return ay[ax.length - 1];
+    const j = lowerBound(ax, x);
+    return ay[j - 1] + (ay[j] - ay[j - 1]) * (x - ax[j - 1]) / (ax[j] - ax[j - 1]);
+  };
+}
+function lowerBound(arr: number[], x: number): number {
+  let lo = 0, hi = arr.length;
+  while (lo < hi) { const m = (lo + hi) >> 1; if (arr[m] < x) lo = m + 1; else hi = m; }
+  return lo;
 }
 
 function sample(arr: number[], k: number): number[] {
