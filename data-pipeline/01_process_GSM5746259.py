@@ -122,7 +122,10 @@ def main():
     ds.add_field("stats_leiden_nexpr", NE, role="measure", span=["groups_leiden", "genes"])
     ds.add_field("markers_leiden_lfc", lfc, role="measure", span=["genes", "groups_leiden"])
     ds.add_field("markers_leiden_padj", padj, role="measure", span=["genes", "groups_leiden"])
-    ds.profiles = list(getattr(ds, "profiles", [])) + ["viewer@0.1", "scanpy@1"]
+    # top up the viewer profile: od_genes + the cell-major de_panel (CSR log1p) for O(rows)
+    # selection DE. Idempotent — skips the cluster stats/markers already added above.
+    lstar.write_viewer(ds, "leiden")
+    ds.profiles = list(ds.profiles) + ["scanpy@1"]
     out = os.path.abspath(OUT)
     if os.path.exists(out):
         import shutil; shutil.rmtree(out)
