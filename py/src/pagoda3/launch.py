@@ -61,8 +61,9 @@ def _server_up(port=_PORT):
 
 def view(obj, prepare=False, open_browser=True):
     """Open `obj` (an L* store path, an lstar.Dataset, or an AnnData) in the pagoda3 viewer."""
-    store = _coerce_store(obj, prepare)
-    rel = "/" + os.path.relpath(store, _PUBLIC) if os.path.commonpath([store, _PUBLIC]) == _PUBLIC else store
+    store = os.path.abspath(_coerce_store(obj, prepare))
+    under_public = os.path.commonpath([store, _PUBLIC]) == _PUBLIC
+    rel = "/" + os.path.relpath(store, _PUBLIC) if under_public else store
     if not _server_up():
         subprocess.Popen(["npm", "--prefix", "web", "run", "dev"], cwd=_REPO,
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
