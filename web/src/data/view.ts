@@ -132,6 +132,10 @@ export class LstarView {
 
     const dp = await this.dePanel();
     if (dp) {
+      // Deliberately a zero-copy JS loop, NOT the WASM subsample_de_rank kernel: the panel is
+      // cached whole in JS memory and we touch only the sampled rows (O(rows)). Handing it to
+      // WASM would copy the entire panel into the heap each call — O(full panel), a regression.
+      // (data is already log1p — de_panel state=lognorm — so we sum it directly.)
       const { data, indices, indptr, symbols, globalCol, nOd } = dp;
       const sumA = new Float64Array(nOd), sumB = new Float64Array(nOd);
       for (const i of A) for (let k = indptr[i]; k < indptr[i + 1]; k++) sumA[indices[k]] += data[k];
