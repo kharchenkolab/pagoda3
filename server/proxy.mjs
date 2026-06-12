@@ -96,4 +96,5 @@ const server = http.createServer(async (req, res) => {
   res.statusCode = 404; res.end("not found");
 });
 
+server.on("error", (e) => { if (e.code === "EADDRINUSE") { console.log(`[proxy] port ${PORT} already in use — assuming a proxy is running`); process.exit(0); } else throw e; });
 server.listen(PORT, () => console.log(`[proxy] agent proxy on http://localhost:${PORT}`));
