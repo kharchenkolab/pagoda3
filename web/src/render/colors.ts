@@ -20,7 +20,7 @@ export async function focusMaskFor(view: LstarView, focus: { dim: string; value:
   return mask;
 }
 
-import { CAT_PALETTE } from "../data/view.ts";
+import { catColor } from "../data/view.ts";
 
 export async function colorsFor(view: LstarView, colorBy: string, focusMask?: Uint8Array): Promise<{ rgba: Uint8Array; legend: Legend }> {
   const [kind, rest] = colorBy.split(/:(.+)/);
@@ -29,7 +29,7 @@ export async function colorsFor(view: LstarView, colorBy: string, focusMask?: Ui
     if (m.kind === "categorical") {
       return {
         rgba: codesToRGBA(m.codes, focusMask),
-        legend: { kind: "categorical", title: rest, items: m.categories.map((c, i) => ({ label: c, rgb: CAT_PALETTE[i % CAT_PALETTE.length] as [number, number, number] })) },
+        legend: { kind: "categorical", title: rest, items: m.categories.map((c, i) => ({ label: c, rgb: catColor(i) })) },
       };
     }
     return { rgba: scalarToRGBA(m.values, m.max, focusMask), legend: numericLegend(rest) };

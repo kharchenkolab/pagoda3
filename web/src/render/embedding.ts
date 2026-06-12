@@ -1,7 +1,7 @@
 // deck.gl embedding renderer — the one panel that must scale to 10^4..10^6 points.
 // Binary attributes (no per-point accessors) so coloring a million cells is a buffer swap.
 import { Deck, OrthographicView } from "@deck.gl/core";
-import { ScatterplotLayer } from "@deck.gl/layers";
+import { ScatterplotLayer, TextLayer } from "@deck.gl/layers";
 
 export class EmbeddingView {
   private deck: Deck;
@@ -84,6 +84,20 @@ export class EmbeddingView {
             updateTriggers: { getPosition: this.hintVersion },
           }) as any
         : null,
+      // on-plot category labels at centroids — names ON the map, so orientation isn't swatch-matching.
+      // Drawn last (on top); halo'd so they read over any cluster colour. Cleared for numeric colourings.
+      this.labels.length
+        ? new TextLayer({
+            id: "labels", data: this.labels,
+            getPosition: (d: any) => d.p, getText: (d: any) => d.text,
+            getSize: 12.5, sizeUnits: "pixels", sizeMinPixels: 10, sizeMaxPixels: 15,
+            getColor: [240, 244, 250, 255], getTextAnchor: "middle", getAlignmentBaseline: "center",
+            fontFamily: "-apple-system, BlinkMacSystemFont, system-ui, sans-serif", fontWeight: 700,
+            fontSettings: { sdf: true, radius: 14, buffer: 6 }, outlineWidth: 2.4, outlineColor: [9, 13, 20, 255],
+            billboard: true, pickable: false, characterSet: "auto",
+            updateTriggers: { getText: this.labelVersion, getPosition: this.labelVersion },
+          }) as any
+        : null,
     ].filter(Boolean);
   }
 
@@ -91,11 +105,16 @@ export class EmbeddingView {
   private selVersion = 0;
   private hintXY: [number, number] | null = null;
   private hintVersion = 0;
+  private labels: { text: string; p: [number, number] }[] = [];
+  private labelVersion = 0;
   private selCount() { let c = 0; for (let i = 0; i < this.n; i++) c += this.selected[i]; return c; }
   private redraw() { this.deck.setProps({ layers: this.layers() }); }
 
   /** Show (or clear) a subtle locator ring at a data-space point — the cross-panel hover cue. */
   setHint(xy: [number, number] | null) { this.hintXY = xy; this.hintVersion++; this.redraw(); }
+
+  /** Place category names at their centroids (categorical colouring); pass [] to clear (numeric colouring). */
+  setLabels(labels: { text: string; p: [number, number] }[]) { this.labels = labels; this.labelVersion++; this.redraw(); }
 
   setColors(rgba: Uint8Array) { this.colors = rgba; this.colorVersion++; this.redraw(); }
 

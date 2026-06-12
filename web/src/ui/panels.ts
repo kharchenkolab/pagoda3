@@ -2,7 +2,7 @@ import { mk, S } from "./dom.ts";
 import { Ctx } from "../data/ctx.ts";
 import { EmbeddingView } from "../render/embedding.ts";
 import { colorsFor, focusMaskFor } from "../render/colors.ts";
-import { CAT_PALETTE } from "../data/view.ts";
+import { catColor } from "../data/view.ts";
 
 export interface Panel {
   id: number; type: string; title: string; cap?: string; full?: boolean;
@@ -52,9 +52,28 @@ export async function paintEmbedding(ev: EmbeddingView, ctx: Ctx) {
   const { rgba, legend } = await colorsFor(ctx.view, c.colorBy, mask);
   ev.setColors(rgba);
   ev.setSelection(c.selection);
+  ev.setLabels(await categoryLabels(ctx, c.colorBy));
   const lg = (ev as any)._legend as HTMLElement | undefined;
-  if (lg) lg.innerHTML = `<span class="lt">${legend.title}</span>` +
-    legend.items.slice(0, 14).map((it) => `<span><span class="sw" style="background:rgb(${it.rgb.join(",")})"></span>${it.label}</span>`).join("");
+  // Categorical identity now lives on the plot (centroid labels), so the swatch legend is redundant
+  // clutter that occludes cells — show the key only for numeric colourings (the low→high gradient).
+  if (lg) lg.innerHTML = legend.kind === "numeric"
+    ? `<span class="lt">${legend.title}</span>` + legend.items.map((it) => `<span><span class="sw" style="background:rgb(${it.rgb.join(",")})"></span>${it.label}</span>`).join("")
+    : "";
+}
+
+// Centroid (mean position) of every category, for on-plot labels. Categorical colourings only —
+// returns [] for gene/qc/geneset so the embedding clears its labels. Mean is fine for blob-like
+// UMAP clusters; a multi-lobe cluster's label may sit between lobes (a later refinement: medoid).
+async function categoryLabels(ctx: Ctx, colorBy: string): Promise<{ text: string; p: [number, number] }[]> {
+  if (!colorBy.startsWith("meta:")) return [];
+  const md = await ctx.metaOf(colorBy.slice(5)) as any;
+  if (md.kind !== "categorical") return [];
+  const K = md.categories.length, emb = ctx.embedding.data, n = ctx.n;
+  const sx = new Float64Array(K), sy = new Float64Array(K), cnt = new Int32Array(K);
+  for (let i = 0; i < n; i++) { const k = md.codes[i]; if (k < 0) continue; sx[k] += emb[i * 2]; sy[k] += emb[i * 2 + 1]; cnt[k]++; }
+  const out: { text: string; p: [number, number] }[] = [];
+  for (let k = 0; k < K; k++) if (cnt[k]) out.push({ text: md.categories[k], p: [sx[k] / cnt[k], sy[k] / cnt[k]] });
+  return out;
 }
 
 function deBody(p: Panel, ctx: Ctx, hooks: PanelHooks): BuiltBody {
@@ -96,13 +115,13 @@ async function compositionBody(ctx: Ctx): Promise<BuiltBody> {
   let g = "";
   samples.forEach((sm, i) => {
     const x = p + i * ((W - p - 6) / samples.length); let ya = H - 26;
-    props[i].forEach((pr, t) => { const h = pr * (H - 46); ya -= h; const c = CAT_PALETTE[t % CAT_PALETTE.length]; g += `<rect x="${x}" y="${ya.toFixed(1)}" width="${bw}" height="${h.toFixed(1)}" fill="rgb(${c.join(",")})" fill-opacity=".9"/>`; });
+    props[i].forEach((pr, t) => { const h = pr * (H - 46); ya -= h; const c = catColor(t); g += `<rect x="${x}" y="${ya.toFixed(1)}" width="${bw}" height="${h.toFixed(1)}" fill="rgb(${c.join(",")})" fill-opacity=".9"/>`; });
     g += `<text class="axis" x="${x + bw / 2}" y="${H - 13}" text-anchor="middle">${sm}</text>`;
     g += `<text class="axis" x="${x + bw / 2}" y="${H - 3}" text-anchor="middle" fill="${conds[i] === "disease" ? "var(--bad)" : "var(--cyan)"}">${conds[i]}</text>`;
   });
   const svg = S("svg", { viewBox: `0 0 ${W} ${H}` }); svg.innerHTML = g;
   const w = mk("div"); w.appendChild(svg);
-  const leg = mk("div", "legend"); leg.innerHTML = groups.map((gr, i) => `<span><span class="sw" style="background:rgb(${CAT_PALETTE[i % CAT_PALETTE.length].join(",")})"></span>${gr}</span>`).join("");
+  const leg = mk("div", "legend"); leg.innerHTML = groups.map((gr, i) => `<span><span class="sw" style="background:rgb(${catColor(i).join(",")})"></span>${gr}</span>`).join("");
   w.appendChild(leg);
   return { el: w };
 }

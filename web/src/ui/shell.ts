@@ -28,11 +28,14 @@ export class App {
 
   constructor(ctx: Ctx) {
     this.ctx = ctx; this.coord = ctx.coord;
+    // Open on the named annotation when the store has it — "cell type" reads; numbered leiden clusters don't.
+    const defGroup = ctx.view.ds.hasField("cell_type") ? "meta:cell_type" : "meta:leiden";
+    this.coord.set({ colorBy: defGroup });
     this.WS = {
-      Overview: { colorBy: "meta:leiden", panels: [
+      Overview: { colorBy: defGroup, panels: [
         { type: "Embedding", title: "Embedding", cap: "all cells", bind: "embedding:main" },
         { type: "CompositionBars", title: "Composition by sample", cap: "by condition", bind: "composition:bySample" }] },
-      "Markers": { colorBy: "meta:leiden", panels: [
+      "Markers": { colorBy: defGroup, panels: [
         { type: "Embedding", title: "Embedding", cap: "clusters", bind: "embedding:main" },
         { type: "Heatmap", title: "Cluster marker heatmap", cap: "top genes × cluster", group: "leiden", full: true }] },
       "QC triage": { colorBy: "qc:mito", panels: [

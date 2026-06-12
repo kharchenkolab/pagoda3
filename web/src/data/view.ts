@@ -373,15 +373,31 @@ export function scalarToRGBA(values: ArrayLike<number>, max: number, focusMask?:
   return out;
 }
 
-export const CAT_PALETTE = [
-  [110, 168, 254], [224, 164, 88], [180, 142, 173], [136, 192, 160], [217, 140, 140],
-  [92, 200, 255], [200, 120, 200], [120, 200, 140], [240, 200, 90], [150, 150, 230],
-  [230, 130, 100], [120, 210, 210],
+// Qualitative palette tuned for the dark canvas: 24 hand-separated hues. Beyond that, catColor()
+// walks the hue wheel by the golden angle so any category count stays collision-free — the old
+// 12-colour table wrapped with %, so e.g. cluster 0 and cluster 12 rendered the SAME colour.
+export const CAT_PALETTE: [number, number, number][] = [
+  [110, 168, 254], [224, 164, 88], [136, 192, 160], [217, 140, 140], [180, 142, 173], [120, 210, 210],
+  [240, 200, 90], [150, 150, 230], [230, 130, 100], [120, 200, 140], [200, 120, 200], [92, 200, 255],
+  [232, 126, 160], [160, 205, 95], [245, 175, 120], [110, 150, 235], [205, 205, 130], [100, 205, 185],
+  [205, 150, 235], [235, 140, 150], [150, 195, 235], [190, 165, 140], [140, 205, 120], [240, 190, 100],
 ];
+export function catColor(code: number): [number, number, number] {
+  if (code < CAT_PALETTE.length) return CAT_PALETTE[code];
+  const k = code - CAT_PALETTE.length;            // overflow: golden-angle hue walk, never collides
+  const hue = (k * 137.508 + 25) % 360;
+  return hslToRgb(hue / 360, (60 + (k % 2) * 16) / 100, (60 + ((k % 3) - 1) * 9) / 100);
+}
+function hslToRgb(h: number, s: number, l: number): [number, number, number] {
+  if (s === 0) { const v = Math.round(l * 255); return [v, v, v]; }
+  const q = l < 0.5 ? l * (1 + s) : l + s - l * s, p = 2 * l - q;
+  const f = (t: number) => { if (t < 0) t += 1; if (t > 1) t -= 1; if (t < 1 / 6) return p + (q - p) * 6 * t; if (t < 1 / 2) return q; if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6; return p; };
+  return [Math.round(f(h + 1 / 3) * 255), Math.round(f(h) * 255), Math.round(f(h - 1 / 3) * 255)];
+}
 export function codesToRGBA(codes: Int32Array, focusMask?: Uint8Array): Uint8Array {
   const n = codes.length, out = new Uint8Array(n * 4);
   for (let i = 0; i < n; i++) {
-    const c = CAT_PALETTE[codes[i] % CAT_PALETTE.length];
+    const c = catColor(codes[i]);
     out[i * 4] = c[0]; out[i * 4 + 1] = c[1]; out[i * 4 + 2] = c[2];
     out[i * 4 + 3] = focusMask && !focusMask[i] ? 40 : 230;
   }
