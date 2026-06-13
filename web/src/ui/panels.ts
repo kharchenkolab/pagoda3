@@ -45,7 +45,7 @@ export async function bodyFor(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bu
     case "Embedding": return embeddingBody(p, ctx, hooks);
     case "DeTable": return deBody(p, ctx, hooks);
     case "Volcano": return volcanoBody(p, ctx);
-    case "CompositionBars": return compositionBody(ctx, hooks);
+    case "CompositionBars": return compositionBody(p, ctx, hooks);
     case "BoxBySample": return boxBody(p, ctx);
     case "Overdispersion": return overdispBody(ctx, hooks);
     case "Heatmap": return heatmapBody(p, ctx, hooks);
@@ -153,8 +153,8 @@ function geneListBody(p: Panel, hooks: PanelHooks): BuiltBody {
   return { el: t };
 }
 
-async function compositionBody(ctx: Ctx, hooks: PanelHooks): Promise<BuiltBody> {
-  const grouping = "leiden";
+async function compositionBody(panel: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltBody> {
+  const grouping = panel.view?.colorBy?.startsWith("meta:") ? panel.view.colorBy.slice(5) : "leiden";   // per-panel stack grouping (p is padding below)
   const { samples, conds, groups, props } = await ctx.composition(grouping);
   const W = 460, H = 200, p = 28, bw = Math.min(46, (W - p - 6) / samples.length - 6);
   // remember each category's segment box per sample — geometry for the hover ribbons

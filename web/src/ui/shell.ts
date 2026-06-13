@@ -146,13 +146,20 @@ export class App {
     h.appendChild(Object.assign(mk("span", "pt"), { textContent: p.title }));
     if (p.cap) h.appendChild(Object.assign(mk("span", "pc"), { textContent: "· " + p.cap }));
     const sp = mk("div", "sp");
-    if (p.type === "Embedding") {
-      const s = document.createElement("select"); s.className = "inline";
-      const cur = this.coord.state.colorBy;
-      const opts = [...COLOR_OPTS]; if (!opts.find((o) => o[0] === cur)) opts.unshift([cur, handleLabel(cur)]);
+    if (p.type === "Embedding" || p.type === "CompositionBars") {
+      // per-panel handle picker — controls THIS panel only (configure_panel), so it still works when the agent
+      // or another panel uses a different colour. Embedding: any handle; Composition: which grouping it stacks by.
+      const isEmb = p.type === "Embedding";
+      const s = document.createElement("select"); s.className = "inline"; s.dataset.pid = String(p.id);
+      const cur = p.view?.colorBy ?? (isEmb ? this.coord.state.colorBy : "meta:" + (this.ctx.groupings()[0] || "leiden"));
+      const opts: [string, string][] = isEmb
+        ? (() => { const o = [...COLOR_OPTS]; if (!o.find((x) => x[0] === cur)) o.unshift([cur, handleLabel(cur)]); return o; })()
+        : this.ctx.groupings().map((g) => ["meta:" + g, handleLabel("meta:" + g)] as [string, string]);
       s.innerHTML = opts.map(([v, l]) => `<option value="${v}"${v === cur ? " selected" : ""}>${l}</option>`).join("");
-      s.onchange = () => this.coord.setColor(s.value);
+      s.onchange = () => this.configurePanel(p.id, { colorBy: s.value });
       sp.appendChild(s);
+    }
+    if (p.type === "Embedding") {
       // view-option toggles — the direct-manipulation tier of display state (the agent drives the same via set_display).
       // data-tg lets syncToggles() refresh their on/off when the agent flips display, so both tiers stay in step.
       const disp = this.coord.state.display, cat = this.ctx.colorIsCategorical();
@@ -211,7 +218,9 @@ export class App {
   configurePanel(panelId: number, patch: Partial<PanelView>) {
     const p = this.canvas.find((z) => z.id === panelId) || this.rail.find((z) => z.id === panelId);
     if (!p) return;
-    const rebuild = "embedding" in patch && patch.embedding !== p.view?.embedding;   // swapping embeddings rebuilds the view
+    // swapping an embedding, or restacking a non-embedding panel (composition grouping), needs a body rebuild;
+    // an embedding recolour/scope is a cheap repaint.
+    const rebuild = ("embedding" in patch && patch.embedding !== p.view?.embedding) || (p.type !== "Embedding" && "colorBy" in patch);
     p.view = { ...p.view, ...patch };
     if (rebuild) this.fullRender(); else this.repaint();
   }
@@ -408,7 +417,8 @@ export class App {
       this.repaint(); this.syncColorSelects(); this.syncToggles();
     });
   }
-  syncColorSelects() { const v = this.coord.state.colorBy; document.querySelectorAll<HTMLSelectElement>("select.inline").forEach((s) => { if ([...s.options].some((o) => o.value === v)) s.value = v; }); }
+  // keep each panel's dropdown showing ITS effective handle (per-panel override, else the global default).
+  syncColorSelects() { document.querySelectorAll<HTMLSelectElement>("select.inline").forEach((s) => { const p = this.canvas.find((z) => z.id === Number(s.dataset.pid)); const eff = p?.view?.colorBy ?? this.coord.state.colorBy; if ([...s.options].some((o) => o.value === eff)) s.value = eff; }); }
   // reflect display state (set by the agent or a toggle) onto the header toggle buttons — keeps both tiers in step
   syncToggles() {
     const d = this.coord.state.display, cat = this.ctx.colorIsCategorical();
