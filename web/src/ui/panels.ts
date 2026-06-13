@@ -291,70 +291,73 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
   // top 3 genes per group, unique
   const seen = new Set<number>(); const rows: { gene: number; symbol: string }[] = [];
   for (const grp of gs.groups) for (const m of (markers.get(grp) || []).slice(0, 3)) if (!seen.has(m.gene)) { seen.add(m.gene); rows.push({ gene: m.gene, symbol: m.symbol }); }
-  const G = gs.groups.length, R = rows.length, cw = Math.min(28, 360 / G), ch = 13, x0 = 70, y0 = 6;
-  // scale each gene row to its max-across-groups for contrast. Cells/labels carry their row+col
-  // index so hover can read the names (axis labels go faint — unreadable when dense — and the
-  // names are revealed legibly on hover instead).
-  const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
-  let g = "";
-  rows.forEach((r, ri) => {
-    let mx = 1e-6; for (let c = 0; c < G; c++) mx = Math.max(mx, gs.mean[c * gs.nGenes + r.gene]);
-    for (let c = 0; c < G; c++) {
-      const t = Math.min(1, gs.mean[c * gs.nGenes + r.gene] / mx); const col = ramp(t);
-      g += `<rect class="hcell" data-ri="${ri}" data-c="${c}" x="${x0 + c * cw}" y="${y0 + ri * ch}" width="${cw - 0.5}" height="${ch - 0.5}" fill="${col}"/>`;
-    }
-    g += `<text class="axis hgene" data-ri="${ri}" x="${x0 - 4}" y="${y0 + ri * ch + 10}" text-anchor="end">${esc(r.symbol)}</text>`;
-  });
-  gs.groups.forEach((grp, c) => { g += `<text class="axis hgrp" data-c="${c}" x="${x0 + c * cw + cw / 2}" y="${y0 + R * ch + 10}" text-anchor="middle">${esc(grp)}</text>`; });
-  // row + column highlight bands, shown only while hovering (so you can see which cell you're on)
-  g += `<rect class="hrowg" x="${x0}" width="${G * cw}" height="${ch}" fill="rgba(150,225,255,.14)" pointer-events="none" style="display:none"/>`;
-  g += `<rect class="hcolg" y="${y0}" width="${cw}" height="${R * ch}" fill="rgba(150,225,255,.14)" pointer-events="none" style="display:none"/>`;
-  const H = y0 + R * ch + 16, W = x0 + G * cw + 6;
-  const svg = S("svg", { viewBox: `0 0 ${W} ${H}` }); svg.innerHTML = g; (svg as any).style.maxHeight = "320px";
-  const rowg = svg.querySelector<SVGRectElement>(".hrowg")!, colg = svg.querySelector<SVGRectElement>(".hcolg")!;
+  const G = gs.groups.length, R = rows.length, x0 = 70, y0 = 6, axisH = 16;
+  const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
-  const w = mk("div"); w.style.position = "relative"; w.appendChild(svg);
-  // a legible readout that follows the cursor — the actual gene/cell-type names, however dense the axes
+  // Responsive: the grid is re-laid to fill the panel — cell size derives from the live width/height and
+  // re-draws on resize. Axis labels stay faint and are read on hover, so dense rows remain fine.
+  const w = mk("div"); w.style.cssText = "position:relative;width:100%";
+  const host = mk("div"); w.appendChild(host);
   const tip = mk("div"); tip.style.cssText = "position:absolute;display:none;background:var(--ink);border:1px solid var(--line2);border-radius:6px;padding:3px 8px;font-size:11px;color:var(--text);pointer-events:none;z-index:20;white-space:nowrap;box-shadow:0 4px 14px rgba(0,0,0,.45)";
   w.appendChild(tip);
+  const hint = mk("div"); hint.style.cssText = "font-size:10.5px;color:var(--faint);padding:5px 7px 2px;line-height:1.4";
+  hint.textContent = "hover a cell to read its gene × cell type · click a gene to colour by it · click a column to focus the type";
+  w.appendChild(hint);
   const showTip = (e: PointerEvent, html: string) => {
     tip.innerHTML = html; tip.style.display = "block";
     const r = w.getBoundingClientRect(); let x = e.clientX - r.left + 13;
     if (x + tip.offsetWidth > r.width - 4) x = e.clientX - r.left - tip.offsetWidth - 8;
     tip.style.left = Math.max(2, x) + "px"; tip.style.top = (e.clientY - r.top + 13) + "px";
   };
-  const clear = () => { tip.style.display = "none"; rowg.style.display = colg.style.display = "none"; ctx.coord.clearHint(); };
-  svg.addEventListener("pointerleave", clear);
 
-  // two-tier coordination. HOVER: a row/col guide + a name readout + a subtle locator ring on the UMAP
-  // (no recolour). CLICK: the committed act — recolour by the gene, or recolour + focus the cell type.
-  svg.querySelectorAll<SVGElement>(".hcell").forEach((el) => {
-    const ri = +el.getAttribute("data-ri")!, c = +el.getAttribute("data-c")!;
-    const sym = rows[ri].symbol, grp = gs.groups[c]; el.style.cursor = "pointer";
-    el.addEventListener("pointermove", (e) => {
-      rowg.setAttribute("y", String(y0 + ri * ch)); colg.setAttribute("x", String(x0 + c * cw));
-      rowg.style.display = colg.style.display = "block";
-      const mean = gs.mean[c * gs.nGenes + rows[ri].gene];
-      showTip(e, `<b>${esc(sym)}</b> · ${esc(grp)} <span style="color:var(--faint)">${mean.toFixed(2)}</span>`);
-      ctx.coord.setHint({ kind: "category", grouping, value: grp });
+  // scale each gene row to its max-across-groups for contrast; cells/labels carry their row+col index so
+  // hover can read the names. Re-runs on resize against the panel body's live dimensions.
+  const draw = () => {
+    const box = w.parentElement, pbodyH = box ? box.clientHeight : 0;
+    const availW = (box ? box.clientWidth : 380) - 24;
+    const availH = pbodyH > 120 ? pbodyH - 36 : Math.min(360, R * 16 + 30);   // fill in the canvas; content-height in the rail
+    const cw = clamp((availW - x0 - 6) / G, 6, 40), ch = clamp((availH - y0 - axisH) / R, 7, 26);
+    const W = x0 + G * cw + 6, H = y0 + R * ch + axisH;
+    let g = "";
+    rows.forEach((r, ri) => {
+      let mx = 1e-6; for (let c = 0; c < G; c++) mx = Math.max(mx, gs.mean[c * gs.nGenes + r.gene]);
+      for (let c = 0; c < G; c++) { const t = Math.min(1, gs.mean[c * gs.nGenes + r.gene] / mx);
+        g += `<rect class="hcell" data-ri="${ri}" data-c="${c}" x="${(x0 + c * cw).toFixed(2)}" y="${(y0 + ri * ch).toFixed(2)}" width="${(cw - 0.5).toFixed(2)}" height="${(ch - 0.5).toFixed(2)}" fill="${ramp(t)}"/>`; }
+      g += `<text class="axis hgene" data-ri="${ri}" x="${x0 - 4}" y="${(y0 + ri * ch + ch * 0.72).toFixed(1)}" text-anchor="end">${esc(r.symbol)}</text>`;
     });
-    el.addEventListener("click", () => hooks.onGeneClick(sym));
-  });
-  svg.querySelectorAll<SVGElement>(".hgene").forEach((el) => {
-    const ri = +el.getAttribute("data-ri")!; const sym = rows[ri].symbol; el.style.cursor = "pointer";
-    el.addEventListener("pointermove", (e) => { rowg.setAttribute("y", String(y0 + ri * ch)); rowg.style.display = "block"; colg.style.display = "none"; showTip(e, `<b>${esc(sym)}</b>`); });
-    el.addEventListener("click", () => hooks.onGeneClick(sym));
-  });
-  svg.querySelectorAll<SVGElement>(".hgrp").forEach((el) => {
-    const c = +el.getAttribute("data-c")!; const grp = gs.groups[c]; el.style.cursor = "pointer";
-    el.addEventListener("pointermove", (e) => { colg.setAttribute("x", String(x0 + c * cw)); colg.style.display = "block"; rowg.style.display = "none"; showTip(e, `<b>${esc(grp)}</b>`); ctx.coord.setHint({ kind: "category", grouping, value: grp }); });
-    el.addEventListener("click", () => { ctx.coord.setColor("meta:" + grouping); ctx.coord.setFocus(grouping, grp); });
-  });
+    gs.groups.forEach((grp, c) => { g += `<text class="axis hgrp" data-c="${c}" x="${(x0 + c * cw + cw / 2).toFixed(1)}" y="${(y0 + R * ch + 11).toFixed(1)}" text-anchor="middle">${esc(grp)}</text>`; });
+    g += `<rect class="hrowg" x="${x0}" width="${(G * cw).toFixed(1)}" height="${ch.toFixed(1)}" fill="rgba(150,225,255,.14)" pointer-events="none" style="display:none"/>`;
+    g += `<rect class="hcolg" y="${y0}" width="${cw.toFixed(1)}" height="${(R * ch).toFixed(1)}" fill="rgba(150,225,255,.14)" pointer-events="none" style="display:none"/>`;
+    host.innerHTML = `<svg viewBox="0 0 ${W.toFixed(1)} ${H.toFixed(1)}" width="${W.toFixed(1)}" height="${H.toFixed(1)}" style="display:block">${g}</svg>`;
+    const svg = host.querySelector("svg")!;
+    const rowg = svg.querySelector<SVGRectElement>(".hrowg")!, colg = svg.querySelector<SVGRectElement>(".hcolg")!;
+    svg.addEventListener("pointerleave", () => { tip.style.display = "none"; rowg.style.display = colg.style.display = "none"; ctx.coord.clearHint(); });
+    // two-tier coordination — HOVER: row/col guide + name readout + UMAP locator (no recolour); CLICK: commit.
+    svg.querySelectorAll<SVGElement>(".hcell").forEach((el) => {
+      const ri = +el.getAttribute("data-ri")!, c = +el.getAttribute("data-c")!, sym = rows[ri].symbol, grp = gs.groups[c]; el.style.cursor = "pointer";
+      el.addEventListener("pointermove", (e) => { rowg.setAttribute("y", String(y0 + ri * ch)); colg.setAttribute("x", String(x0 + c * cw)); rowg.style.display = colg.style.display = "block";
+        showTip(e as PointerEvent, `<b>${esc(sym)}</b> · ${esc(grp)} <span style="color:var(--faint)">${gs.mean[c * gs.nGenes + rows[ri].gene].toFixed(2)}</span>`); ctx.coord.setHint({ kind: "category", grouping, value: grp }); });
+      el.addEventListener("click", () => hooks.onGeneClick(sym));
+    });
+    svg.querySelectorAll<SVGElement>(".hgene").forEach((el) => {
+      const ri = +el.getAttribute("data-ri")!, sym = rows[ri].symbol; el.style.cursor = "pointer";
+      el.addEventListener("pointermove", (e) => { rowg.setAttribute("y", String(y0 + ri * ch)); rowg.style.display = "block"; colg.style.display = "none"; showTip(e as PointerEvent, `<b>${esc(sym)}</b>`); });
+      el.addEventListener("click", () => hooks.onGeneClick(sym));
+    });
+    svg.querySelectorAll<SVGElement>(".hgrp").forEach((el) => {
+      const c = +el.getAttribute("data-c")!, grp = gs.groups[c]; el.style.cursor = "pointer";
+      el.addEventListener("pointermove", (e) => { colg.setAttribute("x", String(x0 + c * cw)); colg.style.display = "block"; rowg.style.display = "none"; showTip(e as PointerEvent, `<b>${esc(grp)}</b>`); ctx.coord.setHint({ kind: "category", grouping, value: grp }); });
+      el.addEventListener("click", () => { ctx.coord.setColor("meta:" + grouping); ctx.coord.setFocus(grouping, grp); });
+    });
+  };
 
-  const hint = mk("div"); hint.style.cssText = "font-size:10.5px;color:var(--faint);padding:5px 7px 2px;line-height:1.4";
-  hint.textContent = "hover a cell to read its gene × cell type · click a gene to colour by it · click a column to focus the type";
-  w.appendChild(hint);
-  return { el: w };
+  const afterAttach = () => {
+    draw();
+    let ro: ResizeObserver;
+    ro = new ResizeObserver(() => { if (!w.isConnected) ro.disconnect(); else draw(); });   // re-fill on panel/window resize; self-cleans when removed
+    if (w.parentElement) ro.observe(w.parentElement);
+  };
+  return { el: w, afterAttach };
 }
 
 function ramp(t: number): string {
