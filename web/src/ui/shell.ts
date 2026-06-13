@@ -104,11 +104,10 @@ export class App {
     };
   }
 
-  // embedding hover → the cross-panel hint, in the embedding's current categorical vocabulary
+  // embedding hover → emit the CELL under the cursor (not its category). Receivers interpret: the embedding
+  // marks it with crosshairs; a category panel finds which of its categories the cell falls in.
   onCellHover(index: number | null) {
-    if (index == null) { this.coord.clearHint(); return; }
-    const g = this.ctx.keyGrouping(), v = this.ctx.categoryAt(g, index);
-    if (v) this.coord.setHint(g, v); else this.coord.clearHint();
+    this.coord.setHint(index == null ? null : { kind: "cells", ids: Int32Array.of(index) });
   }
   // embedding click → select the clicked cell's whole cluster (the same cell-set a panel click makes);
   // a click on empty space clears the selection. Origin-independent: any "select cluster" → one reaction.
@@ -217,18 +216,20 @@ export class App {
     if (rebuild) this.fullRender(); else this.repaint();
   }
 
-  // The light hover path — no recolour, no checkpoint: a locator ring on the embedding at the hinted
-  // category's cell centroid, plus a category highlight on any vocabulary-bound panel. Cross-vocabulary
-  // links translate VIA CELLS, but only when cheap (else they wait for a click — see translateCheap()).
+  // The light hover path — no recolour, no checkpoint. The hint is a typed EntityRef; each receiver reads it:
+  //  embeddings — a CELL hint → crosshairs at that cell (in EACH panel's own embedding, so a hover marks it
+  //  in the before AND after at once); a CATEGORY hint → a light overlay lifting that category's cells.
+  //  vocabulary panels — interpret the ref in their grouping (a cell → the category it falls in; a category →
+  //  direct if same grouping, else translate via cells). Cross-vocabulary translation is gated to cheap stores.
   async repaintHint() {
     const hint = this.coord.state.hint;
-    const xy = hint ? this.ctx.categoryCentroid(hint.grouping, hint.value) : null;
-    for (const ev of this.embeddings) ev.setHint(xy);
+    if (!hint) { for (const ev of this.embeddings) { ev.setCrosshairCell(null); ev.setHighlightCells(null); } }
+    else if (hint.kind === "cells" && hint.ids.length === 1) { const i = hint.ids[0]; for (const ev of this.embeddings) { ev.setCrosshairCell(i); ev.setHighlightCells(null); } }
+    else { const ids = this.ctx.translateCheap() ? this.ctx.refToCells(hint) : null; for (const ev of this.embeddings) { ev.setCrosshairCell(null); ev.setHighlightCells(ids); } }
     for (const r of this.compReactors) {
-      if (!hint) { r.setHover(null); continue; }
-      if (hint.grouping === r.grouping) { r.setHover(new Set([hint.value])); continue; }   // same vocabulary — direct
-      if (this.ctx.translateCheap()) r.setHover(new Set(this.ctx.translate(hint.grouping, hint.value, r.grouping).filter((t) => t.frac >= 0.08).map((t) => t.value)));
-      else r.setHover(null);   // translation too costly for hover — the link commits on click
+      const cheap = hint && (hint.kind === "cells" ? hint.ids.length <= 1 : hint.grouping === r.grouping);
+      const cats = hint && (cheap || this.ctx.translateCheap()) ? this.ctx.refToCategories(hint, r.grouping) : [];
+      r.setHover(cats.length ? new Set(cats.filter((t) => t.frac >= 0.08).map((t) => t.value)) : null);
     }
   }
 

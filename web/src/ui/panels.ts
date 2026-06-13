@@ -196,7 +196,7 @@ async function compositionBody(ctx: Ctx, hooks: PanelHooks): Promise<BuiltBody> 
   };
   // emit on hover (hint, light); click commits a SELECTION — the exact cell-set any panel would produce
   const nameAt = (e: Event) => ((e.target as Element).closest(".cseg, .lgi") as HTMLElement | null)?.dataset.g || null;
-  w.addEventListener("pointermove", (e) => { const n = nameAt(e); if (n) ctx.coord.setHint(grouping, n); else ctx.coord.clearHint(); });
+  w.addEventListener("pointermove", (e) => { const n = nameAt(e); if (n) ctx.coord.setHint({ kind: "category", grouping, value: n }); else ctx.coord.clearHint(); });
   w.addEventListener("pointerleave", () => ctx.coord.clearHint());
   w.addEventListener("click", (e) => { const n = nameAt(e); ctx.coord.setSelection(n ? { kind: "category", grouping, value: n } : null); });   // block → select; empty → deselect (mirrors the UMAP)
 
@@ -328,7 +328,7 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
       rowg.style.display = colg.style.display = "block";
       const mean = gs.mean[c * gs.nGenes + rows[ri].gene];
       showTip(e, `<b>${esc(sym)}</b> · ${esc(grp)} <span style="color:var(--faint)">${mean.toFixed(2)}</span>`);
-      ctx.coord.setHint(grouping, grp);
+      ctx.coord.setHint({ kind: "category", grouping, value: grp });
     });
     el.addEventListener("click", () => hooks.onGeneClick(sym));
   });
@@ -339,7 +339,7 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
   });
   svg.querySelectorAll<SVGElement>(".hgrp").forEach((el) => {
     const c = +el.getAttribute("data-c")!; const grp = gs.groups[c]; el.style.cursor = "pointer";
-    el.addEventListener("pointermove", (e) => { colg.setAttribute("x", String(x0 + c * cw)); colg.style.display = "block"; rowg.style.display = "none"; showTip(e, `<b>${esc(grp)}</b>`); ctx.coord.setHint(grouping, grp); });
+    el.addEventListener("pointermove", (e) => { colg.setAttribute("x", String(x0 + c * cw)); colg.style.display = "block"; rowg.style.display = "none"; showTip(e, `<b>${esc(grp)}</b>`); ctx.coord.setHint({ kind: "category", grouping, value: grp }); });
     el.addEventListener("click", () => { ctx.coord.setColor("meta:" + grouping); ctx.coord.setFocus(grouping, grp); });
   });
 

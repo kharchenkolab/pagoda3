@@ -1,7 +1,7 @@
 // deck.gl embedding renderer — the one panel that must scale to 10^4..10^6 points.
 // Binary attributes (no per-point accessors) so coloring a million cells is a buffer swap.
 import { Deck, OrthographicView } from "@deck.gl/core";
-import { ScatterplotLayer, TextLayer } from "@deck.gl/layers";
+import { ScatterplotLayer, TextLayer, LineLayer } from "@deck.gl/layers";
 import { CollisionFilterExtension } from "@deck.gl/extensions";
 
 export class EmbeddingView {
@@ -90,13 +90,23 @@ export class EmbeddingView {
             updateTriggers: { getPosition: this.selVersion },
           }) as any
         : null,
-      // ephemeral hover locator — a subtle ring at the centroid of a hinted group (cross-panel cue)
-      this.hintXY
+      // CATEGORY hint → a light overlay lifting that category's cells (honest even when they're not compact)
+      this.highlightIds && this.highlightIds.length
         ? new ScatterplotLayer({
-            id: "hint", data: [{ p: this.hintXY }], getPosition: (d: any) => d.p,
-            radiusUnits: "pixels", getRadius: 22, stroked: true, filled: true,
-            getFillColor: [150, 230, 255, 26], getLineColor: [150, 232, 255, 255], lineWidthUnits: "pixels", getLineWidth: 2.4,
+            id: "hl", data: { length: this.highlightIds.length },
+            getPosition: (_: any, { index }: any) => { const c = this.highlightIds![index]; return [this.positions[c * 2], this.positions[c * 2 + 1]]; },
+            radiusUnits: "pixels", getRadius: this.radius + 1.6, stroked: false, getFillColor: [150, 230, 255, 200],
             updateTriggers: { getPosition: this.hintVersion },
+          }) as any
+        : null,
+      // CELL hint → full-panel crosshairs intersecting at the cell (precise "you are here", any zoom)
+      this.crosshairXY
+        ? new LineLayer({
+            id: "crosshair",
+            data: [{ s: [this.crosshairXY[0], -1e5], t: [this.crosshairXY[0], 1e5] }, { s: [-1e5, this.crosshairXY[1]], t: [1e5, this.crosshairXY[1]] }],
+            getSourcePosition: (d: any) => d.s, getTargetPosition: (d: any) => d.t,
+            getColor: [150, 230, 255, 150], widthUnits: "pixels", getWidth: 1,
+            updateTriggers: { getSourcePosition: this.hintVersion, getTargetPosition: this.hintVersion },
           }) as any
         : null,
       // on-plot category labels at centroids — names ON the map, so orientation isn't swatch-matching.
@@ -126,7 +136,8 @@ export class EmbeddingView {
 
   private colorVersion = 0;
   private selVersion = 0;
-  private hintXY: [number, number] | null = null;
+  private crosshairXY: [number, number] | null = null;   // CELL hint locator (this panel's own embedding coords)
+  private highlightIds: Int32Array | null = null;        // CATEGORY hint: cells to lift
   private hintVersion = 0;
   private labels: { text: string; p: [number, number]; priority: number }[] = [];
   private labelVersion = 0;
@@ -134,7 +145,11 @@ export class EmbeddingView {
   private redraw() { this.deck.setProps({ layers: this.layers() }); }
 
   /** Show (or clear) a subtle locator ring at a data-space point — the cross-panel hover cue. */
-  setHint(xy: [number, number] | null) { this.hintXY = xy; this.hintVersion++; this.redraw(); }
+  /** CELL hint: crosshairs at cell `i` in THIS panel's embedding (null clears). Each panel resolves the same
+   *  cell to its own coords — so hovering a cell marks it in the before AND after embeddings at once. */
+  setCrosshairCell(i: number | null) { this.crosshairXY = i == null ? null : [this.positions[i * 2], this.positions[i * 2 + 1]]; this.hintVersion++; this.redraw(); }
+  /** CATEGORY hint: lift a set of cells as a light overlay (null clears). */
+  setHighlightCells(ids: Int32Array | null) { this.highlightIds = ids; this.hintVersion++; this.redraw(); }
 
   /** Place category names at their centroids (categorical colouring); pass [] to clear (numeric colouring). */
   setLabels(labels: { text: string; p: [number, number]; priority: number }[]) { this.labels = labels; this.labelVersion++; this.redraw(); }

@@ -12,9 +12,10 @@ export interface CoordState {
   focus: { dim: string; value: string } | null;
   selection: EntityRef | null;
   geneFocus: string | null;
-  // ephemeral cross-panel hover cue (a group a linked panel is pointing at) — a light correspondence
-  // hint, NOT a committed change: panels show a subtle locator, no recolour, no checkpoint.
-  hint: { grouping: string; value: string } | null;
+  // ephemeral cross-panel hover cue — a typed EntityRef (a CELL when you hover the embedding, a CATEGORY
+  // when you hover a category panel) that linked views interpret in their own vocabulary. NOT a committed
+  // change: a subtle locator, no recolour, no checkpoint.
+  hint: EntityRef | null;
   // view options live HERE (not hardcoded in paint) so the agent AND direct manipulation both drive them
   // — the generative-UX premise. legend:null = auto (key for numeric colourings, hidden when labels carry it).
   display: { labels: boolean; legend: boolean | null };
@@ -41,9 +42,19 @@ export class Coord {
   setFocus(dim: string, value: string) { this.set({ focus: { dim, value } }); }
   clearFocus() { this.set({ focus: null, selection: null }); }
   setSelection(ref: EntityRef | null) { this.set({ selection: ref }); }
-  setHint(grouping: string, value: string) { const h = this.s.hint; if (h && h.grouping === grouping && h.value === value) return; this.set({ hint: { grouping, value } }); }
+  setHint(ref: EntityRef | null) { if (refEq(this.s.hint, ref)) return; this.set({ hint: ref }); }
   clearHint() { if (this.s.hint) this.set({ hint: null }); }
   setDisplay(patch: Partial<CoordState["display"]>) { this.set({ display: { ...this.s.display, ...patch } }); }
+}
+
+// Ref equality — dedupes hover spam (same cell / same category → no repaint). Multi-cell refs are
+// treated as always-changed (cheap to recompute, rare on the hover path).
+export function refEq(a: EntityRef | null, b: EntityRef | null): boolean {
+  if (a === b) return true;
+  if (!a || !b || a.kind !== b.kind) return false;
+  if (a.kind === "category" && b.kind === "category") return a.grouping === b.grouping && a.value === b.value;
+  if (a.kind === "cells" && b.kind === "cells") return a.ids.length === 1 && b.ids.length === 1 && a.ids[0] === b.ids[0];
+  return false;
 }
 
 export function handleLabel(handle: string): string {
