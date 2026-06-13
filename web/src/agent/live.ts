@@ -58,7 +58,7 @@ EMBEDDINGS available (configure_panel embedding): ${app.ctx.embeddingNames().joi
 async function execTool(app: App, name: string, input: any): Promise<string> {
   const ag = app.agent;
   switch (name) {
-    case "set_color": { app.coord.setColor(input.handle); return `coloured by ${input.handle}`; }
+    case "set_color": { app.recolorAll(input.handle); return `coloured by ${input.handle}`; }
     case "set_focus": { app.coord.setFocus(input.dim, input.value); return `focused ${input.dim}=${input.value}`; }
     case "clear_focus": { app.coord.clearFocus(); return "cleared focus"; }
     case "get_markers": {

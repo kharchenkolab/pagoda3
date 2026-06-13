@@ -169,7 +169,7 @@ export class App {
       const legBtn = Object.assign(mk("button", "mini" + ((disp.legend ?? !cat) ? " on" : ""), "legend"), { title: "toggle colour legend" }) as HTMLButtonElement;
       legBtn.dataset.tg = "legend";
       legBtn.onclick = () => this.coord.setDisplay({ legend: !(this.coord.state.display.legend ?? !this.ctx.colorIsCategorical()) });
-      if (cat) sp.appendChild(lblBtn);
+      sp.appendChild(lblBtn);   // always present (no-op for numeric colourings) so it can't vanish on recolour
       sp.appendChild(legBtn);
     }
     const span = Object.assign(mk("button", "mini", isFull ? "◫" : "▦"), { title: "maximize" }) as HTMLButtonElement;
@@ -223,7 +223,17 @@ export class App {
     // an embedding recolour/scope is a cheap repaint.
     const rebuild = ("embedding" in patch && patch.embedding !== p.view?.embedding) || (p.type !== "Embedding" && "colorBy" in patch);
     p.view = { ...p.view, ...patch };
-    if (rebuild) this.fullRender(); else this.repaint();
+    if (rebuild) this.fullRender(); else { this.repaint(); this.syncColorSelects(); this.syncToggles(); }   // keep every control in step
+  }
+
+  // "Recolour everything" — a gene click or the agent's set_color. Clears per-panel colour overrides so the
+  // shared colour actually reaches every embedding (a per-panel override would otherwise shadow it), then
+  // sets the global handle. Per-panel divergence is reserved for deliberate dropdown / configure_panel use.
+  recolorAll(handle: string) {
+    let cleared = false;
+    for (const p of this.canvas) if (p.type === "Embedding" && p.view?.colorBy) { delete p.view.colorBy; cleared = true; }
+    if (this.coord.state.colorBy !== handle) this.coord.setColor(handle);              // subscribe → repaint + sync
+    else if (cleared) { this.repaint(); this.syncColorSelects(); this.syncToggles(); } // same handle, but overrides dropped
   }
 
   // The light hover path — no recolour, no checkpoint. The hint is a typed EntityRef; each receiver reads it:
@@ -419,7 +429,20 @@ export class App {
     });
   }
   // keep each panel's dropdown showing ITS effective handle (per-panel override, else the global default).
-  syncColorSelects() { document.querySelectorAll<HTMLSelectElement>("select.inline").forEach((s) => { const p = this.canvas.find((z) => z.id === Number(s.dataset.pid)); const eff = p?.view?.colorBy ?? this.coord.state.colorBy; if ([...s.options].some((o) => o.value === eff)) s.value = eff; }); }
+  // keep each panel's dropdown showing ITS effective handle (per-panel override, else the global default).
+  // Embedding dropdowns accept any handle (add the option if it's a gene not in the standard list); a
+  // composition dropdown only ever shows a grouping (it ignores a global gene colouring, falling back to its grouping).
+  syncColorSelects() {
+    document.querySelectorAll<HTMLSelectElement>("select.inline").forEach((s) => {
+      const p = this.canvas.find((z) => z.id === Number(s.dataset.pid)); if (!p) return;
+      let eff: string;
+      if (p.type === "Embedding") {
+        eff = p.view?.colorBy ?? this.coord.state.colorBy;
+        if (![...s.options].some((o) => o.value === eff)) { const o = document.createElement("option"); o.value = eff; o.textContent = handleLabel(eff); s.appendChild(o); }
+      } else eff = p.view?.colorBy ?? ("meta:" + (this.ctx.groupings()[0] || "leiden"));
+      if ([...s.options].some((o) => o.value === eff)) s.value = eff;
+    });
+  }
   // reflect display state (set by the agent or a toggle) onto the header toggle buttons — keeps both tiers in step
   syncToggles() {
     const d = this.coord.state.display, cat = this.ctx.colorIsCategorical();

@@ -45,7 +45,7 @@ export class Agent {
 
   // ---- coordinated colour (shared by manipulation + agent + clicks) ----
   setColorVerb(handle: string, what: string, why: string) {
-    this.app.coord.setColor(handle);
+    this.app.recolorAll(handle);   // reaches every embedding, clearing per-panel overrides that would shadow it
     this.app.toast(what + " → coloured by " + handleLabel(handle), why);
     this.app.checkpoint("colour · " + handleLabel(handle), why);
   }
