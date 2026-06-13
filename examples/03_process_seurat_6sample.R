@@ -44,6 +44,14 @@ if (is.null(ds$fields[["leiden"]])) {
   }
 }
 
+# cell-type annotation -> cell_type (Seurat objects name it variously; here it's cluster_label)
+if (is.null(ds$fields[["cell_type"]])) {
+  for (nm in c("cluster_label", "celltype", "cell.type", "CellType", "annotation", "predicted.id")) if (!is.null(ds$fields[[nm]])) {
+    ds$fields[["cell_type"]] <- list(role = "label", span = "cells", values = as.character(ds$fields[[nm]]$values))
+    message("cell_type <- ", nm); break
+  }
+}
+
 # sample: prefer an existing "sample", else orig.ident
 if (is.null(ds$fields[["sample"]]) && !is.null(ds$fields[["orig.ident"]]))
   ds$fields[["sample"]] <- list(role = "label", span = "cells", values = as.character(ds$fields[["orig.ident"]]$values))
