@@ -120,37 +120,45 @@ async function categoryLabels(ctx: Ctx, colorBy: string, emb: Float32Array = ctx
   return out;
 }
 
-function deBody(p: Panel, ctx: Ctx, hooks: PanelHooks): BuiltBody {
-  const t = document.createElement("table");
-  t.innerHTML = `<thead><tr><th>gene</th><th>log2FC</th><th>p.adj</th></tr></thead>`;
-  const tb = document.createElement("tbody");
-  const rows = (p.rows || []).slice(0, 20);
-  for (const r of rows) {
-    const tr = mk("tr", "gene");
-    const lfc = r.lfc ?? 0, pj = r.padj ?? 1;
-    const padj = pj < 1e-3 ? pj.toExponential(1) : pj.toFixed(3);
-    tr.innerHTML = `<td>${r.symbol}</td><td class="${lfc > 0 ? "up" : "dn"}">${lfc.toFixed(2)}</td><td>${padj}</td>`;
-    tr.onclick = () => { [...tb.children].forEach((x) => x.classList.remove("on")); tr.classList.add("on"); hooks.onGeneClick(r.symbol); };
-    tb.appendChild(tr);
-  }
-  t.appendChild(tb);
-  return { el: t };
+// A filterable, sortable gene table — shared by DE tables and ranked gene lists. The search box filters by
+// symbol; a header click sorts by that column (toggling asc/desc); a row click colours the embedding by that
+// gene. No sort initially, so the upstream ranking is preserved until the user asks for another order.
+type GCol = { key: string; label: string; num?: boolean; get: (r: any) => any; fmt?: (v: any, r: any) => string; cls?: (v: any) => string };
+function geneTable(rows: any[], cols: GCol[], onPick: (symbol: string) => void): BuiltBody {
+  const wrap = mk("div", "gtable");
+  const search = Object.assign(document.createElement("input"), { className: "gsearch", placeholder: "filter genes…" }) as HTMLInputElement;
+  const scroll = mk("div", "gscroll"), table = document.createElement("table");
+  const thead = document.createElement("thead"), tb = document.createElement("tbody");
+  table.appendChild(thead); table.appendChild(tb); scroll.appendChild(table);
+  wrap.appendChild(search); wrap.appendChild(scroll);
+  let sortKey: string | null = null, dir = 1;
+  const render = () => {
+    thead.innerHTML = `<tr>${cols.map((c) => `<th data-k="${c.key}" class="sortable${sortKey === c.key ? " sorted" : ""}">${esc(c.label)}${sortKey === c.key ? (dir > 0 ? " ↑" : " ↓") : ""}</th>`).join("")}</tr>`;
+    thead.querySelectorAll<HTMLElement>("th").forEach((th) => th.onclick = () => { const k = th.dataset.k!; if (sortKey === k) dir = -dir; else { sortKey = k; dir = cols.find((c) => c.key === k)?.num ? -1 : 1; } render(); });
+    const q = search.value.trim().toLowerCase();
+    let rs = q ? rows.filter((r) => String(r.symbol).toLowerCase().includes(q)) : rows.slice();
+    if (sortKey) { const c = cols.find((x) => x.key === sortKey)!; rs.sort((a, b) => { const av = c.get(a), bv = c.get(b); return (av < bv ? -1 : av > bv ? 1 : 0) * dir; }); }
+    tb.innerHTML = rs.map((r) => `<tr class="gene">${cols.map((c) => { const v = c.get(r); return `<td class="${c.cls ? c.cls(v) : ""}">${c.fmt ? c.fmt(v, r) : esc(String(v))}</td>`; }).join("")}</tr>`).join("");
+    [...tb.children].forEach((tr, i) => (tr as HTMLElement).onclick = () => { [...tb.children].forEach((x) => x.classList.remove("on")); tr.classList.add("on"); onPick(rs[i].symbol); });
+  };
+  search.oninput = render; render();
+  return { el: wrap };
 }
 
-// A ranked gene list with a single score column (e.g. scope-aware overdispersion). Clicking a
-// row colours the embedding by that gene — the same gesture as the DE table.
+function deBody(p: Panel, _ctx: Ctx, hooks: PanelHooks): BuiltBody {
+  return geneTable(p.rows || [], [
+    { key: "symbol", label: "gene", get: (r) => r.symbol },
+    { key: "lfc", label: "log2FC", num: true, get: (r) => r.lfc ?? 0, fmt: (v) => v.toFixed(2), cls: (v) => (v > 0 ? "up" : "dn") },
+    { key: "padj", label: "p.adj", num: true, get: (r) => r.padj ?? 1, fmt: (v) => (v < 1e-3 ? v.toExponential(1) : v.toFixed(3)) },
+  ], hooks.onGeneClick);
+}
+
+// A ranked gene list with a single score column (e.g. scope-aware overdispersion).
 function geneListBody(p: Panel, hooks: PanelHooks): BuiltBody {
-  const t = document.createElement("table");
-  t.innerHTML = `<thead><tr><th>gene</th><th>${p.cap || "score"}</th></tr></thead>`;
-  const tb = document.createElement("tbody");
-  for (const r of (p.rows || []).slice(0, 25)) {
-    const tr = mk("tr", "gene");
-    tr.innerHTML = `<td>${r.symbol}</td><td class="up">${(r.score ?? 0).toFixed(2)}</td>`;
-    tr.onclick = () => { [...tb.children].forEach((x) => x.classList.remove("on")); tr.classList.add("on"); hooks.onGeneClick(r.symbol); };
-    tb.appendChild(tr);
-  }
-  t.appendChild(tb);
-  return { el: t };
+  return geneTable(p.rows || [], [
+    { key: "symbol", label: "gene", get: (r) => r.symbol },
+    { key: "score", label: p.cap || "score", num: true, get: (r) => r.score ?? 0, fmt: (v) => v.toFixed(2), cls: () => "up" },
+  ], hooks.onGeneClick);
 }
 
 async function compositionBody(panel: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltBody> {
