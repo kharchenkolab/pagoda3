@@ -10,6 +10,7 @@ import type { EntityRef } from "../data/coord.ts";
 export interface PanelView {
   colorBy?: string;     // override the panel's colouring handle (else falls back to coord.colorBy)
   scope?: EntityRef;    // restrict the panel to a cell set — the embedding reframes to it + desaturates the rest
+  embedding?: string;   // which embedding this panel renders (e.g. "umap" vs "umap.unintegrated"); else the default
   // (future: scale, clip, splitBy, highlight, colormap, overlays)
 }
 
@@ -60,7 +61,8 @@ function embeddingBody(p: Panel, ctx: Ctx, hooks: PanelHooks): BuiltBody {
   const legend = mk("div", "emblegend");
   const wrap = mk("div"); wrap.style.cssText = "position:absolute;inset:0"; wrap.appendChild(host); wrap.appendChild(legend);
   const afterAttach = () => {
-    const ev = new EmbeddingView(host, ctx.embedding.data, ctx.embedding.n);
+    const emb = ctx.embeddingOf(p.view?.embedding);          // the panel's chosen embedding (else the default)
+    const ev = new EmbeddingView(host, emb.data, emb.n);
     ev.onSelect = (ids) => { const r = host.getBoundingClientRect(); hooks.onSelect(ids, { left: r.left + r.width * 0.55, top: r.top + 40 }); };
     ev.onHover = (idx) => hooks.onCellHover(idx);
     ev.onPick = (idx) => hooks.onCellClick(idx);
@@ -92,7 +94,7 @@ export async function paintEmbedding(ev: EmbeddingView, ctx: Ctx) {
   ev.setSelection(selCells.length ? selCells : null);
   // view options come from the coordination space (agent- and user-drivable), never decided here.
   const isCat = legend.kind === "categorical";
-  ev.setLabels(c.display.labels && isCat ? await categoryLabels(ctx, colorBy) : []);
+  ev.setLabels(c.display.labels && isCat ? await categoryLabels(ctx, colorBy, ctx.embeddingOf(view?.embedding).data) : []);
   const showLegend = c.display.legend ?? !isCat;   // auto: key for numeric colourings; hidden when on-plot labels carry identity
   const lg = (ev as any)._legend as HTMLElement | undefined;
   if (lg) lg.innerHTML = showLegend
@@ -104,11 +106,11 @@ export async function paintEmbedding(ev: EmbeddingView, ctx: Ctx) {
 // embedding clears its labels). Placement is the marginal MEDIAN (x,y) — robust to stray cells and
 // multi-lobe clusters where a mean drifts into empty space. priority = cluster size, normalised to
 // the [0,1000] the collision filter expects, so when two labels clash the larger cluster keeps its name.
-async function categoryLabels(ctx: Ctx, colorBy: string): Promise<{ text: string; p: [number, number]; priority: number }[]> {
+async function categoryLabels(ctx: Ctx, colorBy: string, emb: Float32Array = ctx.embedding.data): Promise<{ text: string; p: [number, number]; priority: number }[]> {
   if (!colorBy.startsWith("meta:")) return [];
   const md = await ctx.metaOf(colorBy.slice(5)) as any;
   if (md.kind !== "categorical") return [];
-  const K = md.categories.length, emb = ctx.embedding.data, n = ctx.n;
+  const K = md.categories.length, n = ctx.n;
   const xs: number[][] = Array.from({ length: K }, () => []), ys: number[][] = Array.from({ length: K }, () => []);
   for (let i = 0; i < n; i++) { const k = md.codes[i]; if (k < 0) continue; xs[k].push(emb[i * 2]); ys[k].push(emb[i * 2 + 1]); }
   const median = (a: number[]) => { a.sort((p, q) => p - q); const m = a.length >> 1; return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2; };

@@ -212,8 +212,9 @@ export class App {
   configurePanel(panelId: number, patch: Partial<PanelView>) {
     const p = this.canvas.find((z) => z.id === panelId) || this.rail.find((z) => z.id === panelId);
     if (!p) return;
+    const rebuild = "embedding" in patch && patch.embedding !== p.view?.embedding;   // swapping embeddings rebuilds the view
     p.view = { ...p.view, ...patch };
-    this.repaint();
+    if (rebuild) this.fullRender(); else this.repaint();
   }
 
   // The light hover path — no recolour, no checkpoint: a locator ring on the embedding at the hinted
