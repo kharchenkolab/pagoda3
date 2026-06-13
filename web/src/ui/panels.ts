@@ -38,7 +38,7 @@ export interface CompReactor { grouping: string; setSelect: (values: Set<string>
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
 
-export interface BuiltBody { el: HTMLElement; afterAttach?: () => void; }
+export interface BuiltBody { el: HTMLElement; afterAttach?: () => void; headerControls?: HTMLElement; }   // a control the body puts in the panel header (e.g. a gene filter)
 
 export async function bodyFor(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltBody> {
   switch (p.type) {
@@ -130,7 +130,7 @@ function geneTable(rows: any[], cols: GCol[], onPick: (symbol: string) => void):
   const scroll = mk("div", "gscroll"), table = document.createElement("table");
   const thead = document.createElement("thead"), tb = document.createElement("tbody");
   table.appendChild(thead); table.appendChild(tb); scroll.appendChild(table);
-  wrap.appendChild(search); wrap.appendChild(scroll);
+  wrap.appendChild(scroll);   // the search box lives in the panel header (returned as headerControls)
   let sortKey: string | null = null, dir = 1;
   const render = () => {
     thead.innerHTML = `<tr>${cols.map((c) => `<th data-k="${c.key}" class="sortable${sortKey === c.key ? " sorted" : ""}">${esc(c.label)}${sortKey === c.key ? (dir > 0 ? " ↑" : " ↓") : ""}</th>`).join("")}</tr>`;
@@ -142,7 +142,7 @@ function geneTable(rows: any[], cols: GCol[], onPick: (symbol: string) => void):
     [...tb.children].forEach((tr, i) => (tr as HTMLElement).onclick = () => { [...tb.children].forEach((x) => x.classList.remove("on")); tr.classList.add("on"); onPick(rs[i].symbol); });
   };
   search.oninput = render; render();
-  return { el: wrap };
+  return { el: wrap, headerControls: search };
 }
 
 function deBody(p: Panel, _ctx: Ctx, hooks: PanelHooks): BuiltBody {

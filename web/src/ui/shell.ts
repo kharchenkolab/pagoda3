@@ -182,6 +182,7 @@ export class App {
     if (H?.caveat) { const cv = mk("div", "caveat"); cv.innerHTML = `<b>⚠ caveat</b><span>${H.caveat}</span>`; d.appendChild(cv); }
     const b = mk("div", "pbody");
     const built = await bodyFor(p, this.ctx, this.hooks());
+    if (built.headerControls) sp.insertBefore(built.headerControls, sp.firstChild);   // e.g. a gene filter, in the header
     b.appendChild(built.el); d.appendChild(b);
     const prov = H?.prov || (this.ctx.handleOf(p.bind)?.prov);
     if (prov) d.appendChild(Object.assign(mk("div", "prov"), { textContent: "◆ " + prov }));
@@ -275,7 +276,7 @@ export class App {
       if (p.q) d.appendChild(Object.assign(mk("div", "rq"), { textContent: "“" + p.q + "”" }));
       const H = this.ctx.handleOf(p.bind);
       if (H?.caveat) { const cv = mk("div", "caveat"); cv.innerHTML = `<b>⚠ caveat</b><span>${H.caveat}</span>`; d.appendChild(cv); }
-      const b = mk("div", "pbody"); const built = await bodyFor(p, this.ctx, this.hooks()); b.appendChild(built.el); d.appendChild(b);
+      const b = mk("div", "pbody"); const built = await bodyFor(p, this.ctx, this.hooks()); if (built.headerControls) sp.insertBefore(built.headerControls, sp.firstChild); b.appendChild(built.el); d.appendChild(b);
       if (H?.prov) d.appendChild(Object.assign(mk("div", "prov"), { textContent: "◆ " + H.prov }));
       rb.appendChild(d); if (built.afterAttach) built.afterAttach();
     }

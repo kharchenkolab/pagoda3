@@ -188,8 +188,9 @@ td{text-align:right;padding:4px 7px;border-bottom:1px solid var(--line2);color:#
 tr.gene{cursor:pointer} tr.gene:hover{background:var(--inset)} tr.gene.on{background:rgba(92,200,255,.12)}
 .up{color:var(--bad)} .dn{color:var(--cyan)}
 /* gene tables: pinned filter box + a scrollable, sortable table (DE / ranked gene lists) */
-.gtable{display:flex;flex-direction:column;gap:6px}
-.gsearch{background:var(--inset);border:1px solid var(--line);color:var(--text);border-radius:5px;padding:4px 8px;font:11.5px/1.3 var(--mono);outline:none}
+.gtable{min-height:0}
+.gsearch{flex:0 1 130px;min-width:64px;background:var(--inset);border:1px solid var(--line);color:var(--text);border-radius:6px;padding:3px 7px;font:11px var(--mono);line-height:1;outline:none}
+.gsearch::placeholder{color:var(--faint)}
 .gsearch:focus{border-color:var(--cyan)}
 .gscroll{overflow:auto;max-height:min(60vh,480px)}
 .gtable thead th{position:sticky;top:0;background:var(--panel)}
