@@ -296,11 +296,11 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
 
   // Responsive: the grid is re-laid to fill the panel — cell size derives from the live width/height and
   // re-draws on resize. Axis labels stay faint and are read on hover, so dense rows remain fine.
-  const w = mk("div"); w.style.cssText = "position:relative;width:100%";
-  const host = mk("div"); w.appendChild(host);
+  const w = mk("div"); w.style.cssText = "position:absolute;inset:0;display:flex;flex-direction:column;overflow:hidden";   // fills the panel, out of flow → can't grow it
+  const host = mk("div"); host.style.cssText = "flex:1 1 auto;min-height:0;overflow:auto"; w.appendChild(host);
   const tip = mk("div"); tip.style.cssText = "position:absolute;display:none;background:var(--ink);border:1px solid var(--line2);border-radius:6px;padding:3px 8px;font-size:11px;color:var(--text);pointer-events:none;z-index:20;white-space:nowrap;box-shadow:0 4px 14px rgba(0,0,0,.45)";
   w.appendChild(tip);
-  const hint = mk("div"); hint.style.cssText = "font-size:10.5px;color:var(--faint);padding:5px 7px 2px;line-height:1.4";
+  const hint = mk("div"); hint.style.cssText = "flex:0 0 auto;font-size:10.5px;color:var(--faint);padding:5px 7px 2px;line-height:1.4";
   hint.textContent = "hover a cell to read its gene × cell type · click a gene to colour by it · click a column to focus the type";
   w.appendChild(hint);
   const showTip = (e: PointerEvent, html: string) => {
@@ -313,9 +313,7 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
   // scale each gene row to its max-across-groups for contrast; cells/labels carry their row+col index so
   // hover can read the names. Re-runs on resize against the panel body's live dimensions.
   const draw = () => {
-    const box = w.parentElement, pbodyH = box ? box.clientHeight : 0;
-    const availW = (box ? box.clientWidth : 380) - 24;
-    const availH = pbodyH > 120 ? pbodyH - 36 : Math.min(360, R * 16 + 30);   // fill in the canvas; content-height in the rail
+    const availW = host.clientWidth - 4, availH = host.clientHeight - 2;   // the GIVEN box; w is absolute so the svg can never grow it
     const cw = clamp((availW - x0 - 6) / G, 6, 40), ch = clamp((availH - y0 - axisH) / R, 7, 26);
     const W = x0 + G * cw + 6, H = y0 + R * ch + axisH;
     let g = "";
@@ -352,10 +350,14 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
   };
 
   const afterAttach = () => {
+    const pb = w.parentElement as HTMLElement | null;
+    // the heatmap fills a GIVEN box and (being absolute) can never grow it. Canvas bodies are sized by the
+    // grid; rail cards aren't, so give those a bounded height rather than letting the heatmap stretch them.
+    if (pb) { pb.style.position = "relative"; if (pb.clientHeight < 80) pb.style.height = "300px"; }
     draw();
     let ro: ResizeObserver;
-    ro = new ResizeObserver(() => { if (!w.isConnected) ro.disconnect(); else draw(); });   // re-fill on panel/window resize; self-cleans when removed
-    if (w.parentElement) ro.observe(w.parentElement);
+    ro = new ResizeObserver(() => { if (!w.isConnected) ro.disconnect(); else draw(); });   // re-fill on resize; self-cleans
+    if (pb) ro.observe(pb);
   };
   return { el: w, afterAttach };
 }
