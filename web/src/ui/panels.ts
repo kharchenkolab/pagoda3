@@ -322,7 +322,10 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
   const nPinned = pinnedRows.length;
   const G = gs.groups.length, R = rows.length, x0 = 70, y0 = 6, axisH = 16;
   const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
-  let mode: "heat" | "dot" = p.heatMode === "dot" ? "dot" : "heat";   // colour grid vs dotplot (size = % expressing)
+  let mode: "heat" | "dot" = p.heatMode === "heat" ? "heat" : "dot";   // dotplot is the default; "heat" only when explicitly set
+  // cross-panel coordination state: which groups (columns) are selected / hovered elsewhere, translated into THIS
+  // panel's grouping by the App (registerComposition). geomCw/geomCh are the live column size, set by draw().
+  let selGroups: Set<string> | null = null, hovGroups: Set<string> | null = null, geomCw = 0, geomCh = 0;
 
   // Responsive: the grid is re-laid to fill the panel — cell size derives from the live width/height and
   // re-draws on resize. Axis labels stay faint and are read on hover, so dense rows remain fine.
@@ -346,11 +349,27 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
     tip.style.left = Math.max(2, x) + "px"; tip.style.top = (e.clientY - r.top + 13) + "px";
   };
 
+  // Cross-panel reaction: tint the columns whose group is selected/hovered elsewhere (translated into this
+  // panel's grouping by the App), and lift their labels. Cheap — only rewrites the overlay group + label styles,
+  // so it re-applies on every hover/selection tick without a full redraw. draw() also calls it after a re-lay.
+  const paintCols = () => {
+    const svg = host.querySelector("svg"); if (!svg) return;
+    const hl = svg.querySelector(".hcolhl"); if (!hl) return;
+    let s = "";
+    gs.groups.forEach((grp, c) => {
+      const sel = !!selGroups?.has(grp), hov = !sel && !!hovGroups?.has(grp);
+      if (sel || hov) s += `<rect x="${(x0 + c * geomCw).toFixed(1)}" y="${y0}" width="${geomCw.toFixed(1)}" height="${(R * geomCh).toFixed(1)}" fill="rgba(92,200,255,${sel ? 0.22 : 0.10})" pointer-events="none"/>`;
+    });
+    hl.innerHTML = s;
+    svg.querySelectorAll<SVGElement>(".hgrp").forEach((el) => { const grp = gs.groups[+el.getAttribute("data-c")!]; const sel = !!selGroups?.has(grp), hov = !sel && !!hovGroups?.has(grp); el.style.fill = sel ? "var(--cyan)" : ""; el.style.fontWeight = sel ? "600" : ""; el.style.opacity = sel || hov ? "1" : ""; });
+  };
+
   // scale each gene row to its max-across-groups for contrast; cells/labels carry their row+col index so
   // hover can read the names. Re-runs on resize against the panel body's live dimensions.
   const draw = () => {
     const availW = host.clientWidth - 4, availH = host.clientHeight - 2;   // the GIVEN box; w is absolute so the svg can never grow it
     const cw = clamp((availW - x0 - 6) / G, 6, 40), ch = clamp((availH - y0 - axisH) / R, 7, 26);
+    geomCw = cw; geomCh = ch;   // remember live column size so paintCols can place the highlight bands
     const W = x0 + G * cw + 6, H = y0 + R * ch + axisH;
     let g = "";
     const maxR = Math.max(1.4, Math.min(cw, ch) / 2 - 1.2);   // dot radius at 100% expressing
@@ -367,6 +386,7 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
     });
     if (nPinned > 0 && nPinned < R) g += `<line x1="${x0.toFixed(1)}" y1="${(y0 + nPinned * ch).toFixed(1)}" x2="${(x0 + G * cw).toFixed(1)}" y2="${(y0 + nPinned * ch).toFixed(1)}" stroke="var(--cyan)" stroke-opacity="0.4" stroke-width="0.6"/>`;
     gs.groups.forEach((grp, c) => { g += `<text class="axis hgrp" data-c="${c}" x="${(x0 + c * cw + cw / 2).toFixed(1)}" y="${(y0 + R * ch + 11).toFixed(1)}" text-anchor="middle">${esc(grp)}</text>`; });
+    g += `<g class="hcolhl"></g>`;   // cross-panel selected/hovered column bands (filled by paintCols)
     g += `<rect class="hrowg" x="${x0}" width="${(G * cw).toFixed(1)}" height="${ch.toFixed(1)}" fill="rgba(150,225,255,.14)" pointer-events="none" style="display:none"/>`;
     g += `<rect class="hcolg" y="${y0}" width="${cw.toFixed(1)}" height="${(R * ch).toFixed(1)}" fill="rgba(150,225,255,.14)" pointer-events="none" style="display:none"/>`;
     host.innerHTML = `<svg viewBox="0 0 ${W.toFixed(1)} ${H.toFixed(1)}" width="${W.toFixed(1)}" height="${H.toFixed(1)}" style="display:block">${g}</svg>`;
@@ -388,8 +408,9 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
     svg.querySelectorAll<SVGElement>(".hgrp").forEach((el) => {
       const c = +el.getAttribute("data-c")!, grp = gs.groups[c]; el.style.cursor = "pointer";
       el.addEventListener("pointermove", (e) => { colg.setAttribute("x", String(x0 + c * cw)); colg.style.display = "block"; rowg.style.display = "none"; showTip(e as PointerEvent, `<b>${esc(grp)}</b>`); ctx.coord.setHint({ kind: "category", grouping, value: grp }); });
-      el.addEventListener("click", () => { ctx.coord.setColor("meta:" + grouping); ctx.coord.setFocus(grouping, grp); });
+      el.addEventListener("click", () => ctx.coord.setSelection({ kind: "category", grouping, value: grp }));   // commit a selection (clusters/cell types coordinate everywhere)
     });
+    paintCols();   // re-apply cross-panel highlights after the (re)layout
   };
 
   const afterAttach = () => {
@@ -398,6 +419,9 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
     // grid; rail cards aren't, so give those a bounded height rather than letting the heatmap stretch them.
     if (pb) { pb.style.position = "relative"; if (pb.clientHeight < 80) pb.style.height = "300px"; }
     draw();
+    // react to cross-panel selection + hover like the composition panel: the App translates the current
+    // selection/hint into THIS panel's grouping and calls setSelect/setHover, which tint the matching columns.
+    hooks.registerComposition({ grouping, setSelect: (v) => { selGroups = v; paintCols(); }, setHover: (v) => { hovGroups = v; paintCols(); } });
     let ro: ResizeObserver;
     ro = new ResizeObserver(() => { if (!w.isConnected) ro.disconnect(); else draw(); });   // re-fill on resize; self-cleans
     if (pb) ro.observe(pb);
