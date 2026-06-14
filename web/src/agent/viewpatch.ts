@@ -35,6 +35,7 @@ export interface RawViewPatch {
   clearFocus?: boolean;
   display?: { labels?: boolean; legend?: boolean; alpha?: number };
   panels?: RawPanelOp[];
+  facet?: { by?: string; panel?: number; values?: string[]; layout?: string };   // split one panel into aligned copies
 }
 
 export interface Scope { grouping: string; value: string; }
@@ -48,7 +49,8 @@ export type NormOp =
   | { kind: "display"; patch: { labels?: boolean; legend?: boolean; alpha?: number } }
   | { kind: "addPanel"; spec: PanelSpec }
   | { kind: "configPanel"; id: number; patch: PanelPatch }
-  | { kind: "removePanel"; id: number };
+  | { kind: "removePanel"; id: number }
+  | { kind: "facet"; by: string; values: string[]; panel?: number; layout: "stack" | "side" | "auto" };
 
 // Everything the reducer needs to know about the live app — supplied by the caller so the reducer stays pure.
 // `categoricals` are the colour-/scope-/focus-able metadata fields (cell_type, leiden, sample, condition…);
@@ -179,6 +181,28 @@ export function normalizeViewPatch(patch: RawViewPatch, w: World): NormResult {
     }
     if (Object.keys(pp).length) ops.push({ kind: "configPanel", id: op.id, patch: pp });
     else rejected.push(`panel #${op.id}: nothing to change`);
+  }
+
+  // ---- facet: split one panel into aligned copies that differ ONLY in scope ----
+  if (patch.facet && typeof patch.facet === "object") {
+    const f = patch.facet; const by = typeof f.by === "string" ? f.by : "";
+    if (!by || !w.categoricals.includes(by)) {
+      rejected.push(`facet: unknown field "${by}" (have: ${w.categoricals.join(", ") || "—"})`);
+    } else {
+      const allVals = w.valuesOf(by);
+      const asked = Array.isArray(f.values) ? f.values.map(String) : [];
+      const bad = asked.filter((v) => !allVals.includes(v));
+      if (bad.length) notes.push(`facet: ignored unknown ${by} value(s) ${bad.join(", ")}`);
+      let values = (asked.length ? asked.filter((v) => allVals.includes(v)) : allVals);
+      const MAXF = 12;
+      if (values.length > MAXF) { notes.push(`facet by ${by}: ${values.length} values capped to first ${MAXF}`); values = values.slice(0, MAXF); }
+      if (f.panel != null && !w.panelExists(f.panel)) rejected.push(`facet: no panel #${f.panel}`);
+      else if (values.length < 2) rejected.push(`facet by ${by}: need ≥2 values (have ${values.length})`);
+      else {
+        const layout = f.layout === "stack" || f.layout === "side" ? f.layout : "auto";
+        ops.push({ kind: "facet", by, values, panel: f.panel, layout });
+      }
+    }
   }
 
   return { ops, rejected, notes };

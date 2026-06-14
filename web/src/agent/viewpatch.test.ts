@@ -162,6 +162,29 @@ test("configure unknown panel id and empty patch are rejected", () => {
   assert.match(empty.rejected[0], /nothing to change/);
 });
 
+test("facet: by-field expands to values; defaults to all; bad field/values handled", () => {
+  const w = makeWorld();
+  const all = normalizeViewPatch({ facet: { by: "condition" } }, w);
+  assert.deepEqual(find(all.ops, "facet"), [{ kind: "facet", by: "condition", values: ["disease", "control"], panel: undefined, layout: "auto" }]);
+
+  const subset = normalizeViewPatch({ facet: { by: "condition", values: ["disease"], layout: "stack" } }, w);
+  assert.equal(find(subset.ops, "facet").length, 0);   // <2 values → rejected
+  assert.match(subset.rejected.join(" "), /need ≥2/);
+
+  const someBad = normalizeViewPatch({ facet: { by: "cell_type", values: ["B (naive)", "B (memory)", "NOPE"] } }, w);
+  const op = find(someBad.ops, "facet")[0] as any;
+  assert.deepEqual(op.values, ["B (naive)", "B (memory)"]);
+  assert.match(someBad.notes.join(" "), /ignored unknown/);
+
+  const badField = normalizeViewPatch({ facet: { by: "nope" } }, w);
+  assert.equal(find(badField.ops, "facet").length, 0);
+  assert.match(badField.rejected.join(" "), /unknown field/);
+
+  const badPanel = normalizeViewPatch({ facet: { by: "condition", panel: 99 } }, w);
+  assert.equal(find(badPanel.ops, "facet").length, 0);
+  assert.match(badPanel.rejected.join(" "), /no panel/);
+});
+
 test("a compound patch yields ops in order with no rejections", () => {
   const w = makeWorld();
   const r = normalizeViewPatch({

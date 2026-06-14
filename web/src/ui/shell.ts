@@ -162,11 +162,15 @@ export class App {
     d.dataset.pid = String(p.id);
     const h = mk("div", "ph");
     const grip = mk("span", "grip", "⠿"); h.appendChild(grip);
+    // scope CHIP: the facet value (e.g. day0) as a protected, non-shrinking badge so it stays legible even when
+    // the title truncates in a narrow header. Distinguishes stacked/side-by-side facets at a glance.
+    const scopeVal = (p.view?.scope as any)?.value;
+    if (scopeVal) h.appendChild(Object.assign(mk("span", "scopechip"), { textContent: scopeVal }));
     h.appendChild(Object.assign(mk("span", "pt"), { textContent: p.title }));
     // An embedding's colouring is shown live by its colour dropdown, so a static cap (e.g. "clusters") only goes
     // stale on recolour. For embeddings the caption tracks SCOPE instead (the dropdown can't show that): the
     // scoped population when scoped, nothing when showing all cells. Other panels keep their descriptive cap.
-    const capText = p.type === "Embedding" ? ((p.view?.scope as any)?.value || "") : p.cap;
+    const capText = p.type === "Embedding" ? "" : p.cap;   // embeddings convey scope via the chip; no stale static caption
     if (capText) h.appendChild(Object.assign(mk("span", "pc"), { textContent: "· " + capText }));
     const sp = mk("div", "sp");
     if (p.type === "Embedding" || p.type === "CompositionBars") {
@@ -335,6 +339,31 @@ export class App {
         else if (op.kind === "addPanel") { const id = this.addPanelModel(op.spec); applied.push(`+#${id} ${op.spec.type}${op.spec.heatMode === "dot" ? " · dotplot" : ""}`); needFull = true; }
         else if (op.kind === "configPanel") { const p = all().find((z) => z.id === op.id); if (p) { if (this.applyPanelModel(p, this.patchToModel(op.patch))) needFull = true; needRepaint = true; applied.push(`#${op.id} ${Object.keys(op.patch).join("/")}`); } }
         else if (op.kind === "removePanel") { this.removePanel(op.id); applied.push(`–#${op.id}`); needFull = true; }
+        else if (op.kind === "facet") {
+          // Split ONE panel into N copies that differ ONLY in scope — identical group/genes/mode (Heatmap) or
+          // the same projection reframed (Embedding). The agent can't diverge the facets the way hand-built
+          // scoped panels can. Source: explicit id (workbench), else the most recent Heatmap, else Embedding.
+          let src: Panel | undefined;
+          if (op.panel != null) { src = this.canvas.find((p) => p.id === op.panel); if (!src) notes.push(`facet: panel #${op.panel} is not on the workbench`); }
+          else src = [...this.canvas].reverse().find((p) => p.type === "Heatmap") || [...this.canvas].reverse().find((p) => p.type === "Embedding");
+          if (!src) { if (op.panel == null) notes.push("facet: add a Heatmap or Embedding first"); }
+          else {
+            const idx = this.canvas.findIndex((p) => p.id === src!.id);
+            // The facet value is shown by a protected scope CHIP in the header (derived from view.scope), so the
+            // title stays the clean base name — the distinguishing value never falls victim to title truncation.
+            const base = src.title;
+            const layout = op.layout === "auto" ? (src.type === "Embedding" ? "side" : "stack") : op.layout;
+            const facets = op.values.map((val, k) => {
+              const view: PanelView = { ...(src!.view || {}) };
+              view.scope = { kind: "category", grouping: op.by, value: val } as EntityRef;
+              const spec: Partial<Panel> = { type: src!.type, title: base, cap: src!.cap, group: src!.group, heatMode: src!.heatMode, genes: src!.genes ? [...src!.genes] : undefined, bind: src!.bind, view };
+              if (layout === "stack") spec.full = true; else { spec.col = (k % 2) as 0 | 1; spec.full = false; }
+              return this.newPanel(spec);
+            });
+            this.canvas.splice(idx, 1, ...facets);
+            applied.push(`facet ${base} by ${op.by} → ${op.values.join(", ")}`); needFull = true;
+          }
+        }
       }
     } finally { this.suspendRender = false; }
     if (needFull) this.fullRender(); else if (needRepaint) { this.repaint(); this.syncColorSelects(); this.syncToggles(); }

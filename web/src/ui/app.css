@@ -36,17 +36,21 @@ button{font-family:inherit}
 /* ---------- stage: canvas + rail + docked convo ---------- */
 .stage{flex:1;display:flex;min-height:0}
 .canvas{flex:1;overflow:auto;padding:14px;min-width:0;display:flex;flex-direction:column}
-/* the workbench fills the canvas; rows stretch (>=300px) so panels use the space, not clump at top */
-.workbench{flex:1;display:grid;grid-template-columns:1fr 1fr;gap:12px;grid-auto-rows:minmax(300px,1fr)}
+/* the workbench fills the canvas; rows share the height (1fr) and shrink to a 200px floor so up to ~3 rows
+   fit the viewport without scrolling (dashboard-style) — only 4+ rows scroll, instead of every 3rd panel. */
+.workbench{flex:1;display:grid;grid-template-columns:1fr 1fr;gap:12px;grid-auto-rows:minmax(200px,1fr)}
 .panel{background:var(--panel);border:1px solid var(--line);border-radius:11px;overflow:hidden;animation:rise .3s ease;min-width:0;display:flex;flex-direction:column}
 .panel.full{grid-column:1/-1}
 .panel.dragging{opacity:.45} .panel.dragover{box-shadow:0 0 0 2px var(--cyan) inset}
 @keyframes rise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
-.ph{display:flex;align-items:center;gap:8px;padding:8px 11px;border-bottom:1px solid var(--line2);overflow:hidden}
+.ph{display:flex;align-items:center;gap:8px;padding:8px 11px;border-bottom:1px solid var(--line2)}
 .ph .grip{color:var(--faint);cursor:grab;font-size:12px;line-height:1;user-select:none;margin:0 2px 0 -2px;flex:0 0 auto}
-/* title never wraps; in a tight header the caption ellipsizes first and the controls keep their size */
-.ph .pt{font-weight:600;font-size:12.5px;white-space:nowrap;flex:0 0 auto} .ph .pc{font-size:10.5px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:0 1 auto}
+/* never wrap; in a tight header the caption ellipsizes first, then the title — so the CONTROLS always stay visible */
+.ph .pt{font-weight:600;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:0 1 auto}
+.ph .pc{font-size:10.5px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:0 3 auto}
 .ph .sp{margin-left:auto;display:flex;align-items:center;gap:6px;flex:0 0 auto}
+/* faceted-panel scope badge — protected (never shrinks) so the facet value stays legible in a tight header */
+.ph .scopechip{flex:0 0 auto;font-size:10px;font-family:var(--mono);color:var(--cyan);background:rgba(92,200,255,.12);border:1px solid rgba(92,200,255,.32);border-radius:5px;padding:1px 6px;line-height:1.5;white-space:nowrap}
 .mini{background:var(--inset);color:var(--dim);border:1px solid var(--line);border-radius:6px;font-size:11px;padding:3px 7px;cursor:pointer;font-family:var(--mono);line-height:1}
 .mini:hover{color:var(--text)}
 .mini.on{color:var(--cyan);border-color:var(--cyan)}   /* an engaged view-option toggle (labels / legend) */
