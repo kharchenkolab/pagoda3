@@ -175,14 +175,16 @@ async function compositionBody(panel: Panel, ctx: Ctx, hooks: PanelHooks): Promi
   samples.forEach((sm, i) => {
     const x = p + i * ((W - p - 6) / samples.length); let ya = H - 26;
     props[i].forEach((pr, t) => { const h = pr * (H - 46); const yTop = ya - h; seg[t][i] = { x, yTop, yBot: ya };
-      g += `<rect class="cseg" data-g="${esc(groups[t])}" x="${x}" y="${yTop.toFixed(1)}" width="${bw}" height="${h.toFixed(1)}" fill="rgb(${catColor(t).join(",")})"/>`; ya = yTop; });
+      g += `<rect class="cseg" data-g="${esc(groups[t])}" data-sm="${esc(sm)}" data-pct="${(pr * 100).toFixed(1)}" x="${x}" y="${yTop.toFixed(1)}" width="${bw}" height="${h.toFixed(1)}" fill="rgb(${catColor(t).join(",")})"/>`; ya = yTop; });
     g += `<text class="axis" x="${x + bw / 2}" y="${H - 13}" text-anchor="middle">${esc(sm)}</text>`;
     g += `<text class="axis" x="${x + bw / 2}" y="${H - 3}" text-anchor="middle" fill="${conds[i] === "disease" ? "var(--bad)" : "var(--cyan)"}">${esc(conds[i])}</text>`;
   });
   const host = mk("div", "comphost");
   host.innerHTML = `<svg class="compsvg" viewBox="0 0 ${W} ${H}"><g class="cbars">${g}</g><g class="cribbons"></g></svg>`;
   const leg = mk("div", "legend"); leg.innerHTML = groups.map((gr, i) => `<span class="lgi" data-g="${esc(gr)}"><span class="sw" style="background:rgb(${catColor(i).join(",")})"></span>${esc(gr)}</span>`).join("");
-  const w = mk("div"); w.appendChild(host); w.appendChild(leg);
+  const w = mk("div"); w.style.position = "relative"; w.appendChild(host); w.appendChild(leg);
+  const tip = mk("div"); tip.style.cssText = "position:absolute;display:none;background:var(--ink);border:1px solid var(--line2);border-radius:6px;padding:3px 8px;font-size:11px;color:var(--text);pointer-events:none;z-index:20;white-space:nowrap;box-shadow:0 4px 14px rgba(0,0,0,.45)"; w.appendChild(tip);
+  const showTip = (e: PointerEvent, html: string) => { tip.innerHTML = html; tip.style.display = "block"; const r = w.getBoundingClientRect(); let x = e.clientX - r.left + 13; if (x + tip.offsetWidth > r.width - 4) x = e.clientX - r.left - tip.offsetWidth - 8; tip.style.left = Math.max(2, x) + "px"; tip.style.top = (e.clientY - r.top + 13) + "px"; };
 
   // React to BOTH tiers, distinctly: select = committed (heavy dim + bold + bright ribbon), hover = ephemeral
   // (soft dim + thin cue + faint ribbon). State is internal; re-rendered when either tier updates.
@@ -208,8 +210,10 @@ async function compositionBody(panel: Panel, ctx: Ctx, hooks: PanelHooks): Promi
   };
   // emit on hover (hint, light); click commits a SELECTION — the exact cell-set any panel would produce
   const nameAt = (e: Event) => ((e.target as Element).closest(".cseg, .lgi") as HTMLElement | null)?.dataset.g || null;
-  w.addEventListener("pointermove", (e) => { const n = nameAt(e); if (n) ctx.coord.setHint({ kind: "category", grouping, value: n }); else ctx.coord.clearHint(); });
-  w.addEventListener("pointerleave", () => ctx.coord.clearHint());
+  w.addEventListener("pointermove", (e) => { const n = nameAt(e); if (n) ctx.coord.setHint({ kind: "category", grouping, value: n }); else ctx.coord.clearHint();
+    const sg = (e.target as Element).closest(".cseg") as HTMLElement | null;
+    if (sg) showTip(e as PointerEvent, `<b>${esc(sg.dataset.g!)}</b>${sg.dataset.pct ? ` · ${sg.dataset.pct}%` : ""}${sg.dataset.sm ? `<br><span style="color:var(--faint)">in ${esc(sg.dataset.sm)}</span>` : ""}`); else tip.style.display = "none"; });
+  w.addEventListener("pointerleave", () => { ctx.coord.clearHint(); tip.style.display = "none"; });
   w.addEventListener("click", (e) => { const n = nameAt(e); ctx.coord.setSelection(n ? { kind: "category", grouping, value: n } : null); });   // block → select; empty → deselect (mirrors the UMAP)
 
   return { el: w, afterAttach: () => hooks.registerComposition({ grouping, setSelect: (v) => { selSet = v; render(); }, setHover: (v) => { hovSet = v; render(); } }) };
