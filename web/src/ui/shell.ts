@@ -218,14 +218,16 @@ export class App {
   // Deep per-panel view control — the agent's configure_panel verb (and the path the per-panel UI will use).
   // Merges a view patch into ONE panel's spec and repaints in place; other panels untouched. A per-panel
   // override wins over the global coord default AND over the agent's set_color (explicit/user authority).
-  configurePanel(panelId: number, patch: Partial<PanelView>) {
+  configurePanel(panelId: number, patch: Partial<PanelView> & { heatMode?: "heat" | "dot" }) {
     const p = this.canvas.find((z) => z.id === panelId) || this.rail.find((z) => z.id === panelId);
     if (!p) return;
-    // swapping an embedding, or restacking a non-embedding panel (composition grouping), needs a body rebuild;
-    // an embedding recolour/scope is a cheap repaint.
-    const rebuild = ("embedding" in patch && patch.embedding !== p.view?.embedding) || (p.type !== "Embedding" && "colorBy" in patch);
-    if (typeof patch.colorBy === "string") this.noteColor(patch.colorBy);
-    p.view = { ...p.view, ...patch };
+    const { heatMode, ...view } = patch;   // heatMode is a top-level panel field (heat/dot), not part of the view
+    // swapping an embedding, restacking a non-embedding panel (composition grouping), or flipping the heatmap
+    // representation needs a body rebuild; an embedding recolour/scope is a cheap repaint.
+    const rebuild = ("embedding" in view && view.embedding !== p.view?.embedding) || (p.type !== "Embedding" && "colorBy" in view) || (heatMode != null && heatMode !== p.heatMode);
+    if (typeof view.colorBy === "string") this.noteColor(view.colorBy);
+    if (heatMode != null) p.heatMode = heatMode;
+    p.view = { ...p.view, ...view };
     if (rebuild) this.fullRender(); else { this.repaint(); this.syncColorSelects(); this.syncToggles(); }   // keep every control in step
   }
 
