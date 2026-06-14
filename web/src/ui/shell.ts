@@ -23,7 +23,7 @@ export class App {
   ctx: Ctx; coord: Coord; agent!: Agent;
   root: HTMLElement;
   canvas: Panel[] = []; rail: Panel[] = []; proposal: any = null;
-  WS: Record<string, WS>; wsOrder: string[]; currentWS = "Overview";
+  WS: Record<string, WS>; wsOrder: string[]; currentWS = "";   // "" until the first switchWS loads one (so it doesn't clobber a def on startup)
   history: Checkpoint[] = []; viewing = -1; locked = false; uid = 0;
   suspendRender = false;   // set while applyViewPatch batches a multi-op patch into a single render
   renderToken = 0;         // guards fullRender against concurrent re-entry (async panel build → stale double-append)
@@ -520,13 +520,17 @@ export class App {
 
   switchWS(name: string, user: boolean) {
     const ws = this.WS[name]; if (!ws) return;
+    if (name === this.currentWS) return;   // already active — don't rebuild (would discard live edits)
+    // Auto-save the OUTGOING workspace's live layout (full state — panels, per-panel view, pinned genes, …) so
+    // switching away and back restores it exactly, not the original template.
+    if (this.currentWS && this.WS[this.currentWS]) this.WS[this.currentWS] = { colorBy: this.coord.state.colorBy, panels: JSON.parse(JSON.stringify(this.canvas)) };
     this.currentWS = name; this.coord.set({ colorBy: ws.colorBy, selection: null });
     this.canvas = ws.panels.map((p) => this.newPanel(p));
     this.fullRender();
     if (user) { this.toast("Switched to " + name, "A workspace is a named, reversible layout — your previous one is a step back in History."); this.checkpoint("workspace → " + name, "Deliberate workspace switch."); }
   }
 
-  captureLayout(): Partial<Panel>[] { return this.canvas.map((p) => ({ type: p.type, title: p.title, cap: p.cap, full: p.full, col: p.col, bind: p.bind, group: p.group, gene: p.gene, heatMode: p.heatMode, genes: p.genes })); }
+  captureLayout(): Partial<Panel>[] { return this.canvas.map((p) => ({ type: p.type, title: p.title, cap: p.cap, full: p.full, col: p.col, bind: p.bind, group: p.group, gene: p.gene, heatMode: p.heatMode, genes: p.genes, view: p.view ? JSON.parse(JSON.stringify(p.view)) : undefined })); }
   startSaveWS() {
     const t = this.$("wstabs"); const inp = document.createElement("input"); inp.className = "wsinput"; inp.placeholder = "name workspace…"; t.appendChild(inp); inp.focus();
     let done = false; const commit = (ok: boolean) => { if (done) return; done = true; const name = inp.value.trim(); if (ok && name && !this.WS[name]) { this.WS[name] = { colorBy: this.coord.state.colorBy, panels: this.captureLayout() }; this.wsOrder.push(name); this.currentWS = name; this.renderWS(); this.checkpoint("save workspace · " + name, "You saved your current layout as a named workspace."); this.toast("Saved workspace “" + name + "”", null); } else this.renderWS(); };
