@@ -27,7 +27,7 @@ export interface PanelHooks {
   onSelect: (ids: Int32Array, anchor: { left: number; top: number }) => void;
   registerEmbedding: (ev: EmbeddingView) => void;
   onCellHover: (index: number | null) => void;                 // embedding → cross-panel hint (hover tier)
-  onCellClick: (index: number | null) => void;                 // embedding click → select cluster, or deselect (empty)
+  onCellClick: (index: number | null, anchor?: { left: number; top: number }) => void;   // embedding click → select cluster (+ selpop), or deselect (empty)
   registerComposition: (r: CompReactor) => void;               // a panel that reacts to selection + hint
 }
 
@@ -65,7 +65,7 @@ function embeddingBody(p: Panel, ctx: Ctx, hooks: PanelHooks): BuiltBody {
     const ev = new EmbeddingView(host, emb.data, emb.n);
     ev.onSelect = (ids) => { const r = host.getBoundingClientRect(); hooks.onSelect(ids, { left: r.left + r.width * 0.55, top: r.top + 40 }); };
     ev.onHover = (idx) => hooks.onCellHover(idx);
-    ev.onPick = (idx) => hooks.onCellClick(idx);
+    ev.onPick = (idx, x, y) => { const r = host.getBoundingClientRect(); hooks.onCellClick(idx, x != null && y != null ? { left: r.left + x, top: r.top + y } : undefined); };
     (ev as any)._legend = legend;
     (ev as any)._panel = p;            // carry the panel so paintEmbedding can read its per-panel view spec
     hooks.registerEmbedding(ev);

@@ -18,7 +18,7 @@ export class EmbeddingView {
   private viewState: any;
   onSelect?: (ids: Int32Array) => void;
   onHover?: (index: number | null) => void;   // a cell under the cursor (or null) — emits the cross-panel hint
-  onPick?: (index: number | null) => void;    // a plain click: a cell (→ select its cluster) or empty (→ deselect)
+  onPick?: (index: number | null, x?: number, y?: number) => void;   // a plain click: a cell (→ select its cluster) or empty (→ deselect); x/y px for the selpop anchor
 
   constructor(container: HTMLElement, emb: Float32Array, n: number) {
     this.n = n;
@@ -53,7 +53,7 @@ export class EmbeddingView {
       // hover IS available in pan mode — picking fires on move, not drag. Emit the picked cell (or null).
       onHover: (info: any) => this.onHover?.(info && info.index != null && info.index >= 0 ? this.draw[info.index] : null),    // draw slot → cell
       // plain click selects the clicked cell's cluster; click on empty space deselects. Shift-clicks are the brush.
-      onClick: (info: any) => { if (info?.srcEvent?.shiftKey) return; this.onPick?.(info && info.index != null && info.index >= 0 ? this.draw[info.index] : null); },
+      onClick: (info: any) => { if (info?.srcEvent?.shiftKey) return; this.onPick?.(info && info.index != null && info.index >= 0 ? this.draw[info.index] : null, info?.x, info?.y); },
       getCursor: ({ isDragging, isHovering }: any) => (isDragging ? "grabbing" : isHovering ? "crosshair" : "grab"),
     });
     canvas.addEventListener("pointerleave", () => this.onHover?.(null));
@@ -79,8 +79,9 @@ export class EmbeddingView {
         pickable: true,
         updateTriggers: { all: this.colorVersion },
       }) as any,
-      // selection halo
-      this.selCount() > 0
+      // selection halo — only for a SMALL freeform selection (pinpoints the cells). A large cluster selection
+      // relies on the grey-out instead, so we don't speckle hundreds of cells with cyan rings.
+      this.selCount() > 0 && this.selCount() <= 250
         ? new ScatterplotLayer({
             id: "sel",
             data: { length: this.n },

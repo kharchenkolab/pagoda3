@@ -100,7 +100,7 @@ export class App {
       onSelect: (ids, anchor) => { this.coord.setSelection({ kind: "cells", ids }); this.lastSelAnchor = anchor; this.openSelpop(); },   // brush has no category — raw cells
       registerEmbedding: (ev) => this.embeddings.push(ev),
       onCellHover: (idx) => this.onCellHover(idx),
-      onCellClick: (idx) => this.onCellClick(idx),
+      onCellClick: (idx, anchor) => this.onCellClick(idx, anchor),
       registerComposition: (r) => this.compReactors.push(r),
     };
   }
@@ -112,10 +112,11 @@ export class App {
   }
   // embedding click → select the clicked cell's whole cluster (the same cell-set a panel click makes);
   // a click on empty space clears the selection. Origin-independent: any "select cluster" → one reaction.
-  onCellClick(index: number | null) {
-    if (index == null) { this.coord.setSelection(null); return; }
+  onCellClick(index: number | null, anchor?: { left: number; top: number }) {
+    if (index == null) { this.coord.setSelection(null); this.hideSelpop(); return; }
     const g = this.ctx.keyGrouping(), v = this.ctx.categoryAt(g, index);
     this.coord.setSelection(v ? { kind: "category", grouping: g, value: v } : null);   // emit the category, not cells
+    if (v && anchor) { this.lastSelAnchor = anchor; this.openSelpop(); }                // affordance: show what you can do with it
   }
 
   async fullRender() {
