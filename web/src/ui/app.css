@@ -61,8 +61,11 @@ button{font-family:inherit}
 .hgene,.hgrp{opacity:.55;transition:opacity .1s} .hgene:hover,.hgrp:hover{opacity:1;fill:var(--cyan)}
 .hcell:hover{stroke:var(--text);stroke-width:1px}
 .prov{font-family:var(--mono);font-size:10px;color:var(--faint);padding:6px 11px;border-top:1px solid var(--line2)}
-.caveat{display:flex;gap:8px;padding:9px 11px;background:rgba(224,164,88,.08);border-left:3px solid var(--amber);font-size:12px;color:#f0d9b6}
-.caveat b{color:var(--amber)}
+.caveat{display:flex;gap:8px;padding:9px 11px;background:rgba(224,164,88,.08);border-left:3px solid var(--amber);font-size:12px;color:#f0d9b6;cursor:pointer}
+.caveat:hover{background:rgba(224,164,88,.14)}
+.caveat b{color:var(--amber);white-space:nowrap}
+.caveat.collapsed{padding:3px 10px;opacity:.6;font-size:11px}
+.caveat.collapsed span{display:none}
 .placeholder{border:1px dashed var(--bad);border-radius:9px;padding:12px;margin:11px;display:flex;flex-direction:column;gap:6px;background:rgba(224,122,122,.05)}
 .placeholder .phh{font-family:var(--mono);font-size:11px;color:var(--bad)} .placeholder .phr{font-size:12.5px}
 .placeholder .phspec{font-family:var(--mono);font-size:10.5px;color:var(--faint);background:var(--inset);border:1px solid var(--line);border-radius:6px;padding:5px 8px;word-break:break-all}

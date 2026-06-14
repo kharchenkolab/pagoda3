@@ -23,6 +23,7 @@ export class App {
   embeddings: EmbeddingView[] = [];
   compReactors: CompReactor[] = [];   // vocabulary-bound panels that highlight a category on a coord hint
   colorChoices: [string, string][] = [...COLOR_OPTS];   // colour-by dropdown options, capped per class (see noteColor)
+  caveatsCollapsed = new Set<string>();   // caveat handles the user clicked to collapse (stay collapsed across renders)
   // presence
   thread: any = null; threadDocked = false; nudgePending: any = null; apTimer: any = null; apIndex = 0;
   scope: Scope | null = null; hot = 0; filtered: any[] = []; lastSelAnchor = { left: 0, top: 0 };
@@ -180,7 +181,7 @@ export class App {
     sp.appendChild(span); sp.appendChild(close);
     h.appendChild(sp); d.appendChild(h);
     const H = this.ctx.handleOf(p.bind);
-    if (H?.caveat) { const cv = mk("div", "caveat"); cv.innerHTML = `<b>⚠ caveat</b><span>${H.caveat}</span>`; d.appendChild(cv); }
+    if (H?.caveat) d.appendChild(this.caveatEl(p.bind, H.caveat));
     const b = mk("div", "pbody");
     const built = await bodyFor(p, this.ctx, this.hooks());
     if (built.headerControls) sp.insertBefore(built.headerControls, sp.firstChild);   // e.g. a gene filter, in the header
@@ -256,6 +257,16 @@ export class App {
     }
   }
 
+  // A dismissable caveat banner — click anywhere on it to collapse to a small ⚠ chip (click again to restore).
+  // Kept per handle so it stays collapsed across re-renders; the methodology is one click away, never lost.
+  caveatEl(bind: string | undefined, text: string): HTMLElement {
+    const cv = mk("div", "caveat" + (bind && this.caveatsCollapsed.has(bind) ? " collapsed" : ""));
+    cv.innerHTML = `<b>⚠ caveat</b><span>${text}</span>`;
+    cv.title = "click to collapse / restore";
+    cv.onclick = () => { const c = cv.classList.toggle("collapsed"); if (bind) c ? this.caveatsCollapsed.add(bind) : this.caveatsCollapsed.delete(bind); };
+    return cv;
+  }
+
   newPanel(p: Partial<Panel>): Panel { return { id: ++this.uid, type: p.type!, title: p.title || p.type!, cap: p.cap, full: p.full, bind: p.bind, text: p.text, q: p.q, group: p.group, gene: p.gene, view: p.view, split: p.split, rows: p.rows }; }
 
   // Add a configured panel to the canvas — the composition atom (the agent's add_panel). Additive and
@@ -289,7 +300,7 @@ export class App {
       sp.appendChild(ds); h.appendChild(sp); d.appendChild(h);
       if (p.q) d.appendChild(Object.assign(mk("div", "rq"), { textContent: "“" + p.q + "”" }));
       const H = this.ctx.handleOf(p.bind);
-      if (H?.caveat) { const cv = mk("div", "caveat"); cv.innerHTML = `<b>⚠ caveat</b><span>${H.caveat}</span>`; d.appendChild(cv); }
+      if (H?.caveat) d.appendChild(this.caveatEl(p.bind, H.caveat));
       const b = mk("div", "pbody"); const built = await bodyFor(p, this.ctx, this.hooks()); b.appendChild(built.el); d.appendChild(b);   // rail header stays uncluttered (no filter box); it appears when pinned to the canvas
       if (H?.prov) d.appendChild(Object.assign(mk("div", "prov"), { textContent: "◆ " + H.prov }));
       rb.appendChild(d); if (built.afterAttach) built.afterAttach();
