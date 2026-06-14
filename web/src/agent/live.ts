@@ -35,14 +35,12 @@ const TOOLS: Tool[] = [
     } } },
   // ---- compute primitives ("what to derive") — small, named, carry methodology + caveats ----
   { name: "get_markers", description: "Add a ranked marker-gene table for a group (cluster or annotation) to the disposable answer rail, and return the top genes. Rung-1 answer.", input_schema: { type: "object", properties: { cluster: { type: "string", description: "group id, e.g. a leiden cluster (c0 / 5) or a cell type name" }, grouping: { type: "string", description: "which precomputed grouping the id belongs to (e.g. leiden or cell_type); defaults to leiden" } }, required: ["cluster"] } },
-  { name: "run_de_on_selection", description: "Run subsample differential expression on the current cell selection vs the rest, ranked over ALL genes (scope-correct, ranking-grade). Adds a DE table to the rail. Only valid when the user has a selection.", input_schema: { type: "object", properties: {} } },
-  { name: "get_overdispersed_genes", description: "Most variable (overdispersed) genes WITHIN a scope, recomputed for that scope (not a global shortlist). To scope to a population pass scopeGrouping + scopeValue (e.g. cell_type + the platelet cell-type name) — this is required to get genes specific to that population. With no scope it uses the current selection, else the focused population, else the whole dataset. Adds a ranked gene list to the rail.", input_schema: { type: "object", properties: { scopeGrouping: { type: "string", description: "grouping of the population to scope to, e.g. cell_type or leiden" }, scopeValue: { type: "string", description: "the value within that grouping, e.g. the platelet cell-type name" } } } },
+  { name: "compute", description: "Run a statistic over CELL SETS, result to the rail (or canvas with toCanvas). stat='de' = differential expression of set A vs set B, compared DIRECTLY (logFC>0 = higher in A); B defaults to the COMPLEMENT of A (i.e. A vs rest). stat='overdispersion' = most variable genes WITHIN A, recomputed for that scope. A and B are CELL-SET expressions you compose freely — {category:{grouping,value}}, {selection:true}, {focus:true}, {all:true}, {complement:<set>}, {intersect:[<set>,…]}, {union:[<set>,…]}. So you can test ANY set you can describe, not just pre-baked combos. Examples — naive vs memory B: A={category:{grouping:'cell_type',value:'B (naive)'}}, B={category:{grouping:'cell_type',value:'B (memory)'}}. Markers of a cluster: A={category:{grouping:'leiden',value:'3'}} (B defaults to rest). DE on the current selection: A={selection:true}. Within CD8 T, day7 vs day0: A={intersect:[{category:{grouping:'cell_type',value:'CD8 T'}},{category:{grouping:'condition',value:'day7'}}]}, B=same with day0 — residual RPS/RPL or MT- splitters inside one type = batch. Variable genes in platelets: stat='overdispersion', A={category:{grouping:'cell_type',value:'Platelet'}}. Cell-level ranking-grade; the donor/patient is the replicate (the caveat travels on the result).", input_schema: { type: "object", properties: { stat: { type: "string", enum: ["de", "overdispersion"] }, A: { type: "object", description: "cell set (see forms above)" }, B: { type: "object", description: "de only — the contrast set; omit to use the complement of A (A vs rest)" }, toCanvas: { type: "boolean", description: "put it on the workbench (evidence board) instead of the disposable rail" }, title: { type: "string" } }, required: ["stat", "A"] } },
   { name: "get_composition", description: "Add a per-sample cluster-composition panel (compositional) to the rail and return the disease-vs-control cluster fractions. Rung-1.", input_schema: { type: "object", properties: {} } },
   { name: "get_overdispersion", description: "Add the overdispersed gene-program list to the rail. Rung-1.", input_schema: { type: "object", properties: {} } },
   { name: "propose_workspace", description: "Propose switching to a named workspace (a bigger, reversible layout change the human confirms). name is one of: Overview, Markers, QC triage, Aspects.", input_schema: { type: "object", properties: { name: { type: "string" } }, required: ["name"] } },
   { name: "add_note", description: "Add a short text note to the rail (for an answer that needs no view).", input_schema: { type: "object", properties: { text: { type: "string" } }, required: ["text"] } },
-  { name: "de_between", description: "Differential expression between TWO cell groups, compared DIRECTLY to each other (not vs rest): valueA vs valueB of `splitField`. logFC>0 = higher in valueA, logFC<0 = higher in valueB. USE THIS whenever the user wants to contrast two populations — e.g. naive vs memory B (splitField=cell_type, valueA='B (naive)', valueB='B (memory)'), or disease vs control. Do NOT answer a contrast with two separate get_markers (each vs rest): two related types share their lineage genes, so vs-rest lists look identical — only a direct A-vs-B test shows what actually differs. OPTIONAL scopeGrouping+scopeValue restrict both sides to one population (the integration check: within e.g. CD8+ T cells, donor A vs donor B — residual RPS/RPL or MT- splitters = batch, not biology). Adds a DE table (toCanvas=true → workbench/evidence board; else the disposable rail).", input_schema: { type: "object", properties: { splitField: { type: "string", description: "the grouping whose two values are contrasted (e.g. cell_type, condition, sample)" }, valueA: { type: "string" }, valueB: { type: "string" }, scopeGrouping: { type: "string", description: "OPTIONAL — restrict both sides to this grouping's value (scopeValue)" }, scopeValue: { type: "string", description: "OPTIONAL — the population to test within" }, toCanvas: { type: "boolean" } }, required: ["splitField", "valueA", "valueB"] } },
-  { name: "concordance_panel", description: "Per-donor MARKER concordance for one cell type — the companion to de_between. Takes that cell type's top markers and shows their mean expression split by donor (a gene × donor heat). Markers reading the SAME across donors confirm a genuinely merged population; divergent ones are suspect. scopeGrouping/scopeValue = the cell type (e.g. cell_type, \"CD8+ T cells\"); splitField = the donor/batch field (sample). Adds the panel to the workbench.", input_schema: { type: "object", properties: { scopeGrouping: { type: "string" }, scopeValue: { type: "string" }, splitField: { type: "string" } }, required: ["scopeGrouping", "scopeValue", "splitField"] } },
+  { name: "concordance_panel", description: "Per-donor MARKER concordance for one cell type — the companion to a within-type compute(stat:de). Takes that cell type's top markers and shows their mean expression split by donor (a gene × donor heat). Markers reading the SAME across donors confirm a genuinely merged population; divergent ones are suspect. scopeGrouping/scopeValue = the cell type (e.g. cell_type, \"CD8+ T cells\"); splitField = the donor/batch field (sample). Adds the panel to the workbench.", input_schema: { type: "object", properties: { scopeGrouping: { type: "string" }, scopeValue: { type: "string" }, splitField: { type: "string" } }, required: ["scopeGrouping", "scopeValue", "splitField"] } },
 ];
 
 async function systemPrompt(app: App): Promise<string> {
@@ -52,7 +50,7 @@ async function systemPrompt(app: App): Promise<string> {
 TWO SURFACES: update_view changes WHAT IS SHOWN (colour, focus, display, panels — all declarative, one tool, any subset of fields); the compute primitives DERIVE data (markers, DE, overdispersion, composition). Configure with update_view; compute with the named tools.
 PRINCIPLE OF RESTRAINT — always prefer the SMALLEST change that answers the question:
 - recolour/focus in place via update_view ({color:…} or {focus:…}) — the default;
-- a disposable answer in the rail (get_markers, run_de_on_selection, get_overdispersed_genes, get_composition, get_overdispersion, add_note), or add a Heatmap panel via update_view, when a new view is needed;
+- a disposable answer in the rail (compute for DE/overdispersion over any cell set, get_markers, get_composition, get_overdispersion, add_note), or add a Heatmap panel via update_view, when a new view is needed;
 - a workspace proposal (propose_workspace) only for a deliberate layout change — and it is a PROPOSAL the human confirms.
 The change itself is visible, so keep your prose to ONE short sentence. Never narrate state the user can already see.
 
@@ -62,7 +60,7 @@ METHODOLOGY (cacoa — encode these, don't forget them):
 - Cluster proportions are COMPOSITIONAL (sum to 1) — a rise in one forces others down; use a compositional test.
 - Refuse or caveat a design that can't support a claim (e.g. 1-vs-1). If a result carries such a caveat, state it briefly. When unsure whether a claim is population- vs subpopulation-level, ASK a one-line clarifying question instead of running the wrong test.
 - DE and overdispersion are scope-correct: ranked over ALL genes for the cells in question (a selection or subset), never a global gene shortlist — so they surface the genes that distinguish *that* scope.
-- To CONTRAST two groups (naive vs memory B, disease vs control), run de_between — a direct A-vs-B test. NEVER answer a contrast with two separate get_markers (each vs rest): related types share their lineage genes, so the vs-rest lists look identical; only the direct test shows what differs.
+- To CONTRAST two groups (naive vs memory B, day0 vs day7), use compute(stat:de) with A and B cell sets — a direct A-vs-B test. NEVER answer a contrast with two separate get_markers (each vs rest): related groups share their lineage genes, so the vs-rest lists look identical; only the direct test shows what differs. For markers of one group, compute(stat:de, A={category…}) (B defaults to rest) or get_markers for the precomputed table.
 
 DATASET (read from the loaded store — do not assume any other dataset): ${brief}. Markers are precomputed for: ${app.ctx.groupings().join(", ") || "—"}.
 
@@ -90,32 +88,7 @@ async function execTool(app: App, name: string, input: any): Promise<string> {
       ag.addRail({ type: "DeTable", title: `Markers · ${input.cluster}`, cap: `${grouping} vs rest`, bind: `de:${grouping}:${input.cluster}`, group: input.cluster, rows });
       return `added marker table for ${grouping}=${input.cluster}; top genes: ${rows.slice(0, 8).map((r) => r.symbol).join(", ")}`;
     }
-    case "get_overdispersed_genes": {
-      // scope resolution: explicit population → current selection → focused population → whole dataset.
-      const sel = app.ctx.selectedCells(), f = app.coord.state.focus;
-      let ids: number[], scope: string;
-      if (typeof input.scopeGrouping === "string" && typeof input.scopeValue === "string") {
-        ids = Array.from(app.ctx.cellsOfCategory(input.scopeGrouping, input.scopeValue)); scope = input.scopeValue;
-      } else if (sel.length) { ids = Array.from(sel); scope = "selection"; }
-      else if (f) { ids = Array.from(app.ctx.cellsOfCategory(f.dim, f.value)); scope = f.value; }
-      else { ids = Array.from({ length: app.ctx.n }, (_, i) => i); scope = "whole dataset"; }
-      if (!ids.length) return `no cells found for ${scope}`;
-      const hv = await app.ctx.view.overdispersedGenes(ids, 100);
-      if (!hv.length) return "no overdispersion (store has no cell-major counts panel)";
-      const rows = hv.map((h) => ({ symbol: h.symbol, score: h.resid }));
-      const label = scope === "whole dataset" ? scope : `${scope} (${ids.length} cells)`;
-      ag.addRail({ type: "GeneList", title: `Variable genes · ${label}`, cap: "overdispersion", bind: "hvg:scope", rows });
-      return `top variable genes WITHIN ${label} (recomputed for this scope): ${hv.slice(0, 10).map((h) => h.symbol).join(", ")}`;
-    }
-    case "run_de_on_selection": {
-      const ids = app.ctx.selectedCells(); if (!ids.length) return "no selection — ask the user to drag-select cells first";
-      const set = new Set(ids); const rest: number[] = []; for (let i = 0; i < app.ctx.n; i++) if (!set.has(i)) rest.push(i);
-      const { ranked, nA, nB, panel, nGenesRanked } = await app.ctx.view.subsampleDE(Array.from(ids), rest);
-      const rows = ranked.slice(0, 200).map((r) => ({ gene: r.gene, symbol: r.symbol, lfc: r.lfc, meanA: r.meanA, meanB: r.meanB }));
-      ag.addRail({ type: "DeTable", title: `DE · selection (${ids.length})`, cap: panel ? "vs rest · panel" : "vs rest · approx", bind: "de:selection", rows });
-      const how = panel ? `O(rows) cell-major counts, all ${nGenesRanked} genes` : "ranking-grade";
-      return `subsample DE (n=${nA} vs ${nB}, ${how}); top up: ${rows.filter((r) => r.lfc > 0).slice(0, 6).map((r) => r.symbol).join(", ")}`;
-    }
+    case "compute": { const { ok, error } = await app.runCompute(input); return error ? `error: ${error}` : ok!; }
     case "get_composition": {
       const comp = await app.ctx.composition("leiden"); ag.addRail({ type: "CompositionBars", title: "Composition by sample", cap: "compositional", bind: "composition:bySample" });
       const c0dis = comp.props.filter((_, i) => comp.conds[i] === "disease").map((p) => p[comp.groups.indexOf("c0")]);
@@ -125,23 +98,6 @@ async function execTool(app: App, name: string, input: any): Promise<string> {
     case "get_overdispersion": { ag.addRail({ type: "Overdispersion", title: "Overdispersed programs", cap: "gene programs", bind: "aspect:overdispersion" }); return "added overdispersed-programs list"; }
     case "propose_workspace": { ag.proposeWorkspace(input.name); return `proposed workspace ${input.name} (awaiting the human's OK)`; }
     case "add_note": { ag.addRail({ type: "Note", title: "Note", text: input.text }); return "added note"; }
-    case "de_between": {
-      // Compare valueA vs valueB of splitField DIRECTLY (not vs rest). scopeGrouping/scopeValue are OPTIONAL:
-      // when given, both sides are restricted to that population (the residual-batch-within-one-type move).
-      const hasScope = !!(input.scopeGrouping && input.scopeValue);
-      const sideA = hasScope ? [{ grouping: input.scopeGrouping, value: input.scopeValue }, { grouping: input.splitField, value: input.valueA }] : [{ grouping: input.splitField, value: input.valueA }];
-      const sideB = hasScope ? [{ grouping: input.scopeGrouping, value: input.scopeValue }, { grouping: input.splitField, value: input.valueB }] : [{ grouping: input.splitField, value: input.valueB }];
-      const A = app.ctx.cellsOfCategories(sideA), B = app.ctx.cellsOfCategories(sideB);
-      if (!A.length || !B.length) return `no cells for ${input.valueA}/${input.valueB}${hasScope ? " within " + input.scopeValue : ""} (${A.length} vs ${B.length}) — check the values exist in ${input.splitField}`;
-      const { ranked, panel } = await app.ctx.view.subsampleDE(Array.from(A), Array.from(B));
-      const rows = ranked.slice(0, 200).map((r: any) => ({ gene: r.gene, symbol: r.symbol, lfc: r.lfc, meanA: r.meanA, meanB: r.meanB }));
-      const title = hasScope ? `Residual batch · ${input.scopeValue}` : `DE · ${input.valueA} vs ${input.valueB}`;
-      const spec: any = { type: "DeTable", title, cap: `${input.valueA} vs ${input.valueB}${hasScope ? " · within " + input.scopeValue : ""}${panel ? " · panel" : " · approx"}`, bind: hasScope ? "de:between:scoped" : "de:between", aLabel: input.valueA, bLabel: input.valueB, rows };
-      if (input.toCanvas) app.addPanel(spec); else ag.addRail(spec);
-      const up = rows.filter((r: any) => r.lfc > 0).slice(0, 6).map((r: any) => r.symbol).join(", ");
-      const dn = rows.filter((r: any) => r.lfc < 0).slice(0, 6).map((r: any) => r.symbol).join(", ");
-      return `DE ${input.valueA} (${A.length}) vs ${input.valueB} (${B.length})${hasScope ? " within " + input.scopeValue : ""}, compared directly. Higher in ${input.valueA}: ${up || "—"}. Higher in ${input.valueB}: ${dn || "—"}.${hasScope ? " Ribosomal (RPS/RPL) or MT- among the splitters = residual batch, not biology." : ""}`;
-    }
     case "concordance_panel": {
       const mm = await app.ctx.markers(input.scopeGrouping);
       const genes = (mm.get(input.scopeValue) || []).slice(0, 12).map((m: any) => m.symbol);
@@ -219,8 +175,7 @@ function toolLabel(tu: any): string {
     return bits.join(" · ") || "update view";
   }
   if (tu.name === "get_markers") return `markers · ${i.cluster}`;
-  if (tu.name === "get_overdispersed_genes") return `overdispersed genes`;
-  if (tu.name === "de_between") return `DE · ${i.valueA} vs ${i.valueB}`;
+  if (tu.name === "compute") return i.stat === "overdispersion" ? "overdispersion" : "DE (compute)";
   if (tu.name === "concordance_panel") return `concordance · ${i.scopeValue}`;
   if (tu.name === "propose_workspace") return `propose workspace · ${i.name}`;
   return tu.name.replace(/_/g, " ");

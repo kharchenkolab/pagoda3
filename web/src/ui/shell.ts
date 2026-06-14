@@ -6,6 +6,7 @@ import { EmbeddingView } from "../render/embedding.ts";
 import { Agent, Scope, REGISTRY } from "../agent/agent.ts";
 import { checkLive } from "../agent/live.ts";
 import { normalizeViewPatch, RawViewPatch, World, PanelSpec, PanelPatch } from "../agent/viewpatch.ts";
+import { validateCellSet, resolveCellSet, describeCellSet, CellSet, CellWorld, CellEnv } from "../agent/cellset.ts";
 
 interface Checkpoint { i: number; q: string; why: string; state: any; kind?: "ask" | "act"; exchange?: { kind: string; entries?: any[]; turns?: any[] }; }
 interface WS { colorBy: string; panels: Partial<Panel>[]; }
@@ -298,6 +299,43 @@ export class App {
   private patchToModel(patch: PanelPatch) {
     return { title: patch.title, colorBy: patch.colorBy, embedding: patch.embedding, heatMode: patch.heatMode, genes: patch.genes,
       scope: patch.scope === undefined ? undefined : (patch.scope === null ? null : { kind: "category", grouping: patch.scope.grouping, value: patch.scope.value } as EntityRef) };
+  }
+
+  // ----- compute primitive: a statistic over CELL-SET expressions (the "what to derive" narrow waist) -----
+  // de(A, B=complement(A)) or overdispersion(A). A/B are CellSet exprs (category/selection/focus/all + boolean
+  // ops), so the agent can test ANY set it can describe — not just the pre-baked selection-vs-rest etc. Binds
+  // the result to the rail (or canvas with toCanvas) and returns a summary / error for the agent.
+  async runCompute(input: { stat?: string; A?: CellSet; B?: CellSet; toCanvas?: boolean; title?: string }): Promise<{ ok?: string; error?: string }> {
+    const ctx = this.ctx;
+    if (input.stat !== "de" && input.stat !== "overdispersion") return { error: `unknown stat "${input.stat}" — use "de" or "overdispersion"` };
+    if (!input.A) return { error: "A (a cell set) is required" };
+    const world: CellWorld = { categoricals: ctx.categoricalFields(), valuesOf: (f) => ctx.categoricalValues(f), hasSelection: ctx.selectedCells().length > 0, hasFocus: !!ctx.coord.state.focus };
+    const eA = validateCellSet(input.A, world, "A"); if (eA) return { error: eA };
+    const Bexpr: CellSet | undefined = input.stat === "de" ? (input.B ?? ({ complement: input.A } as CellSet)) : undefined;
+    if (Bexpr) { const eB = validateCellSet(Bexpr, world, "B"); if (eB) return { error: eB }; }
+    const env: CellEnv = { n: ctx.n, category: (g, v) => ctx.cellsOfCategory(g, v), selection: () => ctx.selectedCells(), focus: () => { const f = ctx.coord.state.focus; return f ? ctx.cellsOfCategory(f.dim, f.value) : []; } };
+    const Aids = [...resolveCellSet(input.A, env)];
+    if (!Aids.length) return { error: `A (${describeCellSet(input.A)}) resolves to no cells` };
+    await ctx.view.genes();
+    const place = (spec: Partial<Panel>) => { if (input.toCanvas) this.addPanel(spec); else this.agent.addRail(spec); };
+
+    if (input.stat === "overdispersion") {
+      const hv = await ctx.view.overdispersedGenes(Aids, 100);
+      if (!hv.length) return { error: "no overdispersion (store has no cell-major counts panel)" };
+      const label = describeCellSet(input.A);
+      place({ type: "GeneList", title: input.title || `Variable genes · ${label}`, cap: "overdispersion", bind: "hvg:scope", rows: hv.map((h) => ({ symbol: h.symbol, score: h.resid })) });
+      return { ok: `top variable genes in ${label} (${Aids.length} cells), recomputed for this scope: ${hv.slice(0, 10).map((h) => h.symbol).join(", ")}` };
+    }
+    // de
+    const Bids = [...resolveCellSet(Bexpr!, env)];
+    if (!Bids.length) return { error: `B (${describeCellSet(Bexpr!)}) resolves to no cells` };
+    const { ranked, panel } = await ctx.view.subsampleDE(Aids, Bids);
+    const rows = ranked.slice(0, 200).map((r: any) => ({ gene: r.gene, symbol: r.symbol, lfc: r.lfc, meanA: r.meanA, meanB: r.meanB }));
+    const aL = describeCellSet(input.A), bL = input.B ? describeCellSet(Bexpr!) : "rest";
+    place({ type: "DeTable", title: input.title || `DE · ${aL} vs ${bL}`, cap: `${aL} vs ${bL}${panel ? " · panel" : " · approx"}`, bind: "de:between", aLabel: aL, bLabel: bL, rows });
+    const up = rows.filter((r: any) => r.lfc > 0).slice(0, 6).map((r: any) => r.symbol).join(", ");
+    const dn = rows.filter((r: any) => r.lfc < 0).slice(0, 6).map((r: any) => r.symbol).join(", ");
+    return { ok: `DE ${aL} (${Aids.length}) vs ${bL} (${Bids.length}), compared directly. Higher in ${aL}: ${up || "—"}. Higher in ${bL}: ${dn || "—"}.` };
   }
 
   // "Recolour everything" — a gene click or the agent's set_color. Clears per-panel colour overrides so the
