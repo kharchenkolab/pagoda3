@@ -218,15 +218,16 @@ export class App {
   // Deep per-panel view control — the agent's configure_panel verb (and the path the per-panel UI will use).
   // Merges a view patch into ONE panel's spec and repaints in place; other panels untouched. A per-panel
   // override wins over the global coord default AND over the agent's set_color (explicit/user authority).
-  configurePanel(panelId: number, patch: Partial<PanelView> & { heatMode?: "heat" | "dot" }) {
+  configurePanel(panelId: number, patch: Partial<PanelView> & { heatMode?: "heat" | "dot"; genes?: string[] }) {
     const p = this.canvas.find((z) => z.id === panelId) || this.rail.find((z) => z.id === panelId);
     if (!p) return;
-    const { heatMode, ...view } = patch;   // heatMode is a top-level panel field (heat/dot), not part of the view
-    // swapping an embedding, restacking a non-embedding panel (composition grouping), or flipping the heatmap
-    // representation needs a body rebuild; an embedding recolour/scope is a cheap repaint.
-    const rebuild = ("embedding" in view && view.embedding !== p.view?.embedding) || (p.type !== "Embedding" && "colorBy" in view) || (heatMode != null && heatMode !== p.heatMode);
+    const { heatMode, genes, ...view } = patch;   // heatMode + genes are top-level panel fields, not part of the view
+    // swapping an embedding, restacking a non-embedding panel (composition grouping), flipping the heatmap
+    // representation, or pinning genes needs a body rebuild; an embedding recolour/scope is a cheap repaint.
+    const rebuild = ("embedding" in view && view.embedding !== p.view?.embedding) || (p.type !== "Embedding" && "colorBy" in view) || (heatMode != null && heatMode !== p.heatMode) || genes != null;
     if (typeof view.colorBy === "string") this.noteColor(view.colorBy);
     if (heatMode != null) p.heatMode = heatMode;
+    if (genes != null) p.genes = genes;
     p.view = { ...p.view, ...view };
     if (rebuild) this.fullRender(); else { this.repaint(); this.syncColorSelects(); this.syncToggles(); }   // keep every control in step
   }
@@ -269,7 +270,7 @@ export class App {
     return cv;
   }
 
-  newPanel(p: Partial<Panel>): Panel { return { id: ++this.uid, type: p.type!, title: p.title || p.type!, cap: p.cap, full: p.full, bind: p.bind, text: p.text, q: p.q, group: p.group, gene: p.gene, aLabel: p.aLabel, bLabel: p.bLabel, heatMode: p.heatMode, view: p.view, split: p.split, rows: p.rows }; }
+  newPanel(p: Partial<Panel>): Panel { return { id: ++this.uid, type: p.type!, title: p.title || p.type!, cap: p.cap, full: p.full, bind: p.bind, text: p.text, q: p.q, group: p.group, gene: p.gene, aLabel: p.aLabel, bLabel: p.bLabel, heatMode: p.heatMode, genes: p.genes, view: p.view, split: p.split, rows: p.rows }; }
 
   // Add a configured panel to the canvas — the composition atom (the agent's add_panel). Additive and
   // checkpointed (so it's non-disorienting and reversible); returns the new id so it can be configure_panel'd.
@@ -330,7 +331,7 @@ export class App {
     if (user) { this.toast("Switched to " + name, "A workspace is a named, reversible layout — your previous one is a step back in History."); this.checkpoint("workspace → " + name, "Deliberate workspace switch."); }
   }
 
-  captureLayout(): Partial<Panel>[] { return this.canvas.map((p) => ({ type: p.type, title: p.title, cap: p.cap, full: p.full, bind: p.bind, group: p.group, gene: p.gene, heatMode: p.heatMode })); }
+  captureLayout(): Partial<Panel>[] { return this.canvas.map((p) => ({ type: p.type, title: p.title, cap: p.cap, full: p.full, bind: p.bind, group: p.group, gene: p.gene, heatMode: p.heatMode, genes: p.genes })); }
   startSaveWS() {
     const t = this.$("wstabs"); const inp = document.createElement("input"); inp.className = "wsinput"; inp.placeholder = "name workspace…"; t.appendChild(inp); inp.focus();
     let done = false; const commit = (ok: boolean) => { if (done) return; done = true; const name = inp.value.trim(); if (ok && name && !this.WS[name]) { this.WS[name] = { colorBy: this.coord.state.colorBy, panels: this.captureLayout() }; this.wsOrder.push(name); this.currentWS = name; this.renderWS(); this.checkpoint("save workspace · " + name, "You saved your current layout as a named workspace."); this.toast("Saved workspace “" + name + "”", null); } else this.renderWS(); };

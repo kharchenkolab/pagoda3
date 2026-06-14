@@ -19,6 +19,7 @@ export interface Panel {
   bind?: string; text?: string; q?: string; group?: string; gene?: string;
   aLabel?: string; bLabel?: string;   // DE mean-column headers (the two groups being contrasted)
   heatMode?: "heat" | "dot";          // Heatmap panel: colour grid vs dotplot (size = % expressing)
+  genes?: string[];                   // Heatmap: extra genes pinned in beyond the precomputed markers (highlighted)
   view?: PanelView;
   split?: { levels: string[]; genes: string[]; means: number[][] };   // gene × donor concordance matrix (SplitHeat)
   rows?: { gene?: number; symbol: string; lfc?: number; padj?: number; score?: number; meanA?: number; meanB?: number }[];
@@ -308,8 +309,14 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
   const gs = await ctx.groupStatsCached(grouping);
   const markers = await ctx.markers(grouping);
   // top 3 genes per group, unique
-  const seen = new Set<number>(); const rows: { gene: number; symbol: string }[] = [];
-  for (const grp of gs.groups) for (const m of (markers.get(grp) || []).slice(0, 3)) if (!seen.has(m.gene)) { seen.add(m.gene); rows.push({ gene: m.gene, symbol: m.symbol }); }
+  const seen = new Set<number>(); const markerRows: { gene: number; symbol: string; pinned?: boolean }[] = [];
+  for (const grp of gs.groups) for (const m of (markers.get(grp) || []).slice(0, 3)) if (!seen.has(m.gene)) { seen.add(m.gene); markerRows.push({ gene: m.gene, symbol: m.symbol }); }
+  // pinned custom genes (agent/user added) — resolved to indices, placed FIRST and highlighted; any marker dup is folded in.
+  const pinnedRows: { gene: number; symbol: string; pinned?: boolean }[] = []; const pinnedSet = new Set<number>();
+  if (p.genes?.length) { await ctx.view.genes();
+    for (const sym of p.genes) { const gi = await ctx.view.geneCol(sym); if (gi == null || pinnedSet.has(gi)) continue; pinnedSet.add(gi); pinnedRows.push({ gene: gi, symbol: sym, pinned: true }); } }
+  const rows = [...pinnedRows, ...markerRows.filter((r) => !pinnedSet.has(r.gene))];
+  const nPinned = pinnedRows.length;
   const G = gs.groups.length, R = rows.length, x0 = 70, y0 = 6, axisH = 16;
   const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
   let mode: "heat" | "dot" = p.heatMode === "dot" ? "dot" : "heat";   // colour grid vs dotplot (size = % expressing)
@@ -339,6 +346,7 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
     let g = "";
     const maxR = Math.max(1.4, Math.min(cw, ch) / 2 - 1.2);   // dot radius at 100% expressing
     rows.forEach((r, ri) => {
+      if (r.pinned) g += `<rect x="${x0.toFixed(1)}" y="${(y0 + ri * ch).toFixed(2)}" width="${(G * cw).toFixed(1)}" height="${(ch - 0.5).toFixed(2)}" fill="rgba(92,200,255,.12)" pointer-events="none"/>`;
       let mx = 1e-6; for (let c = 0; c < G; c++) mx = Math.max(mx, gs.mean[c * gs.nGenes + r.gene]);
       for (let c = 0; c < G; c++) { const t = Math.min(1, gs.mean[c * gs.nGenes + r.gene] / mx);
         if (mode === "dot") { const fr = gs.frac[c * gs.nGenes + r.gene]; const rad = Math.max(0.5, Math.sqrt(fr) * maxR);   // area ∝ fraction expressing
@@ -346,8 +354,9 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
           g += `<circle cx="${(x0 + c * cw + cw / 2).toFixed(2)}" cy="${(y0 + ri * ch + ch / 2).toFixed(2)}" r="${rad.toFixed(2)}" fill="${ramp(t)}" pointer-events="none"/>`;
           g += `<rect class="hcell" data-ri="${ri}" data-c="${c}" x="${(x0 + c * cw).toFixed(2)}" y="${(y0 + ri * ch).toFixed(2)}" width="${(cw - 0.5).toFixed(2)}" height="${(ch - 0.5).toFixed(2)}" fill="transparent" pointer-events="all"/>`; }
         else g += `<rect class="hcell" data-ri="${ri}" data-c="${c}" x="${(x0 + c * cw).toFixed(2)}" y="${(y0 + ri * ch).toFixed(2)}" width="${(cw - 0.5).toFixed(2)}" height="${(ch - 0.5).toFixed(2)}" fill="${ramp(t)}"/>`; }
-      g += `<text class="axis hgene" data-ri="${ri}" x="${x0 - 4}" y="${(y0 + ri * ch + ch * 0.72).toFixed(1)}" text-anchor="end">${esc(r.symbol)}</text>`;
+      g += `<text class="axis hgene" data-ri="${ri}" x="${x0 - 4}" y="${(y0 + ri * ch + ch * 0.72).toFixed(1)}" text-anchor="end"${r.pinned ? ' style="fill:var(--cyan);font-weight:600"' : ""}>${r.pinned ? "● " : ""}${esc(r.symbol)}</text>`;
     });
+    if (nPinned > 0 && nPinned < R) g += `<line x1="${x0.toFixed(1)}" y1="${(y0 + nPinned * ch).toFixed(1)}" x2="${(x0 + G * cw).toFixed(1)}" y2="${(y0 + nPinned * ch).toFixed(1)}" stroke="var(--cyan)" stroke-opacity="0.4" stroke-width="0.6"/>`;
     gs.groups.forEach((grp, c) => { g += `<text class="axis hgrp" data-c="${c}" x="${(x0 + c * cw + cw / 2).toFixed(1)}" y="${(y0 + R * ch + 11).toFixed(1)}" text-anchor="middle">${esc(grp)}</text>`; });
     g += `<rect class="hrowg" x="${x0}" width="${(G * cw).toFixed(1)}" height="${ch.toFixed(1)}" fill="rgba(150,225,255,.14)" pointer-events="none" style="display:none"/>`;
     g += `<rect class="hcolg" y="${y0}" width="${cw.toFixed(1)}" height="${(R * ch).toFixed(1)}" fill="rgba(150,225,255,.14)" pointer-events="none" style="display:none"/>`;
