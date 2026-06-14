@@ -17,6 +17,7 @@ export interface PanelView {
 export interface Panel {
   id: number; type: string; title: string; cap?: string; full?: boolean;
   bind?: string; text?: string; q?: string; group?: string; gene?: string;
+  aLabel?: string; bLabel?: string;   // DE mean-column headers (the two groups being contrasted)
   view?: PanelView;
   split?: { levels: string[]; genes: string[]; means: number[][] };   // gene × donor concordance matrix (SplitHeat)
   rows?: { gene?: number; symbol: string; lfc?: number; padj?: number; score?: number; meanA?: number; meanB?: number }[];
@@ -149,12 +150,21 @@ function geneTable(rows: any[], cols: GCol[], onPick: (symbol: string) => void):
 // Subsample DE is fold-change RANKING (no p-value by design — see the caveat), so we show the real effect
 // size (logFC = Δ mean log1p) and each side's mean expression — never a fabricated p.adj.
 function deBody(p: Panel, _ctx: Ctx, hooks: PanelHooks): BuiltBody {
-  return geneTable(p.rows || [], [
-    { key: "symbol", label: "gene", get: (r) => r.symbol },
-    { key: "lfc", label: "logFC", num: true, get: (r) => r.lfc ?? 0, fmt: (v) => (v > 0 ? "+" : "") + v.toFixed(2), cls: (v) => (v > 0 ? "up" : "dn") },
-    { key: "meanA", label: "A", num: true, get: (r) => r.meanA ?? 0, fmt: (v) => v.toFixed(2) },
-    { key: "meanB", label: "B", num: true, get: (r) => r.meanB ?? 0, fmt: (v) => v.toFixed(2) },
-  ], hooks.onGeneClick);
+  const rows = p.rows || [];
+  // Two row shapes share this table: a true two-group DE carries per-group means (A/B); a marker table
+  // (one group vs rest) carries only logFC. Show the mean columns ONLY when they exist — otherwise the
+  // table renders misleading 0.00s for genes whose logFC is plainly non-zero.
+  const hasMeans = rows.some((r) => r.meanA != null || r.meanB != null);
+  const short = (s: string) => (s.length > 11 ? s.slice(0, 10) + "…" : s);
+  const cols: any[] = [
+    { key: "symbol", label: "gene", get: (r: any) => r.symbol },
+    { key: "lfc", label: "logFC", num: true, get: (r: any) => r.lfc ?? 0, fmt: (v: number) => (v > 0 ? "+" : "") + v.toFixed(2), cls: (v: number) => (v > 0 ? "up" : "dn") },
+  ];
+  if (hasMeans) {
+    cols.push({ key: "meanA", label: p.aLabel ? short(p.aLabel) : "A", num: true, get: (r: any) => r.meanA ?? 0, fmt: (v: number) => v.toFixed(2) });
+    cols.push({ key: "meanB", label: p.bLabel ? short(p.bLabel) : "B", num: true, get: (r: any) => r.meanB ?? 0, fmt: (v: number) => v.toFixed(2) });
+  }
+  return geneTable(rows, cols, hooks.onGeneClick);
 }
 
 // A ranked gene list with a single score column (e.g. scope-aware overdispersion).
