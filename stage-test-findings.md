@@ -94,3 +94,22 @@ park questionable calls for review.
   genes (IFITM3, IFI27, ISG15…) — meaningful for COVID monocytes.
 - M3: agent compute_code cytotoxicity signature (mean of GZMB/PRF1/GNLY/NKG7) → embedding recolours via
   code: handle, lights up NK/CD8; caveat conveyed in the agent reply ("unvalidated-custom-code caveat").
+
+### Scenario 6 — Conversation (clarify / continuity) — ALL PASS, no fixes
+- V2 continuity: "colour by CD3E" then "now do the same for MS4A1" → correctly recolours by MS4A1
+  (understood "the same" = recolour) using prior context.
+- V1 clarify: ambiguous "Compare them." → agent asked a clarifying question (inferred CD3E vs MS4A1 from
+  context, proposed side-by-side, asked to confirm), did NOT guess (view unchanged, no tool call).
+- Conversation renders as clickable exchange cards in the history strip (screenshot). Awaiting-reply cue
+  code-verified (renderDockedConvo: `.awaiting` foot + "↳ the agent asked you something — reply below" +
+  focused reply input when the last response ends with "?"); fires only in the docked Ask panel.
+
+### Scenario 7 — Persistence / honesty / stress — ALL PASS, no fixes
+- W1: edited Markers (added CompositionBars + embedding colorBy=gene:GNLY), switched to Overview and
+  back → restored exactly (panels + colorBy). (Display state is global — parked above.)
+- H1: "colour by IL17A" (not in dataset) → "IL17A isn't present in this dataset, so I can't colour by
+  it — want a related Th17 gene (IL17F, RORC, CCR6)?" Honest, view unchanged, offers alternatives.
+- H2: "3D rotating UMAP + Sankey of cell flow over time" → graceful refusal explaining why (2D-only, no
+  Sankey primitive, cells not tracked across day0→day7 so flow is undefined) + offered faceting. No crash.
+- S1 stress: 7 rapid workspace switches (120ms apart, faster than render) → no duplicated/orphaned panels,
+  DOM matches model exactly. The renderToken reentrancy guard holds.
