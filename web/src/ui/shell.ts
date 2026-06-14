@@ -136,6 +136,7 @@ export class App {
     wb.innerHTML = "";
     const afters: (() => void)[] = [];
     for (const p of this.canvas) { const { dom, afterAttach } = await this.panelEl(p); wb.appendChild(dom); if (afterAttach) afters.push(afterAttach); }
+    this.layoutCanvas(wb);   // place panels into two columns (row-major by default; per-panel col pins override)
     // FLIP for surviving panels
     wb.querySelectorAll<HTMLElement>(".panel[data-pid]").forEach((el) => {
       const o = old[el.dataset.pid!]; if (!o) return; const n = el.getBoundingClientRect(); const dx = o.left - n.left, dy = o.top - n.top; if (!dx && !dy) return;
@@ -213,16 +214,43 @@ export class App {
     h.addEventListener("dragend", () => { (this as any)._drag = null; d.classList.remove("dragging"); document.querySelectorAll(".panel.dragover").forEach((x) => x.classList.remove("dragover")); });
     d.addEventListener("dragover", (e) => { const dr = (this as any)._drag; if (dr != null && dr !== p.id) { e.preventDefault(); d.classList.add("dragover"); } });
     d.addEventListener("dragleave", () => d.classList.remove("dragover"));
-    d.addEventListener("drop", (e) => { e.preventDefault(); d.classList.remove("dragover"); this.reorder((this as any)._drag, p.id); });
+    d.addEventListener("drop", (e) => { e.preventDefault(); d.classList.remove("dragover");
+      const r = d.getBoundingClientRect(); const after = (e as DragEvent).clientY > r.top + r.height / 2;   // lower half → drop UNDER the target
+      const col = d.dataset.col === "1" ? 1 : d.dataset.col === "0" ? 0 : undefined;                          // join the target's column
+      this.reorderTo((this as any)._drag, p.id, after, col); });
     d.oncontextmenu = (e) => { e.preventDefault(); this.openCtx(e.clientX, e.clientY, p); };
     return { dom: d, afterAttach: built.afterAttach };
   }
 
-  reorder(fromId: number, toId: number) {
+  // Place the canvas into a two-column grid. Default is row-major (panel i → column i%2); a panel's `col` pins it
+  // to a column, so you can stack two panels in one column (e.g. 3 panels = 1 left + 2 right). The shorter
+  // column's last panel spans the leftover rows so there's never an empty hole. `full` panels span both columns.
+  layoutCanvas(wb: HTMLElement) {
+    let rowL = 1, rowR = 1, k = 0; let lastLeft: HTMLElement | null = null, lastRight: HTMLElement | null = null;
+    const lone = this.canvas.length === 1;
+    for (const p of this.canvas) {
+      const el = wb.querySelector<HTMLElement>(`.panel[data-pid="${p.id}"]`); if (!el) continue;
+      if (p.full || lone) { const r = Math.max(rowL, rowR); el.style.gridColumn = "1 / -1"; el.style.gridRow = String(r); delete el.dataset.col; rowL = rowR = r + 1; lastLeft = lastRight = null; continue; }
+      const col = p.col === 0 || p.col === 1 ? p.col : k % 2; k++;
+      if (col === 0) { el.style.gridColumn = "1"; el.style.gridRow = String(rowL++); el.dataset.col = "0"; lastLeft = el; }
+      else { el.style.gridColumn = "2"; el.style.gridRow = String(rowR++); el.dataset.col = "1"; lastRight = el; }
+    }
+    const maxRow = Math.max(rowL, rowR) - 1;
+    if (lastLeft && rowL - 1 < maxRow) lastLeft.style.gridRow = lastLeft.style.gridRow + " / " + (maxRow + 1);
+    if (lastRight && rowR - 1 < maxRow) lastRight.style.gridRow = lastRight.style.gridRow + " / " + (maxRow + 1);
+  }
+
+  // Move a dragged panel next to a target, into the target's column (so you can drop a panel UNDER another to
+  // stack it in that column). `after` = dropped on the lower half of the target.
+  reorderTo(fromId: number, toId: number, after: boolean, col?: 0 | 1) {
     if (fromId == null || fromId === toId) return;
-    const from = this.canvas.findIndex((z) => z.id === fromId), to = this.canvas.findIndex((z) => z.id === toId);
-    if (from < 0 || to < 0) return; const [m] = this.canvas.splice(from, 1); this.canvas.splice(to, 0, m);
-    this.fullRender(); this.checkpoint("reorder · " + m.title, "You dragged a panel — direct edits to your own layout always win.");
+    const from = this.canvas.findIndex((z) => z.id === fromId); if (from < 0) return;
+    const [m] = this.canvas.splice(from, 1);
+    if (col === 0 || col === 1) m.col = col;
+    let to = this.canvas.findIndex((z) => z.id === toId); if (to < 0) to = this.canvas.length;
+    if (after) to++;
+    this.canvas.splice(to, 0, m);
+    this.fullRender(); this.checkpoint("move · " + m.title, "You dragged a panel — direct edits to your own layout always win.");
   }
 
   async repaint() {
@@ -432,7 +460,7 @@ export class App {
     return cv;
   }
 
-  newPanel(p: Partial<Panel>): Panel { return { id: ++this.uid, type: p.type!, title: p.title || p.type!, cap: p.cap, full: p.full, bind: p.bind, text: p.text, q: p.q, group: p.group, gene: p.gene, aLabel: p.aLabel, bLabel: p.bLabel, heatMode: p.heatMode, genes: p.genes, view: p.view, split: p.split, rows: p.rows }; }
+  newPanel(p: Partial<Panel>): Panel { return { id: ++this.uid, type: p.type!, title: p.title || p.type!, cap: p.cap, full: p.full, col: p.col, bind: p.bind, text: p.text, q: p.q, group: p.group, gene: p.gene, aLabel: p.aLabel, bLabel: p.bLabel, heatMode: p.heatMode, genes: p.genes, view: p.view, split: p.split, rows: p.rows }; }
 
   // Add a configured panel to the canvas — the composition atom (the agent's add_panel). Additive and
   // checkpointed (so it's non-disorienting and reversible); returns the new id so it can be configure_panel'd.
@@ -493,7 +521,7 @@ export class App {
     if (user) { this.toast("Switched to " + name, "A workspace is a named, reversible layout — your previous one is a step back in History."); this.checkpoint("workspace → " + name, "Deliberate workspace switch."); }
   }
 
-  captureLayout(): Partial<Panel>[] { return this.canvas.map((p) => ({ type: p.type, title: p.title, cap: p.cap, full: p.full, bind: p.bind, group: p.group, gene: p.gene, heatMode: p.heatMode, genes: p.genes })); }
+  captureLayout(): Partial<Panel>[] { return this.canvas.map((p) => ({ type: p.type, title: p.title, cap: p.cap, full: p.full, col: p.col, bind: p.bind, group: p.group, gene: p.gene, heatMode: p.heatMode, genes: p.genes })); }
   startSaveWS() {
     const t = this.$("wstabs"); const inp = document.createElement("input"); inp.className = "wsinput"; inp.placeholder = "name workspace…"; t.appendChild(inp); inp.focus();
     let done = false; const commit = (ok: boolean) => { if (done) return; done = true; const name = inp.value.trim(); if (ok && name && !this.WS[name]) { this.WS[name] = { colorBy: this.coord.state.colorBy, panels: this.captureLayout() }; this.wsOrder.push(name); this.currentWS = name; this.renderWS(); this.checkpoint("save workspace · " + name, "You saved your current layout as a named workspace."); this.toast("Saved workspace “" + name + "”", null); } else this.renderWS(); };
