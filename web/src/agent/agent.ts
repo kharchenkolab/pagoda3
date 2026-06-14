@@ -51,7 +51,7 @@ export class Agent {
   }
   async coordinateGene(sym: string) {
     if ((await this.ctx.view.geneCol(sym)) === undefined) return this.app.toast(`No expression layer for ${sym}`, null);
-    this.setColorVerb(`gene:${sym}`, `Clicked ${sym}`, "A click on a result is the cheapest request — it moved the shared colour scope, so every embedding recoloured in place.");
+    this.setColorVerb(`gene:${sym}`, `Clicked ${sym}`, "");
   }
 
   addRail(p: Partial<Panel>, q?: string) { const panel = this.app.newPanel({ ...p, q }); this.app.rail.unshift(panel); this.app.renderRail(); return panel; }
@@ -169,14 +169,47 @@ export class Agent {
     const host = this.app.$("convo"); host.classList.add("open"); host.innerHTML = "";
     const hd = mk("div", "convohd"); hd.appendChild(mk("span", "t", "CONVERSATION · PINNED")); const x = mk("span", "x", "⇤"); x.onclick = () => this.setThreadDock(false); hd.appendChild(x); host.appendChild(hd);
     const body = mk("div", "convobody");
-    for (const h of this.app.history) { const e = mk("div", "cxentry"); e.innerHTML = `<div class="cxq">${h.q}</div>${h.why ? `<div class="cxw">${h.why.replace(/<[^>]+>/g, "")}</div>` : ""}`; body.appendChild(e); }
+    for (const h of this.app.history as any[]) {
+      if (h.exchange) body.appendChild(this.exchangeCard(h));
+      else { const a = mk("div", "cxact"); a.innerHTML = `<span class="d">·</span><span class="l">${h.q}</span>`; if (h.why) a.title = h.why.replace(/<[^>]+>/g, ""); body.appendChild(a); }
+    }
     if (this.app.thread) { const lb = mk("div", "convolive"); this.appendThreadGuts(lb); body.appendChild(lb); }
     host.appendChild(body);
     const foot = mk("div", "convofoot"); const inp = document.createElement("input"); inp.placeholder = "Message the agent…"; inp.onkeydown = (e) => { if (e.key === "Enter" && inp.value.trim()) { const v = inp.value.trim(); inp.value = ""; this.dockSend(v); } }; foot.appendChild(inp); host.appendChild(foot); body.scrollTop = body.scrollHeight;
   }
+  // a past user↔agent exchange, collapsed to question + answer, click to expand the full trace
+  exchangeCard(h: any) {
+    const ex = h.exchange || {}; const entries: any[] = ex.entries || []; const turns: any[] = ex.turns || [];
+    const userText = entries.find((e) => e.role === "user")?.text || turns.find((t) => t.role === "user")?.text || h.q;
+    const answer = h.why || [...entries, ...turns].reverse().find((e) => e.role === "agent" && e.text)?.text || "Done.";
+    const steps = entries.filter((e) => e.tool);
+    const card = mk("div", "cxex");
+    const head = mk("div", "cxhead"); head.innerHTML = `<span class="ava">me</span><div class="q">${userText}</div><span class="caret">▸</span>`; card.appendChild(head);
+    const sum = mk("div", "cxsum"); sum.innerHTML = `<span class="ava">✦</span><div class="ans">${answer}</div>`; card.appendChild(sum);
+    if (steps.length) card.appendChild(mk("div", "cxmeta", `${steps.length} step${steps.length > 1 ? "s" : ""} · click to expand`));
+    const det = mk("div", "cxdetail"); let skippedFirstUser = false;
+    for (const e of entries) {
+      if (e.tool) { const m = e.status === "done" ? "✓" : "◐"; const d = mk("div", "step " + (e.status || "done")); d.innerHTML = `<span class="mk">${m}</span><div><div>${e.label || e.tool}</div>${e.detail ? `<div class="sd">${e.detail}</div>` : ""}</div>`; det.appendChild(d); }
+      else if (e.text) { if (e.role === "user" && !skippedFirstUser) { skippedFirstUser = true; continue; } const d = mk("div", "turn " + e.role); d.innerHTML = `<span class="ava">${e.role === "user" ? "me" : "✦"}</span><div class="msg">${e.text}</div>`; det.appendChild(d); }
+    }
+    for (const t of turns) { if (!t.text) continue; if (t.role === "user" && !skippedFirstUser) { skippedFirstUser = true; continue; } const d = mk("div", "turn " + t.role); d.innerHTML = `<span class="ava">${t.role === "user" ? "me" : "✦"}</span><div class="msg">${t.text}</div>`; det.appendChild(d); }
+    card.appendChild(det);
+    head.onclick = () => card.classList.toggle("exp");
+    return card;
+  }
   dockSend(text: string) { const t = this.app.thread; const last = t?.turns?.[t.turns.length - 1]; if (t && t.kind === "dialogue" && last?.role === "agent" && last.replies?.length) this.threadReply(text); else this.ask(text); }
   setThreadDock(on: boolean) { this.app.threadDocked = on; const b = this.app.$("dockBtn"); b.textContent = on ? "⇤ undock" : "⇥ dock chat"; if (on) { this.renderThread(); this.app.toast("Conversation pinned open", "An always-on transcript — the same timeline rendered as a thread. The default stays collapsed."); } else { this.app.$("convo").classList.remove("open"); this.app.$("convo").innerHTML = ""; this.renderThread(); this.app.toast("Conversation unpinned", null); } }
-  settleThread(label: string | null, why?: string) { this.app.thread = null; this.renderThread(); if (label) this.app.checkpoint(label, why || ""); }
+  settleThread(label: string | null, why?: string) {
+    const t = this.app.thread;
+    let exchange: any;
+    if (t) {
+      const entries = t.entries ? t.entries.map((e: any) => ({ role: e.role, text: e.text, tool: e.tool, label: e.label, status: e.status, detail: e.detail })) : undefined;
+      const turns = t.turns ? t.turns.map((tn: any) => ({ role: tn.role, text: tn.text })) : undefined;
+      if ((entries && entries.length) || (turns && turns.length)) exchange = { kind: t.kind, entries, turns };
+    }
+    this.app.thread = null; this.renderThread();
+    if (label) this.app.checkpoint(label, why || "", { kind: exchange ? "ask" : "act", exchange });
+  }
 
   // mode 3 — dialogue (cacoa methodological reasoning)
   startDialogue(q: string) {

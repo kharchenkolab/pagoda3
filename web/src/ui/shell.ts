@@ -6,7 +6,7 @@ import { EmbeddingView } from "../render/embedding.ts";
 import { Agent, Scope } from "../agent/agent.ts";
 import { checkLive } from "../agent/live.ts";
 
-interface Checkpoint { i: number; q: string; why: string; state: any; }
+interface Checkpoint { i: number; q: string; why: string; state: any; kind?: "ask" | "act"; exchange?: { kind: string; entries?: any[]; turns?: any[] }; }
 interface WS { colorBy: string; panels: Partial<Panel>[]; }
 
 const COLOR_OPTS: [string, string][] = [
@@ -345,7 +345,7 @@ export class App {
 
   // ---------- checkpoints ----------
   snap() { return { colorBy: this.coord.state.colorBy, focus: this.coord.state.focus, ws: this.currentWS, canvas: JSON.parse(JSON.stringify(this.canvas)), rail: JSON.parse(JSON.stringify(this.rail)) }; }
-  checkpoint(q: string, why: string) { this.history.push({ i: this.history.length, q, why, state: this.snap() }); this.viewing = -1; this.renderSpine(); if (this.threadDocked) this.renderThread(); }
+  checkpoint(q: string, why: string, opts?: { kind?: "ask" | "act"; exchange?: any }) { this.history.push({ i: this.history.length, q, why, state: this.snap(), kind: opts?.kind || "act", exchange: opts?.exchange }); this.viewing = -1; this.renderSpine(); if (this.threadDocked) this.renderThread(); }
   renderSpine() {
     const c = this.$("ckpts"); c.innerHTML = "";
     this.history.forEach((h) => { const d = mk("div", "ckpt" + (h.i === this.viewing ? " on" : "")); d.title = h.why || ""; d.innerHTML = `<div class="cq">${h.q}</div><div class="cw">${h.why ? h.why.replace(/<[^>]+>/g, "") : ""}</div>`; d.onclick = () => this.restore(h.i); c.appendChild(d); });
