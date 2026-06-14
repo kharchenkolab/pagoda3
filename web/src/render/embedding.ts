@@ -199,7 +199,7 @@ export class EmbeddingView {
       const p = rectOf(e); const x = Math.min(sx, p.x), y = Math.min(sy, p.y), w = Math.abs(p.x - sx), h = Math.abs(p.y - sy);
       if (w < 3 || h < 3) return;
       const picked = (this.deck as any).pickObjects({ x, y, width: w, height: h, layerIds: ["cells"], maxObjects: 200000 });
-      const ids = new Int32Array(picked.map((q: any) => q.index));
+      const ids = new Int32Array(picked.map((q: any) => this.draw[q.index]));   // pick gives draw-slot indices → map to native cells
       this.onSelect?.(ids);
     });
   }
