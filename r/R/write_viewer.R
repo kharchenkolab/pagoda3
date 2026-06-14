@@ -49,11 +49,15 @@ write_viewer <- function(ds, grouping = "leiden", counts = "counts", also = char
   gm <- grand / nc
   Xl2 <- Xl; Xl2@x <- Xl@x^2
   gv <- pmax(Matrix::colSums(Xl2) / nc - gm^2, 0)
-  ok <- gm > 0 & gv > 0 & is.finite(gm) & is.finite(gv)
+  nobs <- diff(cnt@p)                                  # expressing cells per gene (CSC column nnz) = effective d.o.f.
+  ok <- gm > 0 & gv > 0 & is.finite(gm) & is.finite(gv) & nobs >= 3
   od <- rep(0, ng)
   if (sum(ok) > 10) {
     fit <- stats::loess(y ~ x, data = data.frame(x = log(gm[ok]), y = log(gv[ok])), span = 0.3, degree = 2)
-    od[ok] <- log(gv[ok]) - as.numeric(stats::predict(fit))
+    res <- log(gv[ok]) - as.numeric(stats::predict(fit))   # residual of log(var) vs the mean-variance trend
+    # pagoda2 adjustVariance: test the variance ratio exp(res) against F(nobs, nobs). nobs (expressing cells) is
+    # the effective d.o.f., so a sparsely-expressed gene can't reach significance. Score = -log p (higher = more OD).
+    od[ok] <- -stats::pf(exp(res), nobs[ok], nobs[ok], lower.tail = FALSE, log.p = TRUE)
   }
   od[!is.finite(od)] <- 0
   ds$fields[["od_score"]] <- list(role = "measure", span = "genes", values = od)
