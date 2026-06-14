@@ -22,6 +22,7 @@ export class App {
   history: Checkpoint[] = []; viewing = -1; locked = false; uid = 0;
   embeddings: EmbeddingView[] = [];
   compReactors: CompReactor[] = [];   // vocabulary-bound panels that highlight a category on a coord hint
+  colorChoices: [string, string][] = [...COLOR_OPTS];   // colour-by dropdown options, capped per class (see noteColor)
   // presence
   thread: any = null; threadDocked = false; nudgePending: any = null; apTimer: any = null; apIndex = 0;
   scope: Scope | null = null; hot = 0; filtered: any[] = []; lastSelAnchor = { left: 0, top: 0 };
@@ -152,10 +153,9 @@ export class App {
       const isEmb = p.type === "Embedding";
       const s = document.createElement("select"); s.className = "inline"; s.dataset.pid = String(p.id);
       const cur = p.view?.colorBy ?? (isEmb ? this.coord.state.colorBy : "meta:" + (this.ctx.groupings()[0] || "leiden"));
-      const opts: [string, string][] = isEmb
-        ? (() => { const o = [...COLOR_OPTS]; if (!o.find((x) => x[0] === cur)) o.unshift([cur, handleLabel(cur)]); return o; })()
-        : this.ctx.groupings().map((g) => ["meta:" + g, handleLabel("meta:" + g)] as [string, string]);
-      s.innerHTML = opts.map(([v, l]) => `<option value="${v}"${v === cur ? " selected" : ""}>${l}</option>`).join("");
+      s.innerHTML = isEmb
+        ? this.colorOptionsHtml(cur)
+        : this.ctx.groupings().map((g) => `<option value="meta:${g}"${"meta:" + g === cur ? " selected" : ""}>${handleLabel("meta:" + g)}</option>`).join("");
       s.onchange = () => this.configurePanel(p.id, { colorBy: s.value });
       sp.appendChild(s);
     }
@@ -222,6 +222,7 @@ export class App {
     // swapping an embedding, or restacking a non-embedding panel (composition grouping), needs a body rebuild;
     // an embedding recolour/scope is a cheap repaint.
     const rebuild = ("embedding" in patch && patch.embedding !== p.view?.embedding) || (p.type !== "Embedding" && "colorBy" in patch);
+    if (typeof patch.colorBy === "string") this.noteColor(patch.colorBy);
     p.view = { ...p.view, ...patch };
     if (rebuild) this.fullRender(); else { this.repaint(); this.syncColorSelects(); this.syncToggles(); }   // keep every control in step
   }
@@ -230,6 +231,7 @@ export class App {
   // shared colour actually reaches every embedding (a per-panel override would otherwise shadow it), then
   // sets the global handle. Per-panel divergence is reserved for deliberate dropdown / configure_panel use.
   recolorAll(handle: string) {
+    this.noteColor(handle);
     let cleared = false;
     for (const p of this.canvas) if (p.type === "Embedding" && p.view?.colorBy) { delete p.view.colorBy; cleared = true; }
     if (this.coord.state.colorBy !== handle) this.coord.setColor(handle);              // subscribe → repaint + sync
@@ -436,13 +438,26 @@ export class App {
   syncColorSelects() {
     document.querySelectorAll<HTMLSelectElement>("select.inline").forEach((s) => {
       const p = this.canvas.find((z) => z.id === Number(s.dataset.pid)); if (!p) return;
-      let eff: string;
       if (p.type === "Embedding") {
-        eff = p.view?.colorBy ?? this.coord.state.colorBy;
-        if (![...s.options].some((o) => o.value === eff)) { const o = document.createElement("option"); o.value = eff; o.textContent = handleLabel(eff); s.appendChild(o); }
-      } else eff = p.view?.colorBy ?? ("meta:" + (this.ctx.groupings()[0] || "leiden"));
-      if ([...s.options].some((o) => o.value === eff)) s.value = eff;
+        const eff = p.view?.colorBy ?? this.coord.state.colorBy;
+        s.innerHTML = this.colorOptionsHtml(eff);   // rebuilt from the capped list — no unbounded accumulation
+      } else { const eff = p.view?.colorBy ?? ("meta:" + (this.ctx.groupings()[0] || "leiden")); if ([...s.options].some((o) => o.value === eff)) s.value = eff; }
     });
+  }
+
+  // Remember a colouring handle for the embedding dropdown, capped at 5 per class (gene/meta/qc/geneset) so
+  // clicking through many genes doesn't flood the menu — the oldest of that class drops off (current is kept).
+  noteColor(handle: string) {
+    if (!handle || !handle.includes(":") || this.colorChoices.some(([h]) => h === handle)) return;
+    const cls = handle.split(":")[0] + ":";
+    this.colorChoices.push([handle, handleLabel(handle)]);
+    const ofClass = this.colorChoices.filter(([h]) => h.startsWith(cls));
+    if (ofClass.length > 5) { const drop = ofClass[0][0]; this.colorChoices = this.colorChoices.filter(([h]) => h !== drop); }
+  }
+  // <option> list for an embedding colour dropdown from the capped choices (always including the current handle).
+  colorOptionsHtml(cur: string): string {
+    const opts = cur && !this.colorChoices.some(([h]) => h === cur) ? [[cur, handleLabel(cur)] as [string, string], ...this.colorChoices] : this.colorChoices;
+    return opts.map(([v, l]) => `<option value="${v}"${v === cur ? " selected" : ""}>${l}</option>`).join("");
   }
   // reflect display state (set by the agent or a toggle) onto the header toggle buttons — keeps both tiers in step
   syncToggles() {
