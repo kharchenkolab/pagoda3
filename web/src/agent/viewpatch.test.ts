@@ -1,0 +1,164 @@
+// Unit tests for the pure view-patch reducer. Run: `node --test src/agent/viewpatch.test.ts` (Node strips types).
+import { test } from "node:test";
+import assert from "node:assert";
+import { normalizeViewPatch } from "./viewpatch.ts";
+import type { World, NormOp } from "./viewpatch.ts";
+
+// A small fake world: two groupings, a handful of genes (IL17A deliberately absent), two embeddings, and
+// panels #4 (Heatmap, already pinning GNLY) and #5 (Embedding).
+function makeWorld(): World {
+  const values: Record<string, string[]> = {
+    leiden: ["0", "1", "2", "3", "4", "5"],
+    cell_type: ["B (naive)", "B (memory)", "CD8 T"],
+    sample: ["GSM1", "GSM2"],
+    condition: ["disease", "control"],
+  };
+  const genes = new Set(["CD3D", "MS4A1", "IL17RA", "GNLY"]);
+  const panels: Record<number, { type: string; genes: string[] }> = {
+    4: { type: "Heatmap", genes: ["GNLY"] },
+    5: { type: "Embedding", genes: [] },
+  };
+  return {
+    panelTypes: ["Embedding", "Heatmap", "CompositionBars", "DeTable", "Note"],
+    categoricals: ["leiden", "cell_type", "sample", "condition"],
+    groupings: ["leiden", "cell_type"],
+    valuesOf: (g) => values[g] || [],
+    geneExists: (s) => genes.has(s),
+    embeddings: ["umap", "umap.unintegrated"],
+    panelExists: (id) => id in panels,
+    panelType: (id) => panels[id]?.type,
+    panelGenes: (id) => panels[id]?.genes || [],
+  };
+}
+
+const find = (ops: NormOp[], kind: string) => ops.filter((o) => o.kind === kind);
+
+test("global color: valid grouping accepted, bad gene/grouping rejected", () => {
+  const w = makeWorld();
+  const ok = normalizeViewPatch({ color: "meta:cell_type" }, w);
+  assert.deepEqual(find(ok.ops, "color"), [{ kind: "color", handle: "meta:cell_type" }]);
+  assert.equal(ok.rejected.length, 0);
+
+  const badGene = normalizeViewPatch({ color: "gene:NOTAGENE" }, w);
+  assert.equal(find(badGene.ops, "color").length, 0);
+  assert.match(badGene.rejected[0], /unknown gene/);
+
+  const badGroup = normalizeViewPatch({ color: "meta:foo" }, w);
+  assert.match(badGroup.rejected[0], /unknown field/);
+
+  const okGene = normalizeViewPatch({ color: "gene:CD3D" }, w);
+  assert.equal(find(okGene.ops, "color").length, 1);
+  const qc = normalizeViewPatch({ color: "qc:mito" }, w);   // qc/geneset pass without a catalog
+  assert.equal(find(qc.ops, "color").length, 1);
+});
+
+test("focus set and clearFocus", () => {
+  const w = makeWorld();
+  const set = normalizeViewPatch({ focus: { dim: "condition", value: "disease" } }, w);
+  assert.deepEqual(find(set.ops, "focus"), [{ kind: "focus", dim: "condition", value: "disease" }]);
+  const cleared = normalizeViewPatch({ clearFocus: true }, w);
+  assert.deepEqual(find(cleared.ops, "clearFocus"), [{ kind: "clearFocus" }]);
+  // clearFocus wins over focus
+  const both = normalizeViewPatch({ clearFocus: true, focus: { dim: "leiden", value: "0" } }, w);
+  assert.equal(find(both.ops, "focus").length, 0);
+  assert.equal(find(both.ops, "clearFocus").length, 1);
+  // bad focus field / value rejected
+  assert.match(normalizeViewPatch({ focus: { dim: "nope", value: "x" } }, w).rejected[0], /unknown field/);
+  assert.match(normalizeViewPatch({ focus: { dim: "condition", value: "nope" } }, w).rejected[0], /not a value of condition/);
+});
+
+test("display alpha is clamped; booleans pass through", () => {
+  const w = makeWorld();
+  const hi = normalizeViewPatch({ display: { alpha: 5 } }, w);
+  assert.equal((find(hi.ops, "display")[0] as any).patch.alpha, 1);
+  const lo = normalizeViewPatch({ display: { alpha: 0 } }, w);
+  assert.equal((find(lo.ops, "display")[0] as any).patch.alpha, 0.02);
+  const flags = normalizeViewPatch({ display: { labels: false, legend: true } }, w);
+  assert.deepEqual((find(flags.ops, "display")[0] as any).patch, { labels: false, legend: true });
+});
+
+test("add panel: valid type with config; unknown type rejected", () => {
+  const w = makeWorld();
+  const ok = normalizeViewPatch({ panels: [{ add: "Embedding", title: "X", colorBy: "gene:CD3D", embedding: "umap.unintegrated" }] }, w);
+  const add = find(ok.ops, "addPanel")[0] as any;
+  assert.equal(add.spec.type, "Embedding");
+  assert.equal(add.spec.colorBy, "gene:CD3D");
+  assert.equal(add.spec.embedding, "umap.unintegrated");
+
+  const bad = normalizeViewPatch({ panels: [{ add: "Sankey" }] }, w);
+  assert.equal(find(bad.ops, "addPanel").length, 0);
+  assert.match(bad.rejected[0], /unknown panel type/);
+});
+
+test("add Heatmap: dotplot + grouping + genes, with unknown gene noted", () => {
+  const w = makeWorld();
+  const r = normalizeViewPatch({ panels: [{ add: "Heatmap", group: "cell_type", heatMode: "dotplot", genes: ["IL17A", "IL17RA"] }] }, w);
+  const spec = (find(r.ops, "addPanel")[0] as any).spec;
+  assert.equal(spec.heatMode, "dot");          // dotplot → dot
+  assert.equal(spec.group, "cell_type");
+  assert.deepEqual(spec.genes, ["IL17RA"]);    // IL17A dropped
+  assert.match(r.notes.join(" "), /IL17A/);    // and reported
+});
+
+test("configure Heatmap: heatMode + genes merge with existing", () => {
+  const w = makeWorld();
+  const merge = normalizeViewPatch({ panels: [{ id: 4, heatMode: "heatmap", genes: ["MS4A1"] }] }, w);
+  const cfg = find(merge.ops, "configPanel")[0] as any;
+  assert.equal(cfg.id, 4);
+  assert.equal(cfg.patch.heatMode, "heat");
+  assert.deepEqual(cfg.patch.genes, ["GNLY", "MS4A1"]);    // merged with existing GNLY
+
+  const clear = normalizeViewPatch({ panels: [{ id: 4, clearGenes: true, genes: ["CD3D"] }] }, w);
+  assert.deepEqual((find(clear.ops, "configPanel")[0] as any).patch.genes, ["CD3D"]);   // cleared first
+});
+
+test("scope: valid resolves; bad grouping/value rejected; clearScope → null", () => {
+  const w = makeWorld();
+  const ok = normalizeViewPatch({ panels: [{ id: 5, scopeGrouping: "cell_type", scopeValue: "B (naive)" }] }, w);
+  assert.deepEqual((find(ok.ops, "configPanel")[0] as any).patch.scope, { grouping: "cell_type", value: "B (naive)" });
+
+  const badVal = normalizeViewPatch({ panels: [{ id: 5, scopeGrouping: "cell_type", scopeValue: "B naive" }] }, w);
+  assert.equal(find(badVal.ops, "configPanel").length, 0);
+  assert.match(badVal.rejected[0], /not a value of cell_type/);
+
+  const clear = normalizeViewPatch({ panels: [{ id: 5, clearScope: true }] }, w);
+  assert.strictEqual((find(clear.ops, "configPanel")[0] as any).patch.scope, null);
+});
+
+test("heatMode/genes ignored on non-Heatmap panels (noted)", () => {
+  const w = makeWorld();
+  const r = normalizeViewPatch({ panels: [{ id: 5, genes: ["CD3D"], heatMode: "dotplot" }] }, w);
+  assert.equal(find(r.ops, "configPanel").length, 0);       // nothing valid to change
+  assert.match(r.notes.join(" "), /only to Heatmap/);
+});
+
+test("remove panel: valid id ok, bad id rejected", () => {
+  const w = makeWorld();
+  const ok = normalizeViewPatch({ panels: [{ id: 5, remove: true }] }, w);
+  assert.deepEqual(find(ok.ops, "removePanel"), [{ kind: "removePanel", id: 5 }]);
+  const bad = normalizeViewPatch({ panels: [{ id: 99, remove: true }] }, w);
+  assert.equal(find(bad.ops, "removePanel").length, 0);
+  assert.match(bad.rejected[0], /no panel/);
+});
+
+test("configure unknown panel id and empty patch are rejected", () => {
+  const w = makeWorld();
+  const badId = normalizeViewPatch({ panels: [{ id: 42, colorBy: "gene:CD3D" }] }, w);
+  assert.match(badId.rejected[0], /no such panel/);
+  const empty = normalizeViewPatch({ panels: [{ id: 5 }] }, w);
+  assert.match(empty.rejected[0], /nothing to change/);
+});
+
+test("a compound patch yields ops in order with no rejections", () => {
+  const w = makeWorld();
+  const r = normalizeViewPatch({
+    color: "meta:cell_type",
+    display: { alpha: 0.5 },
+    panels: [
+      { add: "Heatmap", group: "cell_type", heatMode: "dotplot" },
+      { id: 5, colorBy: "gene:MS4A1" },
+    ],
+  }, w);
+  assert.equal(r.rejected.length, 0);
+  assert.deepEqual(r.ops.map((o) => o.kind), ["color", "display", "addPanel", "configPanel"]);
+});

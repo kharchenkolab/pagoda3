@@ -12,20 +12,35 @@ export async function checkLive(): Promise<boolean> {
 interface Tool { name: string; description: string; input_schema: any; }
 
 const TOOLS: Tool[] = [
-  { name: "set_color", description: "Recolour every embedding in place by a handle. The SMALLEST change — prefer this. handle is one of: meta:leiden, meta:cell_type, meta:condition, meta:sample, qc:mito, or gene:<SYMBOL> (e.g. gene:IL6), or geneset:<program name>.", input_schema: { type: "object", properties: { handle: { type: "string" } }, required: ["handle"] } },
-  { name: "set_focus", description: "Dim all cells except those where a metadata dim equals value (e.g. dim=condition, value=disease). Coordinated focus.", input_schema: { type: "object", properties: { dim: { type: "string" }, value: { type: "string" } }, required: ["dim", "value"] } },
-  { name: "clear_focus", description: "Clear focus/selection.", input_schema: { type: "object", properties: {} } },
+  // ---- the single declarative surface for VIEW/LAYOUT ("what to show") ----
+  { name: "update_view", description: "Change WHAT IS SHOWN — colour, focus, display options, and panels — in one reversible step. Pass only the fields you want to change; a view knob is a FIELD here, never a separate verb. Smallest changes first: `color` recolours ALL embeddings (the most common move). `focus` dims everything except one field=value (clearFocus to undo). `display` sets labels / legend / alpha (point opacity 0–1; lower reveals density). `panels` is an array of per-panel ops: to CONFIGURE an existing panel give its id (from LAYOUT) plus fields to change; to CREATE one give add:<type> (Embedding, Heatmap, CompositionBars); to REMOVE give id + remove:true. Per-panel knobs: colorBy (override just this panel), scopeGrouping+scopeValue (restrict it to a population — an embedding reframes to those cells and greys the rest; clearScope to undo), embedding (which projection, see EMBEDDINGS). A Heatmap shows the top markers per group: group sets the grouping, heatMode is 'heatmap' or 'dotplot' (dot size = % expressing), and genes PINS specific genes (highlighted, merged in) — it can show ANY gene, so to surface e.g. IL17A in the marker view add it via genes rather than declining (clearGenes resets). Invalid bits (unknown gene/field/type/id) are skipped and reported back so you can correct. Prefer ONE update_view with several panel ops over many calls.",
+    input_schema: { type: "object", properties: {
+      color: { type: "string", description: "global colour handle: meta:<field> (cell_type, leiden, sample, condition), gene:<SYMBOL>, qc:<metric> (e.g. qc:mito), or geneset:<name>" },
+      focus: { type: "object", properties: { dim: { type: "string" }, value: { type: "string" } }, description: "dim all cells except where dim=value (e.g. condition=disease)" },
+      clearFocus: { type: "boolean" },
+      display: { type: "object", properties: { labels: { type: "boolean" }, legend: { type: "boolean" }, alpha: { type: "number", description: "point opacity 0–1; lower reveals density" } } },
+      panels: { type: "array", description: "per-panel ops (configure by id / create with add / remove)", items: { type: "object", properties: {
+        id: { type: "number", description: "existing panel to modify (from LAYOUT)" },
+        add: { type: "string", description: "create a panel of this type: Embedding | Heatmap | CompositionBars" },
+        remove: { type: "boolean" },
+        title: { type: "string" },
+        colorBy: { type: "string", description: "per-panel colour override (same handle forms as `color`)" },
+        scopeGrouping: { type: "string" }, scopeValue: { type: "string", description: "restrict the panel to this field=value's cells" }, clearScope: { type: "boolean" },
+        embedding: { type: "string", description: "which embedding to render (see EMBEDDINGS)" },
+        group: { type: "string", description: "Heatmap: grouping to stack on (e.g. cell_type)" },
+        heatMode: { type: "string", enum: ["heatmap", "dotplot"], description: "Heatmap representation" },
+        genes: { type: "array", items: { type: "string" }, description: "Heatmap: pin these exact HGNC genes (highlighted; merged with existing)" },
+        clearGenes: { type: "boolean", description: "Heatmap: drop existing pinned genes first" },
+      } } },
+    } } },
+  // ---- compute primitives ("what to derive") — small, named, carry methodology + caveats ----
   { name: "get_markers", description: "Add a ranked marker-gene table for a group (cluster or annotation) to the disposable answer rail, and return the top genes. Rung-1 answer.", input_schema: { type: "object", properties: { cluster: { type: "string", description: "group id, e.g. a leiden cluster (c0 / 5) or a cell type name" }, grouping: { type: "string", description: "which precomputed grouping the id belongs to (e.g. leiden or cell_type); defaults to leiden" } }, required: ["cluster"] } },
   { name: "run_de_on_selection", description: "Run subsample differential expression on the current cell selection vs the rest, ranked over ALL genes (scope-correct, ranking-grade). Adds a DE table to the rail. Only valid when the user has a selection.", input_schema: { type: "object", properties: {} } },
   { name: "get_overdispersed_genes", description: "Most variable (overdispersed) genes WITHIN a scope, recomputed for that scope (not a global shortlist). To scope to a population pass scopeGrouping + scopeValue (e.g. cell_type + the platelet cell-type name) — this is required to get genes specific to that population. With no scope it uses the current selection, else the focused population, else the whole dataset. Adds a ranked gene list to the rail.", input_schema: { type: "object", properties: { scopeGrouping: { type: "string", description: "grouping of the population to scope to, e.g. cell_type or leiden" }, scopeValue: { type: "string", description: "the value within that grouping, e.g. the platelet cell-type name" } } } },
-  { name: "show_marker_heatmap", description: "Add a marker view (top genes per group, gene × group) for a grouping to the rail — the canonical view to examine which genes define each cluster or cell type. Use when asked to examine/see the markers OF a set of clusters or cell types. grouping is one of the precomputed groupings (e.g. leiden, cell_type). display chooses the representation: 'heatmap' (colour = mean expression, default) or 'dotplot' (dot size = % of cells expressing, colour = mean) — use dotplot when the user asks for one or when detectability/fraction-expressing matters. genes pins specific genes of interest into the view (highlighted, on top of the per-group markers) — the view can show ANY gene, not only precomputed markers.", input_schema: { type: "object", properties: { grouping: { type: "string", description: "a precomputed grouping: leiden or cell_type" }, display: { type: "string", enum: ["heatmap", "dotplot"], description: "representation; defaults to heatmap" }, genes: { type: "array", items: { type: "string" }, description: "exact HGNC symbols to pin in and highlight" } }, required: ["grouping"] } },
   { name: "get_composition", description: "Add a per-sample cluster-composition panel (compositional) to the rail and return the disease-vs-control cluster fractions. Rung-1.", input_schema: { type: "object", properties: {} } },
   { name: "get_overdispersion", description: "Add the overdispersed gene-program list to the rail. Rung-1.", input_schema: { type: "object", properties: {} } },
   { name: "propose_workspace", description: "Propose switching to a named workspace (a bigger, reversible layout change the human confirms). name is one of: Overview, Markers, QC triage, Aspects.", input_schema: { type: "object", properties: { name: { type: "string" } }, required: ["name"] } },
   { name: "add_note", description: "Add a short text note to the rail (for an answer that needs no view).", input_schema: { type: "object", properties: { text: { type: "string" } }, required: ["text"] } },
-  { name: "set_display", description: "Embedding view options: on-plot category labels, the colour legend, and cell ALPHA (point opacity, 0–1; lower shows density through overlapping cells — e.g. 0.1 for very dense regions). Defaults: labels on for categorical colourings; legend for gene/numeric; alpha 0.7. Pass only the field(s) to change. Use when the human asks to show/hide labels or legend, or to set the cell/point alpha/opacity/transparency.", input_schema: { type: "object", properties: { labels: { type: "boolean", description: "show on-plot cell-type/cluster labels" }, legend: { type: "boolean", description: "show the colour legend" }, alpha: { type: "number", description: "cell point opacity 0–1 (lower = more transparent, reveals density)" } } } },
-  { name: "configure_panel", description: "DEEP per-panel view control — fine-tune ONE panel in place, leaving the others alone. Use it to build a focused evidence view (e.g. take a copy of the embedding, zoom it to one cluster, colour it by donor). panelId comes from the LAYOUT line. colorBy is a handle (meta:sample, meta:cell_type, gene:CD8A, qc:mito…) and overrides that panel's colour only. scopeGrouping+scopeValue restrict the panel to a group's cells (e.g. cell_type + \"CD8+ T cells\"): the embedding reframes to those cells and greys the rest. embedding picks which embedding the panel renders (see EMBEDDINGS) — e.g. set one panel to umap.unintegrated and another to umap, both coloured by sample, for the before/after integration view. For a Heatmap panel, display flips its representation between 'heatmap' and 'dotplot', and addGenes PINS arbitrary genes into it — the heatmap/dotplot can show ANY gene, not just the precomputed top markers, so when asked to add/see a specific gene (e.g. IL17A) in the panel, add it here (it appears at the top, highlighted) rather than declining. The smallest way to make a bespoke view — prefer it over a new workspace.", input_schema: { type: "object", properties: { panelId: { type: "number" }, colorBy: { type: "string" }, scopeGrouping: { type: "string" }, scopeValue: { type: "string" }, embedding: { type: "string" }, display: { type: "string", enum: ["heatmap", "dotplot"], description: "Heatmap panels only: representation" }, addGenes: { type: "array", items: { type: "string" }, description: "Heatmap panels only: exact HGNC gene symbols to pin in and highlight (e.g. [\"IL17A\",\"IL17F\"])" } }, required: ["panelId"] } },
-  { name: "add_panel", description: "Compose a NEW configured panel onto the workbench (additive — nothing existing moves; reversible checkpoint). type is a component: Embedding, CompositionBars, Heatmap. colorBy + scopeGrouping/scopeValue + embedding configure it just like configure_panel (e.g. an Embedding scoped to one cluster, coloured by donor; or an Embedding on a specific embedding from EMBEDDINGS). Use to build a focused multi-panel board — e.g. two Embeddings both colorBy meta:sample, one embedding=umap.unintegrated and one embedding=umap, for the before/after integration view. For type Heatmap, display chooses 'heatmap' or 'dotplot', group sets the grouping, and genes pins specific genes in (highlighted). Returns the new panel id.", input_schema: { type: "object", properties: { type: { type: "string" }, title: { type: "string" }, colorBy: { type: "string" }, scopeGrouping: { type: "string" }, scopeValue: { type: "string" }, embedding: { type: "string" }, group: { type: "string", description: "Heatmap: the grouping (e.g. cell_type)" }, display: { type: "string", enum: ["heatmap", "dotplot"], description: "Heatmap: representation" }, genes: { type: "array", items: { type: "string" }, description: "Heatmap: exact HGNC symbols to pin in and highlight" } }, required: ["type"] } },
   { name: "de_between", description: "Differential expression between TWO cell groups, compared DIRECTLY to each other (not vs rest): valueA vs valueB of `splitField`. logFC>0 = higher in valueA, logFC<0 = higher in valueB. USE THIS whenever the user wants to contrast two populations — e.g. naive vs memory B (splitField=cell_type, valueA='B (naive)', valueB='B (memory)'), or disease vs control. Do NOT answer a contrast with two separate get_markers (each vs rest): two related types share their lineage genes, so vs-rest lists look identical — only a direct A-vs-B test shows what actually differs. OPTIONAL scopeGrouping+scopeValue restrict both sides to one population (the integration check: within e.g. CD8+ T cells, donor A vs donor B — residual RPS/RPL or MT- splitters = batch, not biology). Adds a DE table (toCanvas=true → workbench/evidence board; else the disposable rail).", input_schema: { type: "object", properties: { splitField: { type: "string", description: "the grouping whose two values are contrasted (e.g. cell_type, condition, sample)" }, valueA: { type: "string" }, valueB: { type: "string" }, scopeGrouping: { type: "string", description: "OPTIONAL — restrict both sides to this grouping's value (scopeValue)" }, scopeValue: { type: "string", description: "OPTIONAL — the population to test within" }, toCanvas: { type: "boolean" } }, required: ["splitField", "valueA", "valueB"] } },
   { name: "concordance_panel", description: "Per-donor MARKER concordance for one cell type — the companion to de_between. Takes that cell type's top markers and shows their mean expression split by donor (a gene × donor heat). Markers reading the SAME across donors confirm a genuinely merged population; divergent ones are suspect. scopeGrouping/scopeValue = the cell type (e.g. cell_type, \"CD8+ T cells\"); splitField = the donor/batch field (sample). Adds the panel to the workbench.", input_schema: { type: "object", properties: { scopeGrouping: { type: "string" }, scopeValue: { type: "string" }, splitField: { type: "string" } }, required: ["scopeGrouping", "scopeValue", "splitField"] } },
 ];
@@ -34,9 +49,10 @@ async function systemPrompt(app: App): Promise<string> {
   const brief = await app.ctx.describeForAgent();
   return `You are pagoda2's analysis copilot for an interactive single-cell RNA-seq viewer. The human owns a persistent spatial layout; you drive a shared COORDINATION SPACE (what colours things, what's focused/selected) and earn bigger moves.
 
+TWO SURFACES: update_view changes WHAT IS SHOWN (colour, focus, display, panels — all declarative, one tool, any subset of fields); the compute primitives DERIVE data (markers, DE, overdispersion, composition). Configure with update_view; compute with the named tools.
 PRINCIPLE OF RESTRAINT — always prefer the SMALLEST change that answers the question:
-- recolour/focus in place (set_color, set_focus) — the default;
-- a disposable answer in the rail (get_markers, show_marker_heatmap, run_de_on_selection, get_overdispersed_genes, get_composition, get_overdispersion, add_note) when a new view is needed;
+- recolour/focus in place via update_view ({color:…} or {focus:…}) — the default;
+- a disposable answer in the rail (get_markers, run_de_on_selection, get_overdispersed_genes, get_composition, get_overdispersion, add_note), or add a Heatmap panel via update_view, when a new view is needed;
 - a workspace proposal (propose_workspace) only for a deliberate layout change — and it is a PROPOSAL the human confirms.
 The change itself is visible, so keep your prose to ONE short sentence. Never narrate state the user can already see.
 
@@ -51,17 +67,22 @@ METHODOLOGY (cacoa — encode these, don't forget them):
 DATASET (read from the loaded store — do not assume any other dataset): ${brief}. Markers are precomputed for: ${app.ctx.groupings().join(", ") || "—"}.
 
 CURRENT STATE: colouring by "${app.coord.state.colorBy}", workspace "${app.currentWS}", ${app.ctx.selectedCells().length ? app.ctx.selectedCells().length + " cells selected" : "no selection"}.
-LAYOUT (panel ids for configure_panel): ${app.canvas.map((p) => `#${p.id} ${p.type}${p.view?.colorBy ? ` colorBy=${p.view.colorBy}` : ""}${p.view?.scope ? ` scope=${(p.view.scope as any).value}` : ""}${p.view?.embedding ? ` emb=${p.view.embedding}` : ""}`).join(", ") || "—"}.
-EMBEDDINGS available (configure_panel embedding): ${app.ctx.embeddingNames().join(", ") || "umap"}.`;
+LAYOUT (panel ids for update_view panels[].id): ${app.canvas.map((p) => `#${p.id} ${p.type}${p.heatMode === "dot" ? "(dotplot)" : ""}${p.view?.colorBy ? ` colorBy=${p.view.colorBy}` : ""}${p.view?.scope ? ` scope=${(p.view.scope as any).value}` : ""}${p.view?.embedding ? ` emb=${p.view.embedding}` : ""}`).join(", ") || "—"}.
+EMBEDDINGS available (update_view panels[].embedding): ${app.ctx.embeddingNames().join(", ") || "umap"}.`;
 }
 
 // ---- tool executors (side effects on the app + a compact result for the model) ----
 async function execTool(app: App, name: string, input: any): Promise<string> {
   const ag = app.agent;
   switch (name) {
-    case "set_color": { app.recolorAll(input.handle); return `coloured by ${input.handle}`; }
-    case "set_focus": { app.coord.setFocus(input.dim, input.value); return `focused ${input.dim}=${input.value}`; }
-    case "clear_focus": { app.coord.clearFocus(); return "cleared focus"; }
+    case "update_view": {
+      const { applied, rejected, notes } = await app.applyViewPatch(input);
+      const parts: string[] = [];
+      if (applied.length) parts.push(`applied: ${applied.join("; ")}`);
+      if (rejected.length) parts.push(`REJECTED (fix and retry): ${rejected.join("; ")}`);
+      if (notes.length) parts.push(`notes: ${notes.join("; ")}`);
+      return parts.join(" | ") || "no-op — nothing valid to change";
+    }
     case "get_markers": {
       const grouping = input.grouping && app.ctx.groupings().includes(input.grouping) ? input.grouping : "leiden";
       const markers = await app.ctx.markers(grouping); const rows = (markers.get(input.cluster) || []).slice(0, 20);
@@ -86,16 +107,6 @@ async function execTool(app: App, name: string, input: any): Promise<string> {
       ag.addRail({ type: "GeneList", title: `Variable genes · ${label}`, cap: "overdispersion", bind: "hvg:scope", rows });
       return `top variable genes WITHIN ${label} (recomputed for this scope): ${hv.slice(0, 10).map((h) => h.symbol).join(", ")}`;
     }
-    case "show_marker_heatmap": {
-      const grouping = app.ctx.groupings().includes(input.grouping) ? input.grouping : "leiden";
-      const dot = input.display === "dotplot";
-      const pin = Array.isArray(input.genes) ? (await Promise.all(input.genes.map(async (s: string) => ((await app.ctx.view.geneCol(String(s).trim())) != null ? String(s).trim() : null)))).filter(Boolean) as string[] : undefined;
-      app.coord.setColor("meta:" + grouping);
-      ag.addRail({ type: "Heatmap", title: `Marker ${dot ? "dotplot" : "heatmap"} · ${grouping}`, cap: `top genes × ${grouping}`, group: grouping, bind: "markers:" + grouping, heatMode: dot ? "dot" : "heat", genes: pin && pin.length ? pin : undefined, full: true });
-      const mk = await app.ctx.markers(grouping);
-      const eg = [...mk.entries()].slice(0, 3).map(([g, r]) => `${g}: ${r.slice(0, 3).map((x) => x.symbol).join("/")}`).join("; ");
-      return `added a marker ${dot ? "dotplot (dot size = % of cells expressing)" : "heatmap"} for the ${grouping} grouping (${[...mk.keys()].length} groups) and coloured the embedding by it; e.g. ${eg}${pin && pin.length ? `. Pinned & highlighted: ${pin.join(", ")}` : ""}`;
-    }
     case "run_de_on_selection": {
       const ids = app.ctx.selectedCells(); if (!ids.length) return "no selection — ask the user to drag-select cells first";
       const set = new Set(ids); const rest: number[] = []; for (let i = 0; i < app.ctx.n; i++) if (!set.has(i)) rest.push(i);
@@ -114,35 +125,6 @@ async function execTool(app: App, name: string, input: any): Promise<string> {
     case "get_overdispersion": { ag.addRail({ type: "Overdispersion", title: "Overdispersed programs", cap: "gene programs", bind: "aspect:overdispersion" }); return "added overdispersed-programs list"; }
     case "propose_workspace": { ag.proposeWorkspace(input.name); return `proposed workspace ${input.name} (awaiting the human's OK)`; }
     case "add_note": { ag.addRail({ type: "Note", title: "Note", text: input.text }); return "added note"; }
-    case "set_display": { const p: any = {}; if (typeof input.labels === "boolean") p.labels = input.labels; if (typeof input.legend === "boolean") p.legend = input.legend; if (typeof input.alpha === "number") p.alpha = Math.max(0.02, Math.min(1, input.alpha)); app.coord.setDisplay(p); return `display ${JSON.stringify(p)}`; }
-    case "configure_panel": {
-      const patch: any = {};
-      if (typeof input.colorBy === "string") patch.colorBy = input.colorBy;
-      if (typeof input.scopeGrouping === "string" && typeof input.scopeValue === "string") patch.scope = { kind: "category", grouping: input.scopeGrouping, value: input.scopeValue };
-      if (typeof input.embedding === "string") patch.embedding = input.embedding;
-      if (input.display === "dotplot" || input.display === "heatmap") patch.heatMode = input.display === "dotplot" ? "dot" : "heat";
-      let geneMsg = "";
-      if (Array.isArray(input.addGenes) && input.addGenes.length) {
-        const target = app.canvas.find((z) => z.id === input.panelId) || app.rail.find((z) => z.id === input.panelId);
-        const merged = target?.genes ? [...target.genes] : []; const added: string[] = [], unknown: string[] = [];
-        for (const raw of input.addGenes) { const sym = String(raw).trim(); const gi = await app.ctx.view.geneCol(sym); if (gi != null) { if (!merged.includes(sym)) { merged.push(sym); added.push(sym); } } else unknown.push(sym); }
-        patch.genes = merged;
-        geneMsg = `; pinned ${added.join(", ") || "(already present)"}${unknown.length ? ` — unknown symbol(s): ${unknown.join(", ")} (use an exact HGNC symbol)` : ""}`;
-      }
-      app.configurePanel(input.panelId, patch);
-      return `configured panel ${input.panelId}: ${JSON.stringify({ ...patch, genes: patch.genes ? `${patch.genes.length} pinned` : undefined })}${geneMsg}`;
-    }
-    case "add_panel": {
-      const view: any = {};
-      if (typeof input.colorBy === "string") view.colorBy = input.colorBy;
-      if (typeof input.scopeGrouping === "string" && typeof input.scopeValue === "string") view.scope = { kind: "category", grouping: input.scopeGrouping, value: input.scopeValue };
-      if (typeof input.embedding === "string") view.embedding = input.embedding;
-      const isHeat = input.type === "Heatmap"; const dot = input.display === "dotplot";
-      const grp = isHeat ? (app.ctx.groupings().includes(input.group) ? input.group : "leiden") : undefined;
-      const pin = isHeat && Array.isArray(input.genes) ? (await Promise.all(input.genes.map(async (s: string) => ((await app.ctx.view.geneCol(String(s).trim())) != null ? String(s).trim() : null)))).filter(Boolean) as string[] : undefined;
-      const id = app.addPanel({ type: input.type, title: input.title || input.type, group: grp, heatMode: isHeat && dot ? "dot" : undefined, genes: pin && pin.length ? pin : undefined, bind: input.type === "Embedding" ? "embedding:main" : (isHeat ? "markers:" + grp : undefined), view: Object.keys(view).length ? view : undefined });
-      return `added panel #${id} (${input.type}${isHeat ? " · " + (dot ? "dotplot" : "heatmap") + " × " + grp : ""})${view.colorBy ? ` colorBy=${view.colorBy}` : ""}${view.scope ? ` scope=${input.scopeValue}` : ""}${view.embedding ? ` emb=${view.embedding}` : ""}`;
-    }
     case "de_between": {
       // Compare valueA vs valueB of splitField DIRECTLY (not vs rest). scopeGrouping/scopeValue are OPTIONAL:
       // when given, both sides are restricted to that population (the residual-batch-within-one-type move).
@@ -227,11 +209,19 @@ export async function runLive(app: App, userText: string, abort: AbortSignal): P
 
 function toolLabel(tu: any): string {
   const i = tu.input || {};
-  if (tu.name === "set_color") return `recolour → ${i.handle}`;
+  if (tu.name === "update_view") {
+    const bits: string[] = [];
+    if (i.color) bits.push(`recolour → ${i.color}`);
+    if (i.focus?.dim) bits.push(`focus ${i.focus.dim}=${i.focus.value}`);
+    if (i.clearFocus) bits.push("clear focus");
+    if (i.display) bits.push("display");
+    for (const p of (i.panels || [])) bits.push(p.add ? `+ ${p.add}` : p.remove ? `− panel #${p.id}` : `panel #${p.id}`);
+    return bits.join(" · ") || "update view";
+  }
   if (tu.name === "get_markers") return `markers · ${i.cluster}`;
   if (tu.name === "get_overdispersed_genes") return `overdispersed genes`;
-  if (tu.name === "show_marker_heatmap") return `marker heatmap · ${i.grouping}`;
+  if (tu.name === "de_between") return `DE · ${i.valueA} vs ${i.valueB}`;
+  if (tu.name === "concordance_panel") return `concordance · ${i.scopeValue}`;
   if (tu.name === "propose_workspace") return `propose workspace · ${i.name}`;
-  if (tu.name === "set_focus") return `focus · ${i.dim}=${i.value}`;
   return tu.name.replace(/_/g, " ");
 }

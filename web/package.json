@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview --port 8788"
+    "preview": "vite preview --port 8788",
+    "test": "node --test"
   },
   "dependencies": {
     "@deck.gl/core": "^9.1.0",

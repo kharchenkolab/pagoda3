@@ -1,10 +1,11 @@
 import { mk } from "./dom.ts";
 import { Ctx } from "../data/ctx.ts";
-import { Coord, handleLabel } from "../data/coord.ts";
+import { Coord, handleLabel, EntityRef } from "../data/coord.ts";
 import { Panel, PanelView, PanelHooks, CompReactor, bodyFor, paintEmbedding } from "./panels.ts";
 import { EmbeddingView } from "../render/embedding.ts";
-import { Agent, Scope } from "../agent/agent.ts";
+import { Agent, Scope, REGISTRY } from "../agent/agent.ts";
 import { checkLive } from "../agent/live.ts";
+import { normalizeViewPatch, RawViewPatch, World, PanelSpec, PanelPatch } from "../agent/viewpatch.ts";
 
 interface Checkpoint { i: number; q: string; why: string; state: any; kind?: "ask" | "act"; exchange?: { kind: string; entries?: any[]; turns?: any[] }; }
 interface WS { colorBy: string; panels: Partial<Panel>[]; }
@@ -20,6 +21,7 @@ export class App {
   canvas: Panel[] = []; rail: Panel[] = []; proposal: any = null;
   WS: Record<string, WS>; wsOrder: string[]; currentWS = "Overview";
   history: Checkpoint[] = []; viewing = -1; locked = false; uid = 0;
+  suspendRender = false;   // set while applyViewPatch batches a multi-op patch into a single render
   embeddings: EmbeddingView[] = [];
   compReactors: CompReactor[] = [];   // vocabulary-bound panels that highlight a category on a coord hint
   colorChoices: [string, string][] = [...COLOR_OPTS];   // colour-by dropdown options, capped per class (see noteColor)
@@ -221,15 +223,81 @@ export class App {
   configurePanel(panelId: number, patch: Partial<PanelView> & { heatMode?: "heat" | "dot"; genes?: string[] }) {
     const p = this.canvas.find((z) => z.id === panelId) || this.rail.find((z) => z.id === panelId);
     if (!p) return;
-    const { heatMode, genes, ...view } = patch;   // heatMode + genes are top-level panel fields, not part of the view
-    // swapping an embedding, restacking a non-embedding panel (composition grouping), flipping the heatmap
-    // representation, or pinning genes needs a body rebuild; an embedding recolour/scope is a cheap repaint.
-    const rebuild = ("embedding" in view && view.embedding !== p.view?.embedding) || (p.type !== "Embedding" && "colorBy" in view) || (heatMode != null && heatMode !== p.heatMode) || genes != null;
-    if (typeof view.colorBy === "string") this.noteColor(view.colorBy);
-    if (heatMode != null) p.heatMode = heatMode;
-    if (genes != null) p.genes = genes;
-    p.view = { ...p.view, ...view };
+    const rebuild = this.applyPanelModel(p, { colorBy: patch.colorBy, scope: patch.scope, embedding: patch.embedding, heatMode: patch.heatMode, genes: patch.genes });
     if (rebuild) this.fullRender(); else { this.repaint(); this.syncColorSelects(); this.syncToggles(); }   // keep every control in step
+  }
+
+  // Mutate ONE panel's model from a patch (no render). colorBy/scope/embedding live on .view; heatMode/genes/title
+  // are top-level. Returns whether the change needs a body REBUILD (vs a cheap repaint). Shared by the per-panel
+  // dropdown and the declarative patcher, so both treat a panel identically.
+  applyPanelModel(p: Panel, patch: { title?: string; colorBy?: string; scope?: EntityRef | null; embedding?: string; heatMode?: "heat" | "dot"; genes?: string[] }): boolean {
+    let rebuild = false;
+    if (patch.title != null) p.title = patch.title;
+    if (patch.colorBy != null) { this.noteColor(patch.colorBy); if (p.type !== "Embedding") rebuild = true; }   // recolouring a non-embedding (e.g. composition restack) needs a rebuild
+    if (patch.embedding != null && patch.embedding !== p.view?.embedding) rebuild = true;
+    if (patch.heatMode != null && patch.heatMode !== p.heatMode) { p.heatMode = patch.heatMode; rebuild = true; }
+    if (patch.genes != null) { p.genes = patch.genes; rebuild = true; }
+    const v: PanelView = { ...p.view };
+    if (patch.colorBy != null) v.colorBy = patch.colorBy;
+    if (patch.embedding != null) v.embedding = patch.embedding;
+    if (patch.scope !== undefined) { if (patch.scope === null) delete v.scope; else v.scope = patch.scope; }
+    p.view = v;
+    return rebuild;
+  }
+
+  // ----- declarative view patcher: the single agent surface for "what to show" -----
+  // Validates the patch against the live world, executes the resulting ops, and renders ONCE. New view knobs
+  // are FIELDS in the patch (see viewpatch.ts), never new methods/tools. Returns applied/rejected/notes.
+  async applyViewPatch(patch: RawViewPatch): Promise<{ applied: string[]; rejected: string[]; notes: string[] }> {
+    const geneSet = new Set(await this.ctx.view.genes());   // warm + snapshot the gene index so geneExists is sync
+    const all = () => [...this.canvas, ...this.rail];
+    const world: World = {
+      panelTypes: Object.keys(REGISTRY),
+      categoricals: this.ctx.categoricalFields(),
+      groupings: this.ctx.groupings(),
+      valuesOf: (f) => this.ctx.categoricalValues(f),
+      geneExists: (s) => geneSet.has(s),
+      embeddings: this.ctx.embeddingNames(),
+      panelExists: (id) => all().some((p) => p.id === id),
+      panelType: (id) => all().find((p) => p.id === id)?.type,
+      panelGenes: (id) => all().find((p) => p.id === id)?.genes || [],
+    };
+    const { ops, rejected, notes } = normalizeViewPatch(patch, world);
+    const applied: string[] = [];
+    let needFull = false, needRepaint = false;
+    this.suspendRender = true;
+    try {
+      for (const op of ops) {
+        if (op.kind === "color") { for (const p of this.canvas) if (p.type === "Embedding" && p.view?.colorBy) delete p.view.colorBy; this.noteColor(op.handle); this.coord.setColor(op.handle); applied.push(`colour → ${handleLabel(op.handle)}`); needRepaint = true; }
+        else if (op.kind === "focus") { this.coord.setFocus(op.dim, op.value); applied.push(`focus ${op.dim}=${op.value}`); needRepaint = true; }
+        else if (op.kind === "clearFocus") { this.coord.clearFocus(); applied.push("cleared focus"); needRepaint = true; }
+        else if (op.kind === "display") { this.coord.setDisplay(op.patch); applied.push(`display ${JSON.stringify(op.patch)}`); needRepaint = true; }
+        else if (op.kind === "addPanel") { const id = this.addPanelModel(op.spec); applied.push(`+#${id} ${op.spec.type}${op.spec.heatMode === "dot" ? " · dotplot" : ""}`); needFull = true; }
+        else if (op.kind === "configPanel") { const p = all().find((z) => z.id === op.id); if (p) { if (this.applyPanelModel(p, this.patchToModel(op.patch))) needFull = true; needRepaint = true; applied.push(`#${op.id} ${Object.keys(op.patch).join("/")}`); } }
+        else if (op.kind === "removePanel") { this.removePanel(op.id); applied.push(`–#${op.id}`); needFull = true; }
+      }
+    } finally { this.suspendRender = false; }
+    if (needFull) this.fullRender(); else if (needRepaint) { this.repaint(); this.syncColorSelects(); this.syncToggles(); }
+    return { applied, rejected, notes };
+  }
+
+  // Build a Panel from a normalized PanelSpec — view fields into .view, bind/group set per type.
+  private specToPanel(spec: PanelSpec): Partial<Panel> {
+    const view: PanelView = {};
+    if (spec.colorBy) view.colorBy = spec.colorBy;
+    if (spec.scope) view.scope = { kind: "category", grouping: spec.scope.grouping, value: spec.scope.value };
+    if (spec.embedding) view.embedding = spec.embedding;
+    const isHeat = spec.type === "Heatmap";
+    const grp = isHeat ? (spec.group || "leiden") : undefined;
+    return { type: spec.type, title: spec.title || spec.type, group: grp, heatMode: spec.heatMode, genes: spec.genes,
+      bind: spec.type === "Embedding" ? "embedding:main" : (isHeat ? "markers:" + grp : undefined),
+      view: Object.keys(view).length ? view : undefined };
+  }
+  addPanelModel(spec: PanelSpec): number { const p = this.newPanel(this.specToPanel(spec)); this.canvas.push(p); return p.id; }
+  removePanel(id: number): boolean { const n = this.canvas.length + this.rail.length; this.canvas = this.canvas.filter((z) => z.id !== id); this.rail = this.rail.filter((z) => z.id !== id); return this.canvas.length + this.rail.length < n; }
+  private patchToModel(patch: PanelPatch) {
+    return { title: patch.title, colorBy: patch.colorBy, embedding: patch.embedding, heatMode: patch.heatMode, genes: patch.genes,
+      scope: patch.scope === undefined ? undefined : (patch.scope === null ? null : { kind: "category", grouping: patch.scope.grouping, value: patch.scope.value } as EntityRef) };
   }
 
   // "Recolour everything" — a gene click or the agent's set_color. Clears per-panel colour overrides so the
@@ -447,6 +515,7 @@ export class App {
       else if (e.key === "Escape") { this.closePalette(); this.hideSelpop(); this.$("ctx").classList.remove("show"); }
     });
     this.coord.subscribe((_s, changed) => {
+      if (this.suspendRender) return;   // applyViewPatch is batching; it will render once at the end
       if (changed.length === 1 && changed[0] === "hint") { this.repaintHint(); return; }  // light hover path
       this.repaint(); this.syncColorSelects(); this.syncToggles();
     });
