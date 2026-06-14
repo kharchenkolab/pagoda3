@@ -42,10 +42,11 @@ button{font-family:inherit}
 .panel.full{grid-column:1/-1}
 .panel.dragging{opacity:.45} .panel.dragover{box-shadow:0 0 0 2px var(--cyan) inset}
 @keyframes rise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
-.ph{display:flex;align-items:center;gap:8px;padding:8px 11px;border-bottom:1px solid var(--line2)}
-.ph .grip{color:var(--faint);cursor:grab;font-size:12px;line-height:1;user-select:none;margin:0 2px 0 -2px}
-.ph .pt{font-weight:600;font-size:12.5px} .ph .pc{font-size:10.5px;color:var(--dim)}
-.ph .sp{margin-left:auto;display:flex;align-items:center;gap:6px}
+.ph{display:flex;align-items:center;gap:8px;padding:8px 11px;border-bottom:1px solid var(--line2);overflow:hidden}
+.ph .grip{color:var(--faint);cursor:grab;font-size:12px;line-height:1;user-select:none;margin:0 2px 0 -2px;flex:0 0 auto}
+/* title never wraps; in a tight header the caption ellipsizes first and the controls keep their size */
+.ph .pt{font-weight:600;font-size:12.5px;white-space:nowrap;flex:0 0 auto} .ph .pc{font-size:10.5px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:0 1 auto}
+.ph .sp{margin-left:auto;display:flex;align-items:center;gap:6px;flex:0 0 auto}
 .mini{background:var(--inset);color:var(--dim);border:1px solid var(--line);border-radius:6px;font-size:11px;padding:3px 7px;cursor:pointer;font-family:var(--mono);line-height:1}
 .mini:hover{color:var(--text)}
 .mini.on{color:var(--cyan);border-color:var(--cyan)}   /* an engaged view-option toggle (labels / legend) */

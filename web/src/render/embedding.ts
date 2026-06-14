@@ -60,6 +60,14 @@ export class EmbeddingView {
     canvas.addEventListener("pointerleave", () => this.onHover?.(null));
 
     this.installBrush(canvas);
+
+    // The on-plot label CollisionFilterExtension declutters in SCREEN space, so on mount (canvas not yet sized)
+    // it culls every label and they stay hidden until the next redraw. Re-render when the container resizes — the
+    // post-mount size settle and any later resize — so labels re-evaluate against the real viewport. rAF-coalesced;
+    // self-disconnects once the panel is gone.
+    let rafR = 0;
+    const ro = new ResizeObserver(() => { if (!container.isConnected) { ro.disconnect(); return; } if (rafR) return; rafR = requestAnimationFrame(() => { rafR = 0; if (container.isConnected) this.redraw(); }); });
+    ro.observe(container);
   }
 
   private layers() {

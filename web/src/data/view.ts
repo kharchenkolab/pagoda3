@@ -9,6 +9,31 @@ export type Metadata =
 
 export interface DEResult { gene: number; symbol: string; meanA: number; meanB: number; lfc: number; }
 
+// Categorical levels arrive in stored / first-seen order, so a numeric grouping like leiden ("0".."27")
+// renders lexically (0,1,10,11,…,2). When EVERY label is a clean number we sort numerically — applied at
+// EVERY place a group order is established (metadata codes, precomputed group stats, markers) so all paths
+// agree and faceted panels stay aligned. Named categoricals (cell_type, sample, …) are left untouched.
+// Returns the permutation new→old (newOrder[i] = old index now at position i), or null when no reorder is needed.
+function numericGroupOrder(labels: string[]): number[] | null {
+  if (labels.length < 2 || !labels.every((c) => c.trim() !== "" && Number.isFinite(Number(c)))) return null;
+  const order = labels.map((_, i) => i).sort((a, b) => Number(labels[a]) - Number(labels[b]));
+  return order.every((o, i) => o === i) ? null : order;
+}
+// Reorder G column-blocks of a [G × stride] flat array per the new→old permutation.
+function reblock(a: Float64Array, order: number[], stride: number): Float64Array {
+  const out = new Float64Array(a.length);
+  for (let ni = 0; ni < order.length; ni++) { const src = order[ni] * stride, dst = ni * stride; for (let j = 0; j < stride; j++) out[dst + j] = a[src + j]; }
+  return out;
+}
+function reorderNumericCategorical(m: { kind: "categorical"; codes: Int32Array; categories: string[] }): Metadata {
+  const order = numericGroupOrder(m.categories);
+  if (!order) return m;
+  const remap = new Int32Array(m.categories.length); order.forEach((oldIdx, newIdx) => { remap[oldIdx] = newIdx; });
+  const codes = new Int32Array(m.codes.length);
+  for (let i = 0; i < m.codes.length; i++) { const c = m.codes[i]; codes[i] = c >= 0 ? remap[c] : c; }
+  return { kind: "categorical", codes, categories: order.map((i) => m.categories[i]) };
+}
+
 export class LstarView {
   ds: LstarDataset;
   private geneLabels?: string[];
@@ -56,7 +81,7 @@ export class LstarView {
         if (c === undefined) { c = cats.length; cats.push(vals[i]); ix.set(vals[i], c); }
         codes[i] = c;
       }
-      return { kind: "categorical", codes, categories: cats };
+      return reorderNumericCategorical({ kind: "categorical", codes, categories: cats });
     }
     const { data } = await this.ds.fieldDense(name);
     const values = data instanceof Float32Array ? data : Float32Array.from(data as any);
@@ -128,6 +153,9 @@ export class LstarView {
         }
       }
     }
+    // unify column order with metadata (numeric for leiden-like groupings) so faceted/scoped panels align
+    const gord = numericGroupOrder(groups);
+    if (gord) { groups = gord.map((i) => groups[i]); S = reblock(S, gord, ng); SS = reblock(SS, gord, ng); NE = reblock(NE, gord, ng); }
     const gi = new Map(groups.map((g, i) => [g, i]));
     const n = new Int32Array(groups.length);
     for (const c of md.codes) { const idx = gi.get(md.categories[c]); if (idx !== undefined) n[idx]++; }

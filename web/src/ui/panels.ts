@@ -330,7 +330,8 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
     for (const sym of p.genes) { const gi = await ctx.view.geneCol(sym); if (gi == null) { if (!missing.includes(sym)) missing.push(sym); continue; } if (pinnedSet.has(gi)) continue; pinnedSet.add(gi); pinnedRows.push({ gene: gi, symbol: sym, pinned: true }); } }
   const rows = [...pinnedRows, ...markerRows.filter((r) => !pinnedSet.has(r.gene))];
   const nPinned = pinnedRows.length;
-  const G = gs.groups.length, R = rows.length, x0 = 70, y0 = 6, axisH = 16;
+  const G = gs.groups.length, R = rows.length, x0 = 70, y0 = 6;
+  const xLabMax = Math.max(1, ...gs.groups.map((s) => s.length));   // longest column label — drives rotate vs horizontal
   const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
   let mode: "heat" | "dot" = p.heatMode === "heat" ? "heat" : "dot";   // dotplot is the default; "heat" only when explicitly set
   // cross-panel coordination state: which groups (columns) are selected / hovered elsewhere, translated into THIS
@@ -389,7 +390,13 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
   // hover can read the names. Re-runs on resize against the panel body's live dimensions.
   const draw = () => {
     const availW = host.clientWidth - 4, availH = host.clientHeight - 2;   // the GIVEN box; w is absolute so the svg can never grow it
-    const cw = clamp((availW - x0 - 6) / G, 6, 40), ch = clamp((availH - y0 - axisH) / R, 7, 26);
+    const cw = clamp((availW - x0 - 6) / G, 6, 40);
+    // x-axis labels: horizontal when they fit a column, else rotate −45° (scanpy/Seurat style) so every group
+    // stays legible without thinning. Reserve bottom space for the rotated band, capped so it can't eat the plot.
+    const estLabW = xLabMax * 5.4;   // ≈ mono char width at 9px
+    const rotX = estLabW > cw - 1;
+    const axisH = rotX ? clamp(estLabW * 0.72 + 10, 22, Math.max(40, availH * 0.42)) : 16;
+    const ch = clamp((availH - y0 - axisH) / R, 7, 26);
     geomCw = cw; geomCh = ch;   // remember live column size so paintCols can place the highlight bands
     const W = x0 + G * cw + 6, H = y0 + R * ch + axisH;
     let g = "";
@@ -406,7 +413,15 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
       g += `<text class="axis hgene" data-ri="${ri}" x="${x0 - 4}" y="${(y0 + ri * ch + ch * 0.72).toFixed(1)}" text-anchor="end"${r.pinned ? ' style="fill:var(--cyan);font-weight:600"' : ""}>${r.pinned ? "● " : ""}${esc(r.symbol)}</text>`;
     });
     if (nPinned > 0 && nPinned < R) g += `<line x1="${x0.toFixed(1)}" y1="${(y0 + nPinned * ch).toFixed(1)}" x2="${(x0 + G * cw).toFixed(1)}" y2="${(y0 + nPinned * ch).toFixed(1)}" stroke="var(--cyan)" stroke-opacity="0.4" stroke-width="0.6"/>`;
-    gs.groups.forEach((grp, c) => { g += `<text class="axis hgrp" data-c="${c}" x="${(x0 + c * cw + cw / 2).toFixed(1)}" y="${(y0 + R * ch + 11).toFixed(1)}" text-anchor="middle">${esc(grp)}</text>`; });
+    const bottomY = y0 + R * ch;
+    const xFit = rotX ? Math.max(3, Math.floor((axisH - 8) / 0.72 / 5.4)) : 99;   // chars that fit the rotated band (rest ellipsised; hover gives full)
+    gs.groups.forEach((grp, c) => {
+      const cx = x0 + c * cw + cw / 2;
+      const lab = grp.length > xFit ? grp.slice(0, xFit - 1) + "…" : grp;
+      g += rotX
+        ? `<text class="axis hgrp" data-c="${c}" x="${cx.toFixed(1)}" y="${(bottomY + 4).toFixed(1)}" text-anchor="end" transform="rotate(-45 ${cx.toFixed(1)} ${(bottomY + 4).toFixed(1)})">${esc(lab)}</text>`
+        : `<text class="axis hgrp" data-c="${c}" x="${cx.toFixed(1)}" y="${(bottomY + 11).toFixed(1)}" text-anchor="middle">${esc(lab)}</text>`;
+    });
     g += `<g class="hrowhl"></g><g class="hcolhl"></g>`;   // cross-panel hovered gene-row band + selected/hovered column bands
     g += `<rect class="hrowg" x="${x0}" width="${(G * cw).toFixed(1)}" height="${ch.toFixed(1)}" fill="rgba(150,225,255,.14)" pointer-events="none" style="display:none"/>`;
     g += `<rect class="hcolg" y="${y0}" width="${cw.toFixed(1)}" height="${(R * ch).toFixed(1)}" fill="rgba(150,225,255,.14)" pointer-events="none" style="display:none"/>`;
