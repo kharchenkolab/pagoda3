@@ -181,23 +181,36 @@ function geneListBody(p: Panel, hooks: PanelHooks): BuiltBody {
 }
 
 async function compositionBody(panel: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltBody> {
-  const grouping = panel.view?.colorBy?.startsWith("meta:") ? panel.view.colorBy.slice(5) : "leiden";   // per-panel stack grouping (p is padding below)
+  const grouping = panel.view?.colorBy?.startsWith("meta:") ? panel.view.colorBy.slice(5) : "leiden";   // per-panel stack grouping
   const { samples, conds, groups, props } = await ctx.composition(grouping);
-  const W = 460, H = 200, p = 28, bw = Math.min(46, (W - p - 6) / samples.length - 6);
-  // remember each category's segment box per sample — geometry for the hover ribbons
+  // remember each category's segment box per sample — geometry for the hover ribbons; recomputed each draw()
   const seg: ({ x: number; yTop: number; yBot: number } | null)[][] = groups.map(() => samples.map(() => null));
-  let g = "";
-  samples.forEach((sm, i) => {
-    const x = p + i * ((W - p - 6) / samples.length); let ya = H - 26;
-    props[i].forEach((pr, t) => { const h = pr * (H - 46); const yTop = ya - h; seg[t][i] = { x, yTop, yBot: ya };
-      g += `<rect class="cseg" data-g="${esc(groups[t])}" data-sm="${esc(sm)}" data-pct="${(pr * 100).toFixed(1)}" x="${x}" y="${yTop.toFixed(1)}" width="${bw}" height="${h.toFixed(1)}" fill="rgb(${catColor(t).join(",")})"/>`; ya = yTop; });
-    g += `<text class="axis" x="${x + bw / 2}" y="${H - 13}" text-anchor="middle">${esc(sm)}</text>`;
-    g += `<text class="axis" x="${x + bw / 2}" y="${H - 3}" text-anchor="middle" fill="${conds[i] === "disease" ? "var(--bad)" : "var(--cyan)"}">${esc(conds[i])}</text>`;
-  });
-  const host = mk("div", "comphost");
-  host.innerHTML = `<svg class="compsvg" viewBox="0 0 ${W} ${H}"><g class="cbars">${g}</g><g class="cribbons"></g></svg>`;
+  let bw = 40;   // live bar width, set by draw() — ribbonOf reads it
+  const w = mk("div"); w.style.cssText = "position:absolute;inset:0;display:flex;flex-direction:column;overflow:hidden";
+  const host = mk("div", "comphost"); host.style.cssText = "flex:1 1 auto;min-height:0;position:relative";
+  host.innerHTML = `<svg class="compsvg" width="100%" height="100%" preserveAspectRatio="none"><g class="cbars"></g><g class="cribbons"></g></svg>`;
   const leg = mk("div", "legend"); leg.innerHTML = groups.map((gr, i) => `<span class="lgi" data-g="${esc(gr)}"><span class="sw" style="background:rgb(${catColor(i).join(",")})"></span>${esc(gr)}</span>`).join("");
-  const w = mk("div"); w.style.position = "relative"; w.appendChild(host); w.appendChild(leg);
+  w.appendChild(host); w.appendChild(leg);
+  // Responsive: the bars fill the host's live height (no fixed aspect → no wasted vertical space). Re-lays on
+  // resize. A faint 0/50/100% scale reads the stacked proportions now that the bars are tall.
+  const draw = () => {
+    const W = host.clientWidth, H = host.clientHeight; if (W < 12 || H < 12) return;
+    const svg = host.querySelector(".compsvg") as SVGSVGElement;   // size the SVG to the host in px (height:100% won't resolve against a flex parent)
+    svg.setAttribute("width", String(W)); svg.setAttribute("height", String(H)); svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+    const p = 30, botH = 24, topPad = 6, barH = Math.max(20, H - botH - topPad);
+    const step = (W - p - 6) / samples.length; bw = Math.min(64, step - 8);
+    let g = "";
+    for (const f of [0, 0.5, 1]) { const y = topPad + barH * f; g += `<line x1="${p}" y1="${y.toFixed(1)}" x2="${W - 6}" y2="${y.toFixed(1)}" stroke="var(--line)" stroke-opacity="0.5" stroke-width="0.5"/><text class="axis" x="${p - 5}" y="${(y + 3).toFixed(1)}" text-anchor="end" style="font-size:8px">${Math.round((1 - f) * 100)}</text>`; }
+    samples.forEach((sm, i) => {
+      const x = p + i * step + (step - 6 - bw) / 2; let ya = topPad + barH;
+      props[i].forEach((pr, t) => { const h = pr * barH; const yTop = ya - h; seg[t][i] = { x, yTop, yBot: ya };
+        g += `<rect class="cseg" data-g="${esc(groups[t])}" data-sm="${esc(sm)}" data-pct="${(pr * 100).toFixed(1)}" x="${x.toFixed(1)}" y="${yTop.toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" fill="rgb(${catColor(t).join(",")})"/>`; ya = yTop; });
+      g += `<text class="axis" x="${(x + bw / 2).toFixed(1)}" y="${H - 13}" text-anchor="middle">${esc(sm)}</text>`;
+      g += `<text class="axis" x="${(x + bw / 2).toFixed(1)}" y="${H - 3}" text-anchor="middle" fill="${conds[i] === "disease" ? "var(--bad)" : "var(--cyan)"}">${esc(conds[i])}</text>`;
+    });
+    (host.querySelector(".cbars") as SVGGElement).innerHTML = g;
+    render();   // re-apply highlight/ribbon state against the new geometry
+  };
   const tip = mk("div"); tip.style.cssText = "position:absolute;display:none;background:var(--ink);border:1px solid var(--line2);border-radius:6px;padding:3px 8px;font-size:11px;color:var(--text);pointer-events:none;z-index:20;white-space:nowrap;box-shadow:0 4px 14px rgba(0,0,0,.45)"; w.appendChild(tip);
   const showTip = (e: PointerEvent, html: string) => { tip.innerHTML = html; tip.style.display = "block"; const r = w.getBoundingClientRect(); let x = e.clientX - r.left + 13; if (x + tip.offsetWidth > r.width - 4) x = e.clientX - r.left - tip.offsetWidth - 8; tip.style.left = Math.max(2, x) + "px"; tip.style.top = (e.clientY - r.top + 13) + "px"; };
 
@@ -231,7 +244,13 @@ async function compositionBody(panel: Panel, ctx: Ctx, hooks: PanelHooks): Promi
   w.addEventListener("pointerleave", () => { ctx.coord.clearHint(); tip.style.display = "none"; });
   w.addEventListener("click", (e) => { const n = nameAt(e); ctx.coord.setSelection(n ? { kind: "category", grouping, value: n } : null); });   // block → select; empty → deselect (mirrors the UMAP)
 
-  return { el: w, afterAttach: () => hooks.registerComposition({ grouping, setSelect: (v) => { selSet = v; render(); }, setHover: (v) => { hovSet = v; render(); } }) };
+  return { el: w, afterAttach: () => {
+    hooks.registerComposition({ grouping, setSelect: (v) => { selSet = v; render(); }, setHover: (v) => { hovSet = v; render(); } });
+    const pb = w.parentElement as HTMLElement | null; if (pb) { pb.style.position = "relative"; if (pb.clientHeight < 80) pb.style.height = "300px"; }   // contain the absolute w within the body
+    draw();
+    let ro: ResizeObserver; ro = new ResizeObserver(() => { if (!w.isConnected) ro.disconnect(); else draw(); });   // fill on resize; self-cleans
+    ro.observe(host);
+  } };
 }
 
 function volcanoBody(p: Panel, _ctx: Ctx): BuiltBody {

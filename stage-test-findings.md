@@ -113,3 +113,12 @@ park questionable calls for review.
   Sankey primitive, cells not tracked across day0→day7 so flow is undefined) + offered faceting. No crash.
 - S1 stress: 7 rapid workspace switches (120ms apart, faster than render) → no duplicated/orphaned panels,
   DOM matches model exactly. The renderToken reentrancy guard holds.
+
+### Scenario 8 — Long-tail UI / density sweep
+- **Bug H — CompositionBars wasted ~40% of its height.** The bars used a fixed `viewBox 460×200` (2.3:1),
+  scaling to width but never growing vertically, so the lower ~335px of a full-height panel sat empty.
+  Fix: refactored to a responsive `draw()`-on-resize (like the heatmap) — bars fill the host height, with
+  a faint 0/50/100% y-axis scale added for the now-taller bars. Coordination (hover ribbons + segment
+  click → selection) preserved. Verified: bars fill the panel, no overflow, click still selects.
+  (panels.ts compositionBody). [Watch out: needed pb.position=relative to contain the absolute fill — an
+  SVG height:100% won't resolve against a flex parent, so draw() sets explicit px width/height/viewBox.]
