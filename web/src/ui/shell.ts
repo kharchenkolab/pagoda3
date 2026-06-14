@@ -9,6 +9,7 @@ import { normalizeViewPatch, RawViewPatch, World, PanelSpec, PanelPatch } from "
 import { validateCellSet, resolveCellSet, describeCellSet, CellSet, CellWorld, CellEnv } from "../agent/cellset.ts";
 import { validateComputeResult, runInWorker } from "../agent/codeapi.ts";
 import { setCodeValues } from "../render/colors.ts";
+import { paletteNames, normalizePalette } from "../render/palettes.ts";
 
 interface Checkpoint { i: number; q: string; why: string; state: any; kind?: "ask" | "act"; exchange?: { kind: string; entries?: any[]; turns?: any[] }; }
 interface WS { colorBy: string; panels: Partial<Panel>[]; }
@@ -170,6 +171,13 @@ export class App {
         : this.ctx.groupings().map((g) => `<option value="meta:${g}"${"meta:" + g === cur ? " selected" : ""}>${handleLabel("meta:" + g)}</option>`).join("");
       s.onchange = () => this.configurePanel(p.id, { colorBy: s.value });
       sp.appendChild(s);
+      if (isEmb) {   // colour-map picker — only meaningful for NUMERIC colourings (genes/qc/scores); hidden for categoricals
+        const cm = document.createElement("select"); cm.className = "inline cm"; cm.dataset.pid = String(p.id); cm.title = "colour map (numeric colourings)";
+        cm.innerHTML = paletteNames().map((nm) => `<option value="${nm}"${(p.view?.colormap || "amber") === nm ? " selected" : ""}>${nm}</option>`).join("");
+        cm.onchange = () => this.configurePanel(p.id, { colormap: cm.value });
+        cm.style.display = this.isNumericColoring(cur) ? "" : "none";
+        sp.appendChild(cm);
+      }
     }
     if (p.type === "Embedding") {
       // view-option toggles — the direct-manipulation tier of display state (the agent drives the same via set_display).
@@ -231,14 +239,14 @@ export class App {
   configurePanel(panelId: number, patch: Partial<PanelView> & { heatMode?: "heat" | "dot"; genes?: string[] }) {
     const p = this.canvas.find((z) => z.id === panelId) || this.rail.find((z) => z.id === panelId);
     if (!p) return;
-    const rebuild = this.applyPanelModel(p, { colorBy: patch.colorBy, scope: patch.scope, embedding: patch.embedding, heatMode: patch.heatMode, genes: patch.genes });
+    const rebuild = this.applyPanelModel(p, { colorBy: patch.colorBy, scope: patch.scope, embedding: patch.embedding, colormap: patch.colormap, heatMode: patch.heatMode, genes: patch.genes });
     if (rebuild) this.fullRender(); else { this.repaint(); this.syncColorSelects(); this.syncToggles(); }   // keep every control in step
   }
 
   // Mutate ONE panel's model from a patch (no render). colorBy/scope/embedding live on .view; heatMode/genes/title
   // are top-level. Returns whether the change needs a body REBUILD (vs a cheap repaint). Shared by the per-panel
   // dropdown and the declarative patcher, so both treat a panel identically.
-  applyPanelModel(p: Panel, patch: { title?: string; colorBy?: string; scope?: EntityRef | null; embedding?: string; heatMode?: "heat" | "dot"; genes?: string[] }): boolean {
+  applyPanelModel(p: Panel, patch: { title?: string; colorBy?: string; scope?: EntityRef | null; embedding?: string; colormap?: string; heatMode?: "heat" | "dot"; genes?: string[] }): boolean {
     let rebuild = false;
     if (patch.title != null && patch.title !== p.title) { p.title = patch.title; rebuild = true; }   // title shows in the header (panelEl) → rebuild
     if (patch.colorBy != null) { this.noteColor(patch.colorBy); if (p.type !== "Embedding") rebuild = true; }   // recolouring a non-embedding (e.g. composition restack) needs a rebuild
@@ -249,6 +257,7 @@ export class App {
     const v: PanelView = { ...p.view };
     if (patch.colorBy != null) v.colorBy = patch.colorBy;
     if (patch.embedding != null) v.embedding = patch.embedding;
+    if (patch.colormap != null) v.colormap = patch.colormap;   // numeric palette; a recolour (repaint), no rebuild
     if (patch.scope !== undefined) { if (patch.scope === null) delete v.scope; else v.scope = patch.scope; }
     p.view = v;
     return rebuild;
@@ -270,6 +279,8 @@ export class App {
       panelExists: (id) => all().some((p) => p.id === id),
       panelType: (id) => all().find((p) => p.id === id)?.type,
       panelGenes: (id) => all().find((p) => p.id === id)?.genes || [],
+      colormaps: paletteNames(),
+      normalizeColormap: normalizePalette,
     };
     const { ops, rejected, notes } = normalizeViewPatch(patch, world);
     const applied: string[] = [];
@@ -296,6 +307,7 @@ export class App {
     if (spec.colorBy) view.colorBy = spec.colorBy;
     if (spec.scope) view.scope = { kind: "category", grouping: spec.scope.grouping, value: spec.scope.value };
     if (spec.embedding) view.embedding = spec.embedding;
+    if (spec.colormap) view.colormap = spec.colormap;
     const isHeat = spec.type === "Heatmap";
     const grp = isHeat ? (spec.group || "leiden") : undefined;
     return { type: spec.type, title: spec.title || spec.type, group: grp, heatMode: spec.heatMode, genes: spec.genes,
@@ -305,7 +317,7 @@ export class App {
   addPanelModel(spec: PanelSpec): number { const p = this.newPanel(this.specToPanel(spec)); this.canvas.push(p); return p.id; }
   removePanel(id: number): boolean { const n = this.canvas.length + this.rail.length; this.canvas = this.canvas.filter((z) => z.id !== id); this.rail = this.rail.filter((z) => z.id !== id); return this.canvas.length + this.rail.length < n; }
   private patchToModel(patch: PanelPatch) {
-    return { title: patch.title, colorBy: patch.colorBy, embedding: patch.embedding, heatMode: patch.heatMode, genes: patch.genes,
+    return { title: patch.title, colorBy: patch.colorBy, embedding: patch.embedding, colormap: patch.colormap, heatMode: patch.heatMode, genes: patch.genes,
       scope: patch.scope === undefined ? undefined : (patch.scope === null ? null : { kind: "category", grouping: patch.scope.grouping, value: patch.scope.value } as EntityRef) };
   }
 
@@ -605,13 +617,23 @@ export class App {
   // keep each panel's dropdown showing ITS effective handle (per-panel override, else the global default).
   // Embedding dropdowns accept any handle (add the option if it's a gene not in the standard list); a
   // composition dropdown only ever shows a grouping (it ignores a global gene colouring, falling back to its grouping).
+  // Is a colour handle a NUMERIC colouring (so a colormap applies)? gene/qc/code/geneset are; meta: only when the field isn't categorical.
+  isNumericColoring(handle: string): boolean { return !handle.startsWith("meta:") || this.ctx.categoricalValues(handle.slice(5)).length === 0; }
+
   syncColorSelects() {
-    document.querySelectorAll<HTMLSelectElement>("select.inline").forEach((s) => {
+    document.querySelectorAll<HTMLSelectElement>("select.inline:not(.cm)").forEach((s) => {
       const p = this.canvas.find((z) => z.id === Number(s.dataset.pid)); if (!p) return;
       if (p.type === "Embedding") {
         const eff = p.view?.colorBy ?? this.coord.state.colorBy;
         s.innerHTML = this.colorOptionsHtml(eff);   // rebuilt from the capped list — no unbounded accumulation
       } else { const eff = p.view?.colorBy ?? ("meta:" + (this.ctx.groupings()[0] || "leiden")); if ([...s.options].some((o) => o.value === eff)) s.value = eff; }
+    });
+    // colour-map pickers: show only for numeric colourings; keep the value in step with the panel's colormap
+    document.querySelectorAll<HTMLSelectElement>("select.cm").forEach((s) => {
+      const p = this.canvas.find((z) => z.id === Number(s.dataset.pid)); if (!p) return;
+      const eff = p.view?.colorBy ?? this.coord.state.colorBy;
+      s.style.display = this.isNumericColoring(eff) ? "" : "none";
+      const cmv = p.view?.colormap || "amber"; if ([...s.options].some((o) => o.value === cmv)) s.value = cmv;
     });
   }
 

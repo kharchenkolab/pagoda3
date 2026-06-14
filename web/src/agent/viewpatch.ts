@@ -20,6 +20,7 @@ export interface RawPanelOp {
   scopeValue?: string;
   clearScope?: boolean;
   embedding?: string;
+  colormap?: string;       // palette for numeric colourings (amber/viridis/rdbu/…); aliases like "red-to-blue" ok
   group?: string;          // Heatmap grouping
   heatMode?: string;       // "heatmap" | "dotplot" (also accepts "heat" | "dot")
   genes?: string[];        // Heatmap: pin these genes (merged with existing unless clearGenes)
@@ -35,8 +36,8 @@ export interface RawViewPatch {
 }
 
 export interface Scope { grouping: string; value: string; }
-export interface PanelSpec { type: string; title?: string; colorBy?: string; scope?: Scope; embedding?: string; group?: string; heatMode?: HeatMode; genes?: string[]; }
-export interface PanelPatch { title?: string; colorBy?: string; scope?: Scope | null; embedding?: string; heatMode?: HeatMode; genes?: string[]; }
+export interface PanelSpec { type: string; title?: string; colorBy?: string; scope?: Scope; embedding?: string; colormap?: string; group?: string; heatMode?: HeatMode; genes?: string[]; }
+export interface PanelPatch { title?: string; colorBy?: string; scope?: Scope | null; embedding?: string; colormap?: string; heatMode?: HeatMode; genes?: string[]; }
 
 export type NormOp =
   | { kind: "color"; handle: string }
@@ -60,6 +61,8 @@ export interface World {
   panelExists: (id: number) => boolean;
   panelType: (id: number) => string | undefined;
   panelGenes: (id: number) => string[];
+  colormaps: string[];                                  // available palette names (for error messages)
+  normalizeColormap: (name: string) => string | null;   // a spelling/alias → canonical palette, or null
 }
 
 export interface NormResult { ops: NormOp[]; rejected: string[]; notes: string[]; }
@@ -144,6 +147,7 @@ export function normalizeViewPatch(patch: RawViewPatch, w: World): NormResult {
       if (typeof op.colorBy === "string" && op.colorBy) { const e = colorError(op.colorBy, w); if (e) rejected.push(`${where} colorBy: ${e}`); else spec.colorBy = op.colorBy; }
       if (op.scopeGrouping && op.scopeValue) { const s = scopeFrom(op.scopeGrouping, op.scopeValue, w, where, rejected); if (s) spec.scope = s; }
       if (typeof op.embedding === "string" && op.embedding) { if (w.embeddings.includes(op.embedding)) spec.embedding = op.embedding; else rejected.push(`${where}: unknown embedding "${op.embedding}" (have: ${w.embeddings.join(", ") || "umap"})`); }
+      if (typeof op.colormap === "string" && op.colormap) { const cm = w.normalizeColormap(op.colormap); if (cm) spec.colormap = cm; else rejected.push(`${where}: unknown colormap "${op.colormap}" (have: ${w.colormaps.join(", ")})`); }
       if (isHeat) {
         if (op.group) { if (w.groupings.includes(op.group)) spec.group = op.group; else rejected.push(`${where}: unknown grouping "${op.group}"`); }
         const hm = normHeatMode(op.heatMode); if (hm) spec.heatMode = hm; else if (op.heatMode != null) notes.push(`${where}: heatMode "${op.heatMode}" ignored (use heatmap|dotplot)`);
@@ -160,6 +164,7 @@ export function normalizeViewPatch(patch: RawViewPatch, w: World): NormResult {
     if (op.clearScope) pp.scope = null;
     else if (op.scopeGrouping && op.scopeValue) { const s = scopeFrom(op.scopeGrouping, op.scopeValue, w, where, rejected); if (s) pp.scope = s; }
     if (typeof op.embedding === "string" && op.embedding) { if (w.embeddings.includes(op.embedding)) pp.embedding = op.embedding; else rejected.push(`${where}: unknown embedding "${op.embedding}"`); }
+    if (typeof op.colormap === "string" && op.colormap) { const cm = w.normalizeColormap(op.colormap); if (cm) pp.colormap = cm; else rejected.push(`${where}: unknown colormap "${op.colormap}" (have: ${w.colormaps.join(", ")})`); }
     if (isHeat) {
       const hm = normHeatMode(op.heatMode); if (hm) pp.heatMode = hm; else if (op.heatMode != null) notes.push(`${where}: heatMode "${op.heatMode}" ignored`);
       if (op.clearGenes || op.genes) { const base = op.clearGenes ? [] : w.panelGenes(op.id); pp.genes = resolveGenes(base, op.genes, w, where, notes); }

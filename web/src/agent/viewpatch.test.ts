@@ -28,6 +28,8 @@ function makeWorld(): World {
     panelExists: (id) => id in panels,
     panelType: (id) => panels[id]?.type,
     panelGenes: (id) => panels[id]?.genes || [],
+    colormaps: ["amber", "viridis", "rdbu", "bluered", "blues"],
+    normalizeColormap: (n) => ({ amber: "amber", viridis: "viridis", rdbu: "rdbu", redblue: "rdbu", redtoblue: "rdbu" } as Record<string, string>)[String(n).toLowerCase().replace(/[\s_-]+/g, "")] || null,
   };
 }
 
@@ -123,6 +125,17 @@ test("scope: valid resolves; bad grouping/value rejected; clearScope → null", 
 
   const clear = normalizeViewPatch({ panels: [{ id: 5, clearScope: true }] }, w);
   assert.strictEqual((find(clear.ops, "configPanel")[0] as any).patch.scope, null);
+});
+
+test("colormap: alias normalized; unknown rejected", () => {
+  const w = makeWorld();
+  const ok = normalizeViewPatch({ panels: [{ id: 5, colormap: "red-to-blue" }] }, w);
+  assert.equal((find(ok.ops, "configPanel")[0] as any).patch.colormap, "rdbu");   // alias → canonical
+  const add = normalizeViewPatch({ panels: [{ add: "Embedding", colormap: "viridis" }] }, w);
+  assert.equal((find(add.ops, "addPanel")[0] as any).spec.colormap, "viridis");
+  const bad = normalizeViewPatch({ panels: [{ id: 5, colormap: "rainbow" }] }, w);
+  assert.equal(find(bad.ops, "configPanel").length, 0);
+  assert.match(bad.rejected[0], /unknown colormap "rainbow"/);
 });
 
 test("heatMode/genes ignored on non-Heatmap panels (noted)", () => {

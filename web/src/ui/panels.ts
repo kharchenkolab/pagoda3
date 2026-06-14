@@ -11,7 +11,8 @@ export interface PanelView {
   colorBy?: string;     // override the panel's colouring handle (else falls back to coord.colorBy)
   scope?: EntityRef;    // restrict the panel to a cell set — the embedding reframes to it + desaturates the rest
   embedding?: string;   // which embedding this panel renders (e.g. "umap" vs "umap.unintegrated"); else the default
-  // (future: scale, clip, splitBy, highlight, colormap, overlays)
+  colormap?: string;    // palette for NUMERIC colourings (gene/qc/score): amber (default), viridis, rdbu, bluered, …
+  // (future: scale, clip, splitBy, highlight, overlays)
 }
 
 export interface Panel {
@@ -93,7 +94,7 @@ export async function paintEmbedding(ev: EmbeddingView, ctx: Ctx) {
   if (scopeCells && scopeCells.length) { mask = new Uint8Array(ctx.n); for (let j = 0; j < scopeCells.length; j++) mask[scopeCells[j]] = 1; }
   else if (selCells.length) { mask = new Uint8Array(ctx.n); for (let j = 0; j < selCells.length; j++) mask[selCells[j]] = 1; }
   else mask = await focusMaskFor(ctx.view, c.focus, ctx.n);
-  const { rgba, legend } = await colorsFor(ctx.view, colorBy, mask);
+  const { rgba, legend } = await colorsFor(ctx.view, colorBy, mask, view?.colormap);
   ev.setColors(rgba);
   ev.setSelection(selCells.length ? selCells : null);
   ev.setAlpha(c.display.alpha);
