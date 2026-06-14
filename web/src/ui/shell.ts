@@ -152,7 +152,11 @@ export class App {
     const h = mk("div", "ph");
     const grip = mk("span", "grip", "⠿"); h.appendChild(grip);
     h.appendChild(Object.assign(mk("span", "pt"), { textContent: p.title }));
-    if (p.cap) h.appendChild(Object.assign(mk("span", "pc"), { textContent: "· " + p.cap }));
+    // An embedding's colouring is shown live by its colour dropdown, so a static cap (e.g. "clusters") only goes
+    // stale on recolour. For embeddings the caption tracks SCOPE instead (the dropdown can't show that): the
+    // scoped population when scoped, nothing when showing all cells. Other panels keep their descriptive cap.
+    const capText = p.type === "Embedding" ? ((p.view?.scope as any)?.value || "") : p.cap;
+    if (capText) h.appendChild(Object.assign(mk("span", "pc"), { textContent: "· " + capText }));
     const sp = mk("div", "sp");
     if (p.type === "Embedding" || p.type === "CompositionBars") {
       // per-panel handle picker — controls THIS panel only (configure_panel), so it still works when the agent
@@ -235,11 +239,12 @@ export class App {
   // dropdown and the declarative patcher, so both treat a panel identically.
   applyPanelModel(p: Panel, patch: { title?: string; colorBy?: string; scope?: EntityRef | null; embedding?: string; heatMode?: "heat" | "dot"; genes?: string[] }): boolean {
     let rebuild = false;
-    if (patch.title != null) p.title = patch.title;
+    if (patch.title != null && patch.title !== p.title) { p.title = patch.title; rebuild = true; }   // title shows in the header (panelEl) → rebuild
     if (patch.colorBy != null) { this.noteColor(patch.colorBy); if (p.type !== "Embedding") rebuild = true; }   // recolouring a non-embedding (e.g. composition restack) needs a rebuild
     if (patch.embedding != null && patch.embedding !== p.view?.embedding) rebuild = true;
     if (patch.heatMode != null && patch.heatMode !== p.heatMode) { p.heatMode = patch.heatMode; rebuild = true; }
     if (patch.genes != null) { p.genes = patch.genes; rebuild = true; }
+    if (patch.scope !== undefined) rebuild = true;   // scope reframes the embedding AND drives its header caption → rebuild so both update
     const v: PanelView = { ...p.view };
     if (patch.colorBy != null) v.colorBy = patch.colorBy;
     if (patch.embedding != null) v.embedding = patch.embedding;
