@@ -25,7 +25,7 @@ const TOOLS: Tool[] = [
         add: { type: "string", description: "create a panel of this type: Embedding | Heatmap | CompositionBars" },
         remove: { type: "boolean" },
         title: { type: "string" },
-        col: { type: "number", enum: [0, 1], description: "pin to a workbench column: 0 = left, 1 = right. Put two panels in the SAME col to stack them one under another in that column." },
+        col: { type: "number", enum: [0, 1], description: "pin to a workbench column: 0 = left, 1 = right. Added panels auto-balance across the two columns, so usually you don't need this — set it (or full) only for DELIBERATE stacking. Put two panels in the SAME col to stack them one under another." },
         full: { type: "boolean", description: "span the full width. Two full panels stack one under another (full-width) — the simplest 'one over the other' compare layout." },
         colorBy: { type: "string", description: "per-panel colour override (same handle forms as `color`)" },
         scopeGrouping: { type: "string" }, scopeValue: { type: "string", description: "restrict the panel to this field=value's cells" }, clearScope: { type: "boolean" },

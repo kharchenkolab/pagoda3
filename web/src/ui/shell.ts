@@ -233,12 +233,14 @@ export class App {
   // to a column, so you can stack two panels in one column (e.g. 3 panels = 1 left + 2 right). The shorter
   // column's last panel spans the leftover rows so there's never an empty hole. `full` panels span both columns.
   layoutCanvas(wb: HTMLElement) {
-    let rowL = 1, rowR = 1, k = 0; let lastLeft: HTMLElement | null = null, lastRight: HTMLElement | null = null;
+    let rowL = 1, rowR = 1; let lastLeft: HTMLElement | null = null, lastRight: HTMLElement | null = null;
     const lone = this.canvas.length === 1;
     for (const p of this.canvas) {
       const el = wb.querySelector<HTMLElement>(`.panel[data-pid="${p.id}"]`); if (!el) continue;
       if (p.full || lone) { const r = Math.max(rowL, rowR); el.style.gridColumn = "1 / -1"; el.style.gridRow = String(r); delete el.dataset.col; rowL = rowR = r + 1; lastLeft = lastRight = null; continue; }
-      const col = p.col === 0 || p.col === 1 ? p.col : k % 2; k++;
+      // pinned → its column; unpinned → the SHORTER column so panels stay balanced (a new panel doesn't pile onto
+      // an already-full column and scroll off — the stacked-dotplots-plus-UMAP case).
+      const col = p.col === 0 || p.col === 1 ? p.col : (rowL <= rowR ? 0 : 1);
       if (col === 0) { el.style.gridColumn = "1"; el.style.gridRow = String(rowL++); el.dataset.col = "0"; lastLeft = el; }
       else { el.style.gridColumn = "2"; el.style.gridRow = String(rowR++); el.dataset.col = "1"; lastRight = el; }
     }
