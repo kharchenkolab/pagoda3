@@ -18,6 +18,7 @@ export interface Panel {
   id: number; type: string; title: string; cap?: string; full?: boolean;
   bind?: string; text?: string; q?: string; group?: string; gene?: string;
   aLabel?: string; bLabel?: string;   // DE mean-column headers (the two groups being contrasted)
+  heatMode?: "heat" | "dot";          // Heatmap panel: colour grid vs dotplot (size = % expressing)
   view?: PanelView;
   split?: { levels: string[]; genes: string[]; means: number[][] };   // gene × donor concordance matrix (SplitHeat)
   rows?: { gene?: number; symbol: string; lfc?: number; padj?: number; score?: number; meanA?: number; meanB?: number }[];
@@ -311,6 +312,7 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
   for (const grp of gs.groups) for (const m of (markers.get(grp) || []).slice(0, 3)) if (!seen.has(m.gene)) { seen.add(m.gene); rows.push({ gene: m.gene, symbol: m.symbol }); }
   const G = gs.groups.length, R = rows.length, x0 = 70, y0 = 6, axisH = 16;
   const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+  let mode: "heat" | "dot" = p.heatMode === "dot" ? "dot" : "heat";   // colour grid vs dotplot (size = % expressing)
 
   // Responsive: the grid is re-laid to fill the panel — cell size derives from the live width/height and
   // re-draws on resize. Axis labels stay faint and are read on hover, so dense rows remain fine.
@@ -319,7 +321,7 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
   const tip = mk("div"); tip.style.cssText = "position:absolute;display:none;background:var(--ink);border:1px solid var(--line2);border-radius:6px;padding:3px 8px;font-size:11px;color:var(--text);pointer-events:none;z-index:20;white-space:nowrap;box-shadow:0 4px 14px rgba(0,0,0,.45)";
   w.appendChild(tip);
   const hint = mk("div"); hint.style.cssText = "flex:0 0 auto;font-size:10.5px;color:var(--faint);padding:5px 7px 2px;line-height:1.4";
-  hint.textContent = "hover a cell to read its gene × cell type · click a gene to colour by it · click a column to focus the type";
+  hint.textContent = "hover to read mean & % expressing · dot view: size = % of cells expressing · click a gene to colour by it";
   w.appendChild(hint);
   const showTip = (e: PointerEvent, html: string) => {
     tip.innerHTML = html; tip.style.display = "block";
@@ -335,10 +337,13 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
     const cw = clamp((availW - x0 - 6) / G, 6, 40), ch = clamp((availH - y0 - axisH) / R, 7, 26);
     const W = x0 + G * cw + 6, H = y0 + R * ch + axisH;
     let g = "";
+    const maxR = Math.max(1.4, Math.min(cw, ch) / 2 - 1.2);   // dot radius at 100% expressing
     rows.forEach((r, ri) => {
       let mx = 1e-6; for (let c = 0; c < G; c++) mx = Math.max(mx, gs.mean[c * gs.nGenes + r.gene]);
       for (let c = 0; c < G; c++) { const t = Math.min(1, gs.mean[c * gs.nGenes + r.gene] / mx);
-        g += `<rect class="hcell" data-ri="${ri}" data-c="${c}" x="${(x0 + c * cw).toFixed(2)}" y="${(y0 + ri * ch).toFixed(2)}" width="${(cw - 0.5).toFixed(2)}" height="${(ch - 0.5).toFixed(2)}" fill="${ramp(t)}"/>`; }
+        if (mode === "dot") { const fr = gs.frac[c * gs.nGenes + r.gene]; const rad = Math.max(0.5, Math.sqrt(fr) * maxR);   // area ∝ fraction expressing
+          g += `<circle class="hcell" data-ri="${ri}" data-c="${c}" cx="${(x0 + c * cw + cw / 2).toFixed(2)}" cy="${(y0 + ri * ch + ch / 2).toFixed(2)}" r="${rad.toFixed(2)}" fill="${ramp(t)}"/>`; }
+        else g += `<rect class="hcell" data-ri="${ri}" data-c="${c}" x="${(x0 + c * cw).toFixed(2)}" y="${(y0 + ri * ch).toFixed(2)}" width="${(cw - 0.5).toFixed(2)}" height="${(ch - 0.5).toFixed(2)}" fill="${ramp(t)}"/>`; }
       g += `<text class="axis hgene" data-ri="${ri}" x="${x0 - 4}" y="${(y0 + ri * ch + ch * 0.72).toFixed(1)}" text-anchor="end">${esc(r.symbol)}</text>`;
     });
     gs.groups.forEach((grp, c) => { g += `<text class="axis hgrp" data-c="${c}" x="${(x0 + c * cw + cw / 2).toFixed(1)}" y="${(y0 + R * ch + 11).toFixed(1)}" text-anchor="middle">${esc(grp)}</text>`; });
@@ -352,7 +357,7 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
     svg.querySelectorAll<SVGElement>(".hcell").forEach((el) => {
       const ri = +el.getAttribute("data-ri")!, c = +el.getAttribute("data-c")!, sym = rows[ri].symbol, grp = gs.groups[c]; el.style.cursor = "pointer";
       el.addEventListener("pointermove", (e) => { rowg.setAttribute("y", String(y0 + ri * ch)); colg.setAttribute("x", String(x0 + c * cw)); rowg.style.display = colg.style.display = "block";
-        showTip(e as PointerEvent, `<b>${esc(sym)}</b> · ${esc(grp)} <span style="color:var(--faint)">${gs.mean[c * gs.nGenes + rows[ri].gene].toFixed(2)}</span>`); ctx.coord.setHint({ kind: "category", grouping, value: grp }); });
+        showTip(e as PointerEvent, `<b>${esc(sym)}</b> · ${esc(grp)} <span style="color:var(--faint)">mean ${gs.mean[c * gs.nGenes + rows[ri].gene].toFixed(2)} · ${(gs.frac[c * gs.nGenes + rows[ri].gene] * 100).toFixed(0)}% expr</span>`); ctx.coord.setHint({ kind: "category", grouping, value: grp }); });
       el.addEventListener("click", () => hooks.onGeneClick(sym));
     });
     svg.querySelectorAll<SVGElement>(".hgene").forEach((el) => {
@@ -377,7 +382,15 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
     ro = new ResizeObserver(() => { if (!w.isConnected) ro.disconnect(); else draw(); });   // re-fill on resize; self-cleans
     if (pb) ro.observe(pb);
   };
-  return { el: w, afterAttach };
+  // header toggle: heatmap (colour grid) ↔ dotplot (dot size = % expressing). Redraws in place; mode persists on the panel.
+  const toggle = mk("div", "segtog");
+  const setMode = (m: "heat" | "dot") => { if (mode === m) return; mode = m; p.heatMode = m; toggle.querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.getAttribute("data-m") === m)); draw(); };
+  for (const [m, label] of [["heat", "heat"], ["dot", "dot"]] as const) {
+    const b = mk("button", "mini" + (mode === m ? " on" : ""), label) as HTMLButtonElement;
+    b.setAttribute("data-m", m); b.title = m === "dot" ? "dotplot — dot size = % of cells expressing, colour = mean" : "heatmap — colour = mean expression";
+    b.onclick = () => setMode(m); toggle.appendChild(b);
+  }
+  return { el: w, afterAttach, headerControls: toggle };
 }
 
 function ramp(t: number): string {
