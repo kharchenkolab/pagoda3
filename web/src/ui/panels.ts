@@ -92,6 +92,7 @@ export async function paintEmbedding(ev: EmbeddingView, ctx: Ctx) {
   const { rgba, legend } = await colorsFor(ctx.view, colorBy, mask);
   ev.setColors(rgba);
   ev.setSelection(selCells.length ? selCells : null);
+  ev.setAlpha(c.display.alpha);
   // view options come from the coordination space (agent- and user-drivable), never decided here.
   const isCat = legend.kind === "categorical";
   ev.setLabels(c.display.labels && isCat ? await categoryLabels(ctx, colorBy, ctx.embeddingOf(view?.embedding).data) : []);

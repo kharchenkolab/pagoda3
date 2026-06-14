@@ -14,6 +14,7 @@ export class EmbeddingView {
   private selected: Uint8Array;        // n (0/1)
   private n: number;
   private radius = 2.4;
+  private pointAlpha = 0.7;   // cells-layer opacity (display.alpha); <1 conveys density
   private container: HTMLElement;
   private viewState: any;
   onSelect?: (ids: Int32Array) => void;
@@ -77,6 +78,7 @@ export class EmbeddingView {
         radiusMinPixels: 1,
         stroked: false,
         pickable: true,
+        opacity: this.pointAlpha,                 // <1 lets overlapping cells convey density
         updateTriggers: { all: this.colorVersion },
       }) as any,
       // selection halo — only for a SMALL freeform selection (pinpoints the cells). A large cluster selection
@@ -151,6 +153,9 @@ export class EmbeddingView {
   setCrosshairCell(i: number | null) { this.crosshairXY = i == null ? null : [this.positions[i * 2], this.positions[i * 2 + 1]]; this.hintVersion++; this.redraw(); }
   /** CATEGORY hint: lift a set of cells as a light overlay (null clears). */
   setHighlightCells(ids: Int32Array | null) { this.highlightIds = ids; this.hintVersion++; this.redraw(); }
+
+  /** Point opacity for the cells layer — <1 reveals density through overlap. */
+  setAlpha(a: number) { if (a === this.pointAlpha || !(a > 0)) return; this.pointAlpha = a; this.redraw(); }
 
   /** Place category names at their centroids (categorical colouring); pass [] to clear (numeric colouring). */
   setLabels(labels: { text: string; p: [number, number]; priority: number }[]) { this.labels = labels; this.labelVersion++; this.redraw(); }
