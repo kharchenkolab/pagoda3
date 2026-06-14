@@ -96,8 +96,8 @@ function resolveGenes(base: string[], wanted: string[] | undefined, w: World, wh
   const out = [...base]; const unknown: string[] = [];
   for (const raw of wanted || []) {
     const sym = String(raw).trim(); if (!sym) continue;
-    if (!w.geneExists(sym)) { unknown.push(sym); continue; }
-    if (!out.includes(sym)) out.push(sym);
+    if (!w.geneExists(sym)) unknown.push(sym);
+    if (!out.includes(sym)) out.push(sym);   // keep even if unmeasured — the panel surfaces it as "not in this dataset" (visible feedback, not silence)
   }
   if (unknown.length) notes.push(`${where}: not measured in this dataset — ${unknown.join(", ")}`);
   return out;

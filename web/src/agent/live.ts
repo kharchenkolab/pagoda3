@@ -30,7 +30,7 @@ const TOOLS: Tool[] = [
         embedding: { type: "string", description: "which embedding to render (see EMBEDDINGS)" },
         group: { type: "string", description: "Heatmap: grouping to stack on (e.g. cell_type)" },
         heatMode: { type: "string", enum: ["heatmap", "dotplot"], description: "Heatmap representation" },
-        genes: { type: "array", items: { type: "string" }, description: "Heatmap: pin these exact HGNC genes (highlighted; merged with existing)" },
+        genes: { type: "array", items: { type: "string" }, description: "Heatmap: pin these exact HGNC genes as highlighted rows IN the panel (merged with existing). This is how to 'add/highlight a gene in the dotplot/heatmap' — NOT `color` (which recolours the embedding). A gene not in the dataset is shown as a 'not in this dataset' footnote in the panel." },
         clearGenes: { type: "boolean", description: "Heatmap: drop existing pinned genes first" },
       } } },
     } } },

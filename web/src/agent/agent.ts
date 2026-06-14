@@ -194,7 +194,9 @@ export class Agent {
     }
     for (const t of turns) { if (!t.text) continue; if (t.role === "user" && !skippedFirstUser) { skippedFirstUser = true; continue; } const d = mk("div", "turn " + t.role); d.innerHTML = `<span class="ava">${t.role === "user" ? "me" : "✦"}</span><div class="msg">${t.text}</div>`; det.appendChild(d); }
     card.appendChild(det);
-    head.onclick = () => card.classList.toggle("exp");
+    // click anywhere on the card toggles expand/collapse — but don't fight a text selection or a click on a link/button
+    card.style.cursor = "pointer";
+    card.onclick = (e) => { if (window.getSelection()?.toString()) return; if ((e.target as Element).closest("a, button, input, select")) return; card.classList.toggle("exp"); };
     return card;
   }
   dockSend(text: string) { const t = this.app.thread; const last = t?.turns?.[t.turns.length - 1]; if (t && t.kind === "dialogue" && last?.role === "agent" && last.replies?.length) this.threadReply(text); else this.ask(text); }

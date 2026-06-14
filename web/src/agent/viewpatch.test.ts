@@ -96,8 +96,8 @@ test("add Heatmap: dotplot + grouping + genes, with unknown gene noted", () => {
   const spec = (find(r.ops, "addPanel")[0] as any).spec;
   assert.equal(spec.heatMode, "dot");          // dotplot → dot
   assert.equal(spec.group, "cell_type");
-  assert.deepEqual(spec.genes, ["IL17RA"]);    // IL17A dropped
-  assert.match(r.notes.join(" "), /IL17A/);    // and reported
+  assert.deepEqual(spec.genes, ["IL17A", "IL17RA"]);   // both KEPT (IL17A surfaces as "not in this dataset" in the panel)
+  assert.match(r.notes.join(" "), /IL17A/);            // and reported to the agent
 });
 
 test("configure Heatmap: heatMode + genes merge with existing", () => {

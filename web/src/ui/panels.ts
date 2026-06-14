@@ -311,10 +311,12 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
   // top 3 genes per group, unique
   const seen = new Set<number>(); const markerRows: { gene: number; symbol: string; pinned?: boolean }[] = [];
   for (const grp of gs.groups) for (const m of (markers.get(grp) || []).slice(0, 3)) if (!seen.has(m.gene)) { seen.add(m.gene); markerRows.push({ gene: m.gene, symbol: m.symbol }); }
-  // pinned custom genes (agent/user added) — resolved to indices, placed FIRST and highlighted; any marker dup is folded in.
-  const pinnedRows: { gene: number; symbol: string; pinned?: boolean }[] = []; const pinnedSet = new Set<number>();
+  // pinned custom genes (agent/user added) — resolved to indices, placed FIRST and highlighted; any marker dup is
+  // folded in. A requested gene that isn't in this dataset is collected into `missing` and shown as a panel
+  // footnote, so an unmeasured request (e.g. IL17B in a panel that lacks it) gives visible feedback, not silence.
+  const pinnedRows: { gene: number; symbol: string; pinned?: boolean }[] = []; const pinnedSet = new Set<number>(); const missing: string[] = [];
   if (p.genes?.length) { await ctx.view.genes();
-    for (const sym of p.genes) { const gi = await ctx.view.geneCol(sym); if (gi == null || pinnedSet.has(gi)) continue; pinnedSet.add(gi); pinnedRows.push({ gene: gi, symbol: sym, pinned: true }); } }
+    for (const sym of p.genes) { const gi = await ctx.view.geneCol(sym); if (gi == null) { if (!missing.includes(sym)) missing.push(sym); continue; } if (pinnedSet.has(gi)) continue; pinnedSet.add(gi); pinnedRows.push({ gene: gi, symbol: sym, pinned: true }); } }
   const rows = [...pinnedRows, ...markerRows.filter((r) => !pinnedSet.has(r.gene))];
   const nPinned = pinnedRows.length;
   const G = gs.groups.length, R = rows.length, x0 = 70, y0 = 6, axisH = 16;
@@ -324,6 +326,7 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
   // Responsive: the grid is re-laid to fill the panel — cell size derives from the live width/height and
   // re-draws on resize. Axis labels stay faint and are read on hover, so dense rows remain fine.
   const w = mk("div"); w.style.cssText = "position:absolute;inset:0;display:flex;flex-direction:column;overflow:hidden";   // fills the panel, out of flow → can't grow it
+  if (missing.length) { const warn = mk("div"); warn.style.cssText = "flex:0 0 auto;font-size:10.5px;color:var(--amber,#e0a458);padding:5px 8px 0;line-height:1.4"; warn.textContent = `⚠ not in this dataset: ${missing.join(", ")}`; w.appendChild(warn); }
   const host = mk("div"); host.style.cssText = "flex:1 1 auto;min-height:0;overflow:auto"; w.appendChild(host);
   const tip = mk("div"); tip.style.cssText = "position:absolute;display:none;background:var(--ink);border:1px solid var(--line2);border-radius:6px;padding:3px 8px;font-size:11px;color:var(--text);pointer-events:none;z-index:20;white-space:nowrap;box-shadow:0 4px 14px rgba(0,0,0,.45)";
   w.appendChild(tip);
