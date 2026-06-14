@@ -38,8 +38,10 @@ button{font-family:inherit}
 .canvas{flex:1;overflow:auto;padding:14px;min-width:0;display:flex;flex-direction:column}
 /* the workbench fills the canvas; rows share the height (1fr) and shrink to a 200px floor so up to ~3 rows
    fit the viewport without scrolling (dashboard-style) — only 4+ rows scroll, instead of every 3rd panel. */
-.workbench{flex:1;display:grid;grid-template-columns:1fr 1fr;gap:12px;grid-auto-rows:minmax(200px,1fr)}
-.panel{background:var(--panel);border:1px solid var(--line);border-radius:11px;overflow:hidden;animation:rise .3s ease;min-width:0;display:flex;flex-direction:column}
+.workbench{flex:1;min-height:0;display:grid;grid-template-columns:1fr 1fr;gap:12px;grid-auto-rows:minmax(200px,1fr)}
+/* min-height:0 stops a tall panel's content (e.g. a heatmap's explicit-height SVG) from blowing its grid row
+   past the 1fr track; content scrolls inside .pbody instead, so rows keep sharing the viewport height. */
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:11px;overflow:hidden;animation:rise .3s ease;min-width:0;min-height:0;display:flex;flex-direction:column}
 .panel.full{grid-column:1/-1}
 .panel.dragging{opacity:.45} .panel.dragover{box-shadow:0 0 0 2px var(--cyan) inset}
 @keyframes rise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}

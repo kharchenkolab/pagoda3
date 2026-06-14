@@ -33,3 +33,29 @@ park questionable calls for review.
   Verified: "Marker genes" is one 18px line (was 36px). (app.css .ph)
 
 ---
+
+### Scenario 2 — Layout (split dotplot + UMAP by condition) — the user's biggest pain
+- **Bug D — faceted panels weren't comparable (agent bug).** Splitting the dotplot by condition, the
+  agent built two *independent* scoped Heatmaps and gave them DIFFERENT groupings (day0=leiden,
+  day7=cell_type) → different rows+columns, uncomparable. Prompt guidance ("scoped heatmaps share
+  rows") already existed and still failed. Fix: a **facet primitive** — `update_view.facet({by, panel?,
+  values?, layout?})` splits ONE panel into N copies that differ only in scope; the app clones
+  group/genes/mode so alignment is guaranteed and the agent can't diverge. Verified via mechanics AND
+  the live agent: day0/day7 dotplots now have identical rows+columns. (viewpatch.ts, shell.ts, live.ts)
+- **Bug E — panels scrolled off the viewport (the "UMAP almost scrolled off" complaint).** Grid rows
+  were `minmax(300px,1fr)`, so any 3rd panel forced >900px and overflowed the ~685px canvas. Fix:
+  `minmax(200px,1fr)` — rows share the viewport dashboard-style; up to ~3 rows fit, only 4+ scroll.
+  Verified: the full L2 layout (2 embeddings + 2 dotplots) fits with no scroll. (app.css .workbench)
+- **Bug F — narrow faceted headers clipped controls + repeated the scope.** Embedding facets (347px)
+  clipped the legend/maximize buttons and showed "Embedding — day0" + redundant "· day0". Fixes:
+  header title now ellipsizes so CONTROLS stay reachable; the facet value is a protected cyan **scope
+  chip** (never shrinks) instead of a truncatable title suffix; embedding scope-caption removed.
+  Verified: chip "day0"/"day7" legible, legend+maximize reachable. (app.css .ph/.scopechip, shell.ts)
+- **Bug G — grid rows blew past the 1fr track (premature scroll for 4–6 panels).** A panel's tall
+  content (heatmap explicit-height SVG) gave it a `min-content` > 200px which, via `min-height:auto`,
+  forced its row to natural height and overflowed — so even a 2×2 scrolled. Fix: `min-height:0` on
+  `.panel` and `.workbench`; content scrolls inside `.pbody` instead. Verified: 6 panels now fit at
+  211px (no scroll), 2×2 comfortable; only 7-8+ panels scroll. (app.css)
+- L4 maximize/restore verified (panel → full-width 709px and back to 349px).
+- Minor polish: panel titles carry a tooltip (full title on hover) since narrow embedding headers
+  truncate the title to keep the color dropdown + toggles reachable.

@@ -165,8 +165,8 @@ export class App {
     // scope CHIP: the facet value (e.g. day0) as a protected, non-shrinking badge so it stays legible even when
     // the title truncates in a narrow header. Distinguishes stacked/side-by-side facets at a glance.
     const scopeVal = (p.view?.scope as any)?.value;
-    if (scopeVal) h.appendChild(Object.assign(mk("span", "scopechip"), { textContent: scopeVal }));
-    h.appendChild(Object.assign(mk("span", "pt"), { textContent: p.title }));
+    if (scopeVal) h.appendChild(Object.assign(mk("span", "scopechip"), { textContent: scopeVal, title: scopeVal }));
+    h.appendChild(Object.assign(mk("span", "pt"), { textContent: p.title, title: p.title }));   // tooltip: full title when the header truncates it
     // An embedding's colouring is shown live by its colour dropdown, so a static cap (e.g. "clusters") only goes
     // stale on recolour. For embeddings the caption tracks SCOPE instead (the dropdown can't show that): the
     // scoped population when scoped, nothing when showing all cells. Other panels keep their descriptive cap.
