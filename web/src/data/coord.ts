@@ -16,6 +16,8 @@ export interface CoordState {
   // when you hover a category panel) that linked views interpret in their own vocabulary. NOT a committed
   // change: a subtle locator, no recolour, no checkpoint.
   hint: EntityRef | null;
+  geneHint: string | null;    // ephemeral hovered GENE (a row in a dotplot) — linked panels highlight that gene's row
+
   // view options live HERE (not hardcoded in paint) so the agent AND direct manipulation both drive them
   // — the generative-UX premise. legend:null = auto (key for numeric colourings, hidden when labels carry it).
   display: { labels: boolean; legend: boolean | null; alpha: number };   // alpha = embedding point opacity (<1 shows density)
@@ -24,7 +26,7 @@ export interface CoordState {
 type Listener = (s: CoordState, changed: (keyof CoordState)[]) => void;
 
 export class Coord {
-  private s: CoordState = { colorBy: "meta:leiden", focus: null, selection: null, geneFocus: null, hint: null, display: { labels: true, legend: null, alpha: 0.7 } };
+  private s: CoordState = { colorBy: "meta:leiden", focus: null, selection: null, geneFocus: null, hint: null, geneHint: null, display: { labels: true, legend: null, alpha: 0.7 } };
   private listeners = new Set<Listener>();
 
   get state() { return this.s; }
@@ -44,6 +46,8 @@ export class Coord {
   setSelection(ref: EntityRef | null) { this.set({ selection: ref }); }
   setHint(ref: EntityRef | null) { if (refEq(this.s.hint, ref)) return; this.set({ hint: ref }); }
   clearHint() { if (this.s.hint) this.set({ hint: null }); }
+  setGeneHint(sym: string | null) { if (this.s.geneHint === sym) return; this.set({ geneHint: sym }); }
+  clearGeneHint() { if (this.s.geneHint) this.set({ geneHint: null }); }
   setDisplay(patch: Partial<CoordState["display"]>) { this.set({ display: { ...this.s.display, ...patch } }); }
 }
 

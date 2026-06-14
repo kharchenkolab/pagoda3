@@ -34,6 +34,7 @@ export interface PanelHooks {
   onCellClick: (index: number | null, anchor?: { left: number; top: number }) => void;   // embedding click → select cluster (+ selpop), or deselect (empty)
   registerComposition: (r: CompReactor) => void;               // a panel that reacts to selection + hint
   onConfigurePanel: (panelId: number, patch: any) => void;     // a panel reconfiguring itself (e.g. dismissing pinned genes)
+  registerGeneHover: (fn: (sym: string | null) => void) => void;   // a panel that highlights a gene's row on cross-panel geneHint
 }
 
 // A vocabulary-bound panel that reacts to the two tiers, distinctly: `setSelect` is the committed selection
@@ -335,6 +336,7 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
   // cross-panel coordination state: which groups (columns) are selected / hovered elsewhere, translated into THIS
   // panel's grouping by the App (registerComposition). geomCw/geomCh are the live column size, set by draw().
   let selGroups: Set<string> | null = null, hovGroups: Set<string> | null = null, geomCw = 0, geomCh = 0;
+  let hovGene: string | null = null;   // a gene hovered in ANOTHER dotplot (coord.geneHint) → highlight its row here
 
   // Responsive: the grid is re-laid to fill the panel — cell size derives from the live width/height and
   // re-draws on resize. Axis labels stay faint and are read on hover, so dense rows remain fine.
@@ -373,6 +375,16 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
     svg.querySelectorAll<SVGElement>(".hgrp").forEach((el) => { const grp = gs.groups[+el.getAttribute("data-c")!]; const sel = !!selGroups?.has(grp), hov = !sel && !!hovGroups?.has(grp); el.style.fill = sel ? "var(--cyan)" : ""; el.style.fontWeight = sel ? "600" : ""; el.style.opacity = sel || hov ? "1" : ""; });
   };
 
+  // Cross-panel GENE hover: highlight the row whose gene matches coord.geneHint (set when a cell is hovered in any
+  // dotplot) + lift its label. Together with paintCols, a hover in one dotplot shows the full row+column crosshair here.
+  const paintGeneRow = () => {
+    const svg = host.querySelector("svg"); if (!svg) return;
+    const hl = svg.querySelector(".hrowhl"); if (!hl) return;
+    const ri = hovGene ? rows.findIndex((r) => r.symbol === hovGene) : -1;
+    hl.innerHTML = ri >= 0 ? `<rect x="${x0}" y="${(y0 + ri * geomCh).toFixed(2)}" width="${(G * geomCw).toFixed(1)}" height="${geomCh.toFixed(2)}" fill="rgba(92,200,255,0.14)" pointer-events="none"/>` : "";
+    svg.querySelectorAll<SVGElement>(".hgene").forEach((el) => { const r = rows[+el.getAttribute("data-ri")!]; if (r.pinned) return; const on = hovGene != null && r.symbol === hovGene; el.style.fontWeight = on ? "600" : ""; el.style.opacity = on ? "1" : ""; });
+  };
+
   // scale each gene row to its max-across-groups for contrast; cells/labels carry their row+col index so
   // hover can read the names. Re-runs on resize against the panel body's live dimensions.
   const draw = () => {
@@ -395,23 +407,23 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
     });
     if (nPinned > 0 && nPinned < R) g += `<line x1="${x0.toFixed(1)}" y1="${(y0 + nPinned * ch).toFixed(1)}" x2="${(x0 + G * cw).toFixed(1)}" y2="${(y0 + nPinned * ch).toFixed(1)}" stroke="var(--cyan)" stroke-opacity="0.4" stroke-width="0.6"/>`;
     gs.groups.forEach((grp, c) => { g += `<text class="axis hgrp" data-c="${c}" x="${(x0 + c * cw + cw / 2).toFixed(1)}" y="${(y0 + R * ch + 11).toFixed(1)}" text-anchor="middle">${esc(grp)}</text>`; });
-    g += `<g class="hcolhl"></g>`;   // cross-panel selected/hovered column bands (filled by paintCols)
+    g += `<g class="hrowhl"></g><g class="hcolhl"></g>`;   // cross-panel hovered gene-row band + selected/hovered column bands
     g += `<rect class="hrowg" x="${x0}" width="${(G * cw).toFixed(1)}" height="${ch.toFixed(1)}" fill="rgba(150,225,255,.14)" pointer-events="none" style="display:none"/>`;
     g += `<rect class="hcolg" y="${y0}" width="${cw.toFixed(1)}" height="${(R * ch).toFixed(1)}" fill="rgba(150,225,255,.14)" pointer-events="none" style="display:none"/>`;
     host.innerHTML = `<svg viewBox="0 0 ${W.toFixed(1)} ${H.toFixed(1)}" width="${W.toFixed(1)}" height="${H.toFixed(1)}" style="display:block">${g}</svg>`;
     const svg = host.querySelector("svg")!;
     const rowg = svg.querySelector<SVGRectElement>(".hrowg")!, colg = svg.querySelector<SVGRectElement>(".hcolg")!;
-    svg.addEventListener("pointerleave", () => { tip.style.display = "none"; rowg.style.display = colg.style.display = "none"; ctx.coord.clearHint(); });
+    svg.addEventListener("pointerleave", () => { tip.style.display = "none"; rowg.style.display = colg.style.display = "none"; ctx.coord.clearHint(); ctx.coord.clearGeneHint(); });
     // two-tier coordination — HOVER: row/col guide + name readout + UMAP locator (no recolour); CLICK: commit.
     svg.querySelectorAll<SVGElement>(".hcell").forEach((el) => {
       const ri = +el.getAttribute("data-ri")!, c = +el.getAttribute("data-c")!, sym = rows[ri].symbol, grp = gs.groups[c]; el.style.cursor = "pointer";
       el.addEventListener("pointermove", (e) => { rowg.setAttribute("y", String(y0 + ri * ch)); colg.setAttribute("x", String(x0 + c * cw)); rowg.style.display = colg.style.display = "block";
-        showTip(e as PointerEvent, `<b>${esc(sym)}</b> · ${esc(grp)} <span style="color:var(--faint)">mean ${gs.mean[c * gs.nGenes + rows[ri].gene].toFixed(2)} · ${(gs.frac[c * gs.nGenes + rows[ri].gene] * 100).toFixed(0)}% expr</span>`); ctx.coord.setHint({ kind: "category", grouping, value: grp }); });
+        showTip(e as PointerEvent, `<b>${esc(sym)}</b> · ${esc(grp)} <span style="color:var(--faint)">mean ${gs.mean[c * gs.nGenes + rows[ri].gene].toFixed(2)} · ${(gs.frac[c * gs.nGenes + rows[ri].gene] * 100).toFixed(0)}% expr</span>`); ctx.coord.setHint({ kind: "category", grouping, value: grp }); ctx.coord.setGeneHint(sym); });
       el.addEventListener("click", () => hooks.onGeneClick(sym));
     });
     svg.querySelectorAll<SVGElement>(".hgene").forEach((el) => {
       const ri = +el.getAttribute("data-ri")!, sym = rows[ri].symbol; el.style.cursor = "pointer";
-      el.addEventListener("pointermove", (e) => { rowg.setAttribute("y", String(y0 + ri * ch)); rowg.style.display = "block"; colg.style.display = "none"; showTip(e as PointerEvent, `<b>${esc(sym)}</b>`); });
+      el.addEventListener("pointermove", (e) => { rowg.setAttribute("y", String(y0 + ri * ch)); rowg.style.display = "block"; colg.style.display = "none"; showTip(e as PointerEvent, `<b>${esc(sym)}</b>`); ctx.coord.setGeneHint(sym); });
       el.addEventListener("click", () => hooks.onGeneClick(sym));
     });
     svg.querySelectorAll<SVGElement>(".hgrp").forEach((el) => {
@@ -419,7 +431,7 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
       el.addEventListener("pointermove", (e) => { colg.setAttribute("x", String(x0 + c * cw)); colg.style.display = "block"; rowg.style.display = "none"; showTip(e as PointerEvent, `<b>${esc(grp)}</b>`); ctx.coord.setHint({ kind: "category", grouping, value: grp }); });
       el.addEventListener("click", () => ctx.coord.setSelection({ kind: "category", grouping, value: grp }));   // commit a selection (clusters/cell types coordinate everywhere)
     });
-    paintCols();   // re-apply cross-panel highlights after the (re)layout
+    paintCols(); paintGeneRow();   // re-apply cross-panel highlights after the (re)layout
   };
 
   const afterAttach = () => {
@@ -431,6 +443,7 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
     // react to cross-panel selection + hover like the composition panel: the App translates the current
     // selection/hint into THIS panel's grouping and calls setSelect/setHover, which tint the matching columns.
     hooks.registerComposition({ grouping, setSelect: (v) => { selGroups = v; paintCols(); }, setHover: (v) => { hovGroups = v; paintCols(); } });
+    hooks.registerGeneHover((sym) => { hovGene = sym; paintGeneRow(); });   // another dotplot hovered a gene → highlight its row here
     let ro: ResizeObserver;
     ro = new ResizeObserver(() => { if (!w.isConnected) ro.disconnect(); else draw(); });   // re-fill on resize; self-cleans
     if (pb) ro.observe(pb);

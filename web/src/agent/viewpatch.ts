@@ -15,6 +15,8 @@ export interface RawPanelOp {
   add?: string;            // create a panel of this TYPE (mutually exclusive with id)
   remove?: boolean;        // remove panel `id`
   title?: string;
+  col?: number;            // pin to a workbench column (0 left, 1 right) — stack panels in one column
+  full?: boolean;          // span the full width (two full panels stack one under another)
   colorBy?: string;        // per-panel colour handle (meta:/gene:/qc:/geneset:)
   scopeGrouping?: string;
   scopeValue?: string;
@@ -36,8 +38,8 @@ export interface RawViewPatch {
 }
 
 export interface Scope { grouping: string; value: string; }
-export interface PanelSpec { type: string; title?: string; colorBy?: string; scope?: Scope; embedding?: string; colormap?: string; group?: string; heatMode?: HeatMode; genes?: string[]; }
-export interface PanelPatch { title?: string; colorBy?: string; scope?: Scope | null; embedding?: string; colormap?: string; heatMode?: HeatMode; genes?: string[]; }
+export interface PanelSpec { type: string; title?: string; col?: 0 | 1; full?: boolean; colorBy?: string; scope?: Scope; embedding?: string; colormap?: string; group?: string; heatMode?: HeatMode; genes?: string[]; }
+export interface PanelPatch { title?: string; col?: 0 | 1; full?: boolean; colorBy?: string; scope?: Scope | null; embedding?: string; colormap?: string; heatMode?: HeatMode; genes?: string[]; }
 
 export type NormOp =
   | { kind: "color"; handle: string }
@@ -144,6 +146,8 @@ export function normalizeViewPatch(patch: RawViewPatch, w: World): NormResult {
       const isHeat = op.add === HEAT_TYPE;
       const spec: PanelSpec = { type: op.add };
       if (op.title) spec.title = op.title;
+      if (op.col === 0 || op.col === 1) spec.col = op.col;
+      if (typeof op.full === "boolean") spec.full = op.full;
       if (typeof op.colorBy === "string" && op.colorBy) { const e = colorError(op.colorBy, w); if (e) rejected.push(`${where} colorBy: ${e}`); else spec.colorBy = op.colorBy; }
       if (op.scopeGrouping && op.scopeValue) { const s = scopeFrom(op.scopeGrouping, op.scopeValue, w, where, rejected); if (s) spec.scope = s; }
       if (typeof op.embedding === "string" && op.embedding) { if (w.embeddings.includes(op.embedding)) spec.embedding = op.embedding; else rejected.push(`${where}: unknown embedding "${op.embedding}" (have: ${w.embeddings.join(", ") || "umap"})`); }
@@ -160,6 +164,8 @@ export function normalizeViewPatch(patch: RawViewPatch, w: World): NormResult {
     if (op.id == null || !w.panelExists(op.id)) { rejected.push(`panel #${op.id}: no such panel`); continue; }
     const pp: PanelPatch = {}; const isHeat = w.panelType(op.id) === HEAT_TYPE;
     if (op.title) pp.title = op.title;
+    if (op.col === 0 || op.col === 1) pp.col = op.col;
+    if (typeof op.full === "boolean") pp.full = op.full;
     if (typeof op.colorBy === "string" && op.colorBy) { const e = colorError(op.colorBy, w); if (e) rejected.push(`${where} colorBy: ${e}`); else pp.colorBy = op.colorBy; }
     if (op.clearScope) pp.scope = null;
     else if (op.scopeGrouping && op.scopeValue) { const s = scopeFrom(op.scopeGrouping, op.scopeValue, w, where, rejected); if (s) pp.scope = s; }

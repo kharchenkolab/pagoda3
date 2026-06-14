@@ -30,6 +30,7 @@ export class App {
   liveMessages: any[] = [];   // the running Anthropic conversation (persists across asks so follow-ups keep context)
   embeddings: EmbeddingView[] = [];
   compReactors: CompReactor[] = [];   // vocabulary-bound panels that highlight a category on a coord hint
+  geneHoverSinks: ((sym: string | null) => void)[] = [];   // panels that highlight a gene's row on a coord geneHint
   colorChoices: [string, string][] = [...COLOR_OPTS];   // colour-by dropdown options, capped per class (see noteColor)
   caveatsCollapsed = new Set<string>();   // caveat handles the user clicked to collapse (stay collapsed across renders)
   // presence
@@ -112,6 +113,7 @@ export class App {
       onCellClick: (idx, anchor) => this.onCellClick(idx, anchor),
       registerComposition: (r) => this.compReactors.push(r),
       onConfigurePanel: (id, patch) => this.configurePanel(id, patch),
+      registerGeneHover: (fn) => this.geneHoverSinks.push(fn),
     };
   }
 
@@ -137,7 +139,7 @@ export class App {
     const built: { dom: HTMLElement; afterAttach?: () => void }[] = [];
     for (const p of this.canvas) built.push(await this.panelEl(p));   // build off-DOM first; old panels stay visible meanwhile
     if (token !== this.renderToken) return;   // superseded by a newer fullRender → discard this build
-    this.embeddings = []; this.compReactors = [];
+    this.embeddings = []; this.compReactors = []; this.geneHoverSinks = [];
     wb.innerHTML = "";
     const afters: (() => void)[] = [];
     for (const b of built) { wb.appendChild(b.dom); if (b.afterAttach) afters.push(b.afterAttach); }
@@ -280,9 +282,11 @@ export class App {
   // Mutate ONE panel's model from a patch (no render). colorBy/scope/embedding live on .view; heatMode/genes/title
   // are top-level. Returns whether the change needs a body REBUILD (vs a cheap repaint). Shared by the per-panel
   // dropdown and the declarative patcher, so both treat a panel identically.
-  applyPanelModel(p: Panel, patch: { title?: string; colorBy?: string; scope?: EntityRef | null; embedding?: string; colormap?: string; heatMode?: "heat" | "dot"; genes?: string[] }): boolean {
+  applyPanelModel(p: Panel, patch: { title?: string; col?: 0 | 1; full?: boolean; colorBy?: string; scope?: EntityRef | null; embedding?: string; colormap?: string; heatMode?: "heat" | "dot"; genes?: string[] }): boolean {
     let rebuild = false;
     if (patch.title != null && patch.title !== p.title) { p.title = patch.title; rebuild = true; }   // title shows in the header (panelEl) → rebuild
+    if (patch.col === 0 || patch.col === 1) { if (patch.col !== p.col) rebuild = true; p.col = patch.col; }   // column pin → re-layout
+    if (typeof patch.full === "boolean" && patch.full !== p.full) { p.full = patch.full; rebuild = true; }   // full-width → re-layout
     if (patch.colorBy != null) { this.noteColor(patch.colorBy); if (p.type !== "Embedding") rebuild = true; }   // recolouring a non-embedding (e.g. composition restack) needs a rebuild
     if (patch.embedding != null && patch.embedding !== p.view?.embedding) rebuild = true;
     if (patch.heatMode != null && patch.heatMode !== p.heatMode) { p.heatMode = patch.heatMode; rebuild = true; }
@@ -344,14 +348,14 @@ export class App {
     if (spec.colormap) view.colormap = spec.colormap;
     const isHeat = spec.type === "Heatmap";
     const grp = isHeat ? (spec.group || "leiden") : undefined;
-    return { type: spec.type, title: spec.title || spec.type, group: grp, heatMode: spec.heatMode, genes: spec.genes,
+    return { type: spec.type, title: spec.title || spec.type, col: spec.col, full: spec.full, group: grp, heatMode: spec.heatMode, genes: spec.genes,
       bind: spec.type === "Embedding" ? "embedding:main" : (isHeat ? "markers:" + grp : undefined),
       view: Object.keys(view).length ? view : undefined };
   }
   addPanelModel(spec: PanelSpec): number { const p = this.newPanel(this.specToPanel(spec)); this.canvas.push(p); return p.id; }
   removePanel(id: number): boolean { const n = this.canvas.length + this.rail.length; this.canvas = this.canvas.filter((z) => z.id !== id); this.rail = this.rail.filter((z) => z.id !== id); return this.canvas.length + this.rail.length < n; }
   private patchToModel(patch: PanelPatch) {
-    return { title: patch.title, colorBy: patch.colorBy, embedding: patch.embedding, colormap: patch.colormap, heatMode: patch.heatMode, genes: patch.genes,
+    return { title: patch.title, col: patch.col, full: patch.full, colorBy: patch.colorBy, embedding: patch.embedding, colormap: patch.colormap, heatMode: patch.heatMode, genes: patch.genes,
       scope: patch.scope === undefined ? undefined : (patch.scope === null ? null : { kind: "category", grouping: patch.scope.grouping, value: patch.scope.value } as EntityRef) };
   }
 
@@ -648,6 +652,7 @@ export class App {
     this.coord.subscribe((_s, changed) => {
       if (this.suspendRender) return;   // applyViewPatch is batching; it will render once at the end
       if (changed.length === 1 && changed[0] === "hint") { this.repaintHint(); return; }  // light hover path
+      if (changed.length === 1 && changed[0] === "geneHint") { const g = this.coord.state.geneHint; this.geneHoverSinks.forEach((fn) => fn(g)); return; }  // gene-row hover, cross-panel
       this.repaint(); this.syncColorSelects(); this.syncToggles();
     });
   }
