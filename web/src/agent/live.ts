@@ -121,7 +121,13 @@ async function execTool(app: App, name: string, input: any): Promise<string> {
 // ---- the streaming tool-use loop ----
 export async function runLive(app: App, userText: string, abort: AbortSignal): Promise<void> {
   const ag = app.agent;
-  const messages: any[] = [{ role: "user", content: userText }];
+  // Persist ONE running conversation across asks so follow-ups keep context — e.g. the agent asks "A or B?" and
+  // the user's next message "B" is understood as the answer, not a fresh request. The loop below appends the
+  // assistant + tool-result turns to this same array, so it accumulates the whole dialogue.
+  if (!app.liveMessages) app.liveMessages = [];
+  app.liveMessages.push({ role: "user", content: userText });
+  trimLiveMessages(app.liveMessages);
+  const messages = app.liveMessages;
   app.thread = { kind: "live", live: true, entries: [{ role: "user", text: userText }] };
   ag.renderThread(); app.setPip("working", "thinking");
   const sys = await systemPrompt(app);
@@ -167,6 +173,14 @@ export async function runLive(app: App, userText: string, abort: AbortSignal): P
   const label = userText.length > 56 ? userText.slice(0, 54) + "…" : userText;
   const finalText = [...app.thread.entries].reverse().find((e: any) => e.role === "agent" && e.text)?.text || "Done.";
   ag.settleThread(label, finalText);
+}
+
+// Bound the running conversation so it can't grow without limit. Drops oldest messages, then forward to a clean
+// user-text turn so the window never starts mid-tool-cycle (an orphaned tool_result would be rejected by the API).
+function trimLiveMessages(m: any[], max = 40): void {
+  if (m.length <= max) return;
+  m.splice(0, m.length - max);
+  while (m.length && !(m[0].role === "user" && typeof m[0].content === "string")) m.shift();
 }
 
 function toolLabel(tu: any): string {

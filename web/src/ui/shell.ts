@@ -26,6 +26,7 @@ export class App {
   WS: Record<string, WS>; wsOrder: string[]; currentWS = "Overview";
   history: Checkpoint[] = []; viewing = -1; locked = false; uid = 0;
   suspendRender = false;   // set while applyViewPatch batches a multi-op patch into a single render
+  liveMessages: any[] = [];   // the running Anthropic conversation (persists across asks so follow-ups keep context)
   embeddings: EmbeddingView[] = [];
   compReactors: CompReactor[] = [];   // vocabulary-bound panels that highlight a category on a coord hint
   colorChoices: [string, string][] = [...COLOR_OPTS];   // colour-by dropdown options, capped per class (see noteColor)

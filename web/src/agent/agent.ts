@@ -29,6 +29,7 @@ export class Agent {
     this.abortCtrl = new AbortController();
     try { await runLive(this.app, qraw, this.abortCtrl.signal); }
     catch (e) {
+      const lm = this.app.liveMessages; if (lm.length && typeof lm[lm.length - 1]?.content === "string") lm.pop();   // drop the dangling user turn so continuity stays clean
       this.live = false;
       if (this.app.thread) this.settleThread(null);
       this.app.setPip("idle");
@@ -169,13 +170,23 @@ export class Agent {
     const host = this.app.$("convo"); host.classList.add("open"); host.innerHTML = "";
     const hd = mk("div", "convohd"); hd.appendChild(mk("span", "t", "CONVERSATION · PINNED")); const x = mk("span", "x", "⇤"); x.onclick = () => this.setThreadDock(false); hd.appendChild(x); host.appendChild(hd);
     const body = mk("div", "convobody");
+    let lastCard: HTMLElement | null = null;
     for (const h of this.app.history as any[]) {
-      if (h.exchange) body.appendChild(this.exchangeCard(h));
+      if (h.exchange) { const c = this.exchangeCard(h); body.appendChild(c); lastCard = c; }
       else { const a = mk("div", "cxact"); a.innerHTML = `<span class="d">·</span><span class="l">${h.q}</span>`; if (h.why) a.title = h.why.replace(/<[^>]+>/g, ""); body.appendChild(a); }
     }
+    if (lastCard) lastCard.classList.add("latest");   // newest reply/question stays readable in full (no 3-line clamp)
     if (this.app.thread) { const lb = mk("div", "convolive"); this.appendThreadGuts(lb); body.appendChild(lb); }
     host.appendChild(body);
-    const foot = mk("div", "convofoot"); const inp = document.createElement("input"); inp.placeholder = "Message the agent…"; inp.onkeydown = (e) => { if (e.key === "Enter" && inp.value.trim()) { const v = inp.value.trim(); inp.value = ""; this.dockSend(v); } }; foot.appendChild(inp); host.appendChild(foot); body.scrollTop = body.scrollHeight;
+    // signal when the agent's turn ended on a QUESTION and is waiting for the user (a chat needs a "your turn" cue)
+    const lastEx = [...this.app.history].reverse().find((h: any) => h.exchange) as any;
+    const awaiting = !this.app.thread && !!lastEx && String(lastEx.why || "").replace(/<[^>]+>/g, "").trim().endsWith("?");
+    const foot = mk("div", "convofoot" + (awaiting ? " awaiting" : ""));
+    if (awaiting) foot.appendChild(mk("div", "awaitlabel", "↳ the agent asked you something — reply below"));
+    const inp = document.createElement("input"); inp.placeholder = awaiting ? "Type your reply…" : "Message the agent…";
+    inp.onkeydown = (e) => { if (e.key === "Enter" && inp.value.trim()) { const v = inp.value.trim(); inp.value = ""; this.dockSend(v); } };
+    foot.appendChild(inp); host.appendChild(foot); body.scrollTop = body.scrollHeight;
+    if (awaiting) inp.focus();
   }
   // a past user↔agent exchange, collapsed to question + answer, click to expand the full trace
   exchangeCard(h: any) {
