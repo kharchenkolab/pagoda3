@@ -32,6 +32,7 @@ export interface PanelHooks {
   onCellHover: (index: number | null) => void;                 // embedding → cross-panel hint (hover tier)
   onCellClick: (index: number | null, anchor?: { left: number; top: number }) => void;   // embedding click → select cluster (+ selpop), or deselect (empty)
   registerComposition: (r: CompReactor) => void;               // a panel that reacts to selection + hint
+  onConfigurePanel: (panelId: number, patch: any) => void;     // a panel reconfiguring itself (e.g. dismissing pinned genes)
 }
 
 // A vocabulary-bound panel that reacts to the two tiers, distinctly: `setSelect` is the committed selection
@@ -326,7 +327,12 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
   // Responsive: the grid is re-laid to fill the panel — cell size derives from the live width/height and
   // re-draws on resize. Axis labels stay faint and are read on hover, so dense rows remain fine.
   const w = mk("div"); w.style.cssText = "position:absolute;inset:0;display:flex;flex-direction:column;overflow:hidden";   // fills the panel, out of flow → can't grow it
-  if (missing.length) { const warn = mk("div"); warn.style.cssText = "flex:0 0 auto;font-size:10.5px;color:var(--amber,#e0a458);padding:5px 8px 0;line-height:1.4"; warn.textContent = `⚠ not in this dataset: ${missing.join(", ")}`; w.appendChild(warn); }
+  if (missing.length) {   // click to dismiss — drops the unmeasured genes from the panel's pins so they don't reappear
+    const warn = mk("div"); warn.style.cssText = "flex:0 0 auto;font-size:10.5px;color:var(--amber,#e0a458);padding:5px 8px 0;line-height:1.4;cursor:pointer";
+    warn.title = "click to dismiss"; warn.innerHTML = `⚠ not in this dataset: ${esc(missing.join(", "))} <span style="opacity:.55">✕</span>`;
+    warn.onclick = () => hooks.onConfigurePanel(p.id, { genes: (p.genes || []).filter((g) => !missing.includes(g)) });
+    w.appendChild(warn);
+  }
   const host = mk("div"); host.style.cssText = "flex:1 1 auto;min-height:0;overflow:auto"; w.appendChild(host);
   const tip = mk("div"); tip.style.cssText = "position:absolute;display:none;background:var(--ink);border:1px solid var(--line2);border-radius:6px;padding:3px 8px;font-size:11px;color:var(--text);pointer-events:none;z-index:20;white-space:nowrap;box-shadow:0 4px 14px rgba(0,0,0,.45)";
   w.appendChild(tip);

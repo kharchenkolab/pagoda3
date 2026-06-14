@@ -108,6 +108,7 @@ export class App {
       onCellHover: (idx) => this.onCellHover(idx),
       onCellClick: (idx, anchor) => this.onCellClick(idx, anchor),
       registerComposition: (r) => this.compReactors.push(r),
+      onConfigurePanel: (id, patch) => this.configurePanel(id, patch),
     };
   }
 
