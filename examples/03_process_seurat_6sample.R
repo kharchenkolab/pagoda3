@@ -58,9 +58,32 @@ if (is.null(ds$fields[["sample"]]) && !is.null(ds$fields[["orig.ident"]]))
 
 mv("percent.mt", "mito"); mv("nCount_RNA", "n_umi"); mv("nFeature_RNA", "n_gene")
 
-# condition := sample if absent (6 donors, n=1 per "condition" -> the cacoa caveat, on real data)
-if (!is.null(ds$fields[["sample"]]) && is.null(ds$fields[["condition"]]))
-  ds$fields[["condition"]] <- list(role = "label", span = "cells", values = as.character(ds$fields[["sample"]]$values))
+# Real GSE192391 design (severe COVID-19 PBMC): 3 patients x 2 timepoints, from the GEO sample
+# characteristics. condition = TIMEPOINT (day0 vs day7) — a paired contrast across 3 donors (n=3 per
+# condition), the meaningful experimental variable; patient = the donor/replicate; outcome = clinical
+# status (alive/deceased). Keyed by the GSM sample id. Earlier this duplicated `sample` (meaningless).
+.gsm_meta <- list(
+  GSM5746259 = c(patient = "145", condition = "day0", outcome = "alive"),
+  GSM5746260 = c(patient = "145", condition = "day7", outcome = "alive"),
+  GSM5746261 = c(patient = "154", condition = "day0", outcome = "alive"),
+  GSM5746262 = c(patient = "154", condition = "day7", outcome = "alive"),
+  GSM5746263 = c(patient = "163", condition = "day0", outcome = "deceased"),
+  GSM5746264 = c(patient = "163", condition = "day7", outcome = "deceased")
+)
+if (!is.null(ds$fields[["sample"]])) {
+  sv <- as.character(ds$fields[["sample"]]$values)
+  pick <- function(key) {
+    out <- vapply(sv, function(s) { m <- .gsm_meta[[s]]; if (is.null(m)) NA_character_ else unname(m[[key]]) }, character(1), USE.NAMES = FALSE)
+    out[is.na(out)] <- sv[is.na(out)]   # fall back to the sample id for any sample not in the table
+    out
+  }
+  ds$fields[["patient"]]   <- list(role = "label", span = "cells", values = pick("patient"))
+  ds$fields[["condition"]] <- list(role = "label", span = "cells", values = pick("condition"))
+  ds$fields[["outcome"]]   <- list(role = "label", span = "cells", values = pick("outcome"))
+  message("condition <- timepoint (", paste(sort(unique(pick("condition"))), collapse = "/"),
+          "); patient (", length(unique(pick("patient"))), " donors); outcome (",
+          paste(sort(unique(pick("outcome"))), collapse = "/"), ")")
+}
 
 # prune what the viewer doesn't use
 for (nm in c("X", "scale.data", "orig.ident", "pca", "integrated.cca", "integrated.rpca", "rpca")) ds$fields[[nm]] <- NULL
