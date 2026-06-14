@@ -17,7 +17,7 @@ const TOOLS: Tool[] = [
   { name: "clear_focus", description: "Clear focus/selection.", input_schema: { type: "object", properties: {} } },
   { name: "get_markers", description: "Add a ranked marker-gene table for a group (cluster or annotation) to the disposable answer rail, and return the top genes. Rung-1 answer.", input_schema: { type: "object", properties: { cluster: { type: "string", description: "group id, e.g. a leiden cluster (c0 / 5) or a cell type name" }, grouping: { type: "string", description: "which precomputed grouping the id belongs to (e.g. leiden or cell_type); defaults to leiden" } }, required: ["cluster"] } },
   { name: "run_de_on_selection", description: "Run subsample differential expression on the current cell selection vs the rest, ranked over ALL genes (scope-correct, ranking-grade). Adds a DE table to the rail. Only valid when the user has a selection.", input_schema: { type: "object", properties: {} } },
-  { name: "get_overdispersed_genes", description: "Compute the most overdispersed (highly variable) genes for a scope — the current selection if there is one, else the whole dataset — recomputed for that scope (residual above the mean-variance trend), not a global shortlist. Adds a ranked gene list to the rail. Use when asked what varies / what's heterogeneous within a subset.", input_schema: { type: "object", properties: {} } },
+  { name: "get_overdispersed_genes", description: "Most variable (overdispersed) genes WITHIN a scope, recomputed for that scope (not a global shortlist). To scope to a population pass scopeGrouping + scopeValue (e.g. cell_type + the platelet cell-type name) — this is required to get genes specific to that population. With no scope it uses the current selection, else the focused population, else the whole dataset. Adds a ranked gene list to the rail.", input_schema: { type: "object", properties: { scopeGrouping: { type: "string", description: "grouping of the population to scope to, e.g. cell_type or leiden" }, scopeValue: { type: "string", description: "the value within that grouping, e.g. the platelet cell-type name" } } } },
   { name: "show_marker_heatmap", description: "Add a marker heatmap (top genes per group, gene × group) for a grouping to the rail — the canonical view to examine which genes define each cluster or cell type. Use when asked to examine/see the markers OF a set of clusters or cell types. grouping is one of the precomputed groupings (e.g. leiden, cell_type).", input_schema: { type: "object", properties: { grouping: { type: "string", description: "a precomputed grouping: leiden or cell_type" } }, required: ["grouping"] } },
   { name: "get_composition", description: "Add a per-sample cluster-composition panel (compositional) to the rail and return the disease-vs-control cluster fractions. Rung-1.", input_schema: { type: "object", properties: {} } },
   { name: "get_overdispersion", description: "Add the overdispersed gene-program list to the rail. Rung-1.", input_schema: { type: "object", properties: {} } },
@@ -69,14 +69,21 @@ async function execTool(app: App, name: string, input: any): Promise<string> {
       return `added marker table for ${grouping}=${input.cluster}; top genes: ${rows.slice(0, 8).map((r) => r.symbol).join(", ")}`;
     }
     case "get_overdispersed_genes": {
-      const selCells = app.ctx.selectedCells();
-      const ids = selCells.length ? Array.from(selCells) : Array.from({ length: app.ctx.n }, (_, i) => i);
+      // scope resolution: explicit population → current selection → focused population → whole dataset.
+      const sel = app.ctx.selectedCells(), f = app.coord.state.focus;
+      let ids: number[], scope: string;
+      if (typeof input.scopeGrouping === "string" && typeof input.scopeValue === "string") {
+        ids = Array.from(app.ctx.cellsOfCategory(input.scopeGrouping, input.scopeValue)); scope = input.scopeValue;
+      } else if (sel.length) { ids = Array.from(sel); scope = "selection"; }
+      else if (f) { ids = Array.from(app.ctx.cellsOfCategory(f.dim, f.value)); scope = f.value; }
+      else { ids = Array.from({ length: app.ctx.n }, (_, i) => i); scope = "whole dataset"; }
+      if (!ids.length) return `no cells found for ${scope}`;
       const hv = await app.ctx.view.overdispersedGenes(ids, 25);
       if (!hv.length) return "no overdispersion (store has no cell-major counts panel)";
       const rows = hv.map((h) => ({ symbol: h.symbol, score: h.resid }));
-      const scope = selCells.length ? `selection (${selCells.length} cells)` : "whole dataset";
-      ag.addRail({ type: "GeneList", title: `Overdispersed · ${scope}`, cap: "od (resid)", bind: "hvg:scope", rows });
-      return `top overdispersed genes for the ${scope}, recomputed for this scope: ${hv.slice(0, 10).map((h) => h.symbol).join(", ")}`;
+      const label = scope === "whole dataset" ? scope : `${scope} (${ids.length} cells)`;
+      ag.addRail({ type: "GeneList", title: `Variable genes · ${label}`, cap: "overdispersion", bind: "hvg:scope", rows });
+      return `top variable genes WITHIN ${label} (recomputed for this scope): ${hv.slice(0, 10).map((h) => h.symbol).join(", ")}`;
     }
     case "show_marker_heatmap": {
       const grouping = app.ctx.groupings().includes(input.grouping) ? input.grouping : "leiden";

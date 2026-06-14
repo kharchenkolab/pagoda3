@@ -277,7 +277,8 @@ export class App {
     }
     for (const p of this.rail) {
       const d = mk("div", "rcard"); const h = mk("div", "rch");
-      h.appendChild(Object.assign(mk("span", "rt"), { textContent: "EPHEMERAL" }));
+      h.appendChild(Object.assign(mk("span", "rtitle"), { textContent: p.title }));   // the answer's own title (the column already says "disposable")
+      if (p.cap) h.appendChild(Object.assign(mk("span", "rtcap"), { textContent: "· " + p.cap }));
       const sp = mk("div", "sp");
       const valid = this.agent.validate(p).ok;
       if (p.type !== "Note" && valid) { const pin = mk("button", "pin", "⤴ pin"); pin.onclick = () => { this.rail = this.rail.filter((z) => z.id !== p.id); this.canvas.push(this.newPanel(p)); this.fullRender(); if (!this.rail.length) this.setRail(false); this.checkpoint("pin " + p.title, "You promoted a disposable answer into your workbench — generation accretes only by your hand."); }; sp.appendChild(pin); }
@@ -286,7 +287,7 @@ export class App {
       if (p.q) d.appendChild(Object.assign(mk("div", "rq"), { textContent: "“" + p.q + "”" }));
       const H = this.ctx.handleOf(p.bind);
       if (H?.caveat) { const cv = mk("div", "caveat"); cv.innerHTML = `<b>⚠ caveat</b><span>${H.caveat}</span>`; d.appendChild(cv); }
-      const b = mk("div", "pbody"); const built = await bodyFor(p, this.ctx, this.hooks()); if (built.headerControls) sp.insertBefore(built.headerControls, sp.firstChild); b.appendChild(built.el); d.appendChild(b);
+      const b = mk("div", "pbody"); const built = await bodyFor(p, this.ctx, this.hooks()); b.appendChild(built.el); d.appendChild(b);   // rail header stays uncluttered (no filter box); it appears when pinned to the canvas
       if (H?.prov) d.appendChild(Object.assign(mk("div", "prov"), { textContent: "◆ " + H.prov }));
       rb.appendChild(d); if (built.afterAttach) built.afterAttach();
     }
