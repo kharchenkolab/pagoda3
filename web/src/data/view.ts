@@ -303,13 +303,17 @@ export class LstarView {
     for (let g = 0; g < nGenes; g++) {
       const m = sum[g] / n, vv = Math.max(sumsq[g] / n - (sum[g] / n) ** 2, 0);
       mean[g] = m; varr[g] = vv;
-      if (m > 0 && vv > 0) { xs.push(Math.log(m)); ys.push(Math.log(vv)); gi.push(g); }
+      if (m > 0 && vv > 0 && nobs[g] >= 3) { xs.push(Math.log(m)); ys.push(Math.log(vv)); gi.push(g); }   // need ≥3 expressing cells for a meaningful variance
     }
     const trend = lowess(xs, ys);                                    // log(v) ~ smooth(log(m))
-    const out = gi.map((g, j) => ({
-      gene: geneCol ? geneCol[g] : g, symbol: symbols[g],
-      mean: mean[g], varr: varr[g], resid: ys[j] - trend(xs[j]), nobs: nobs[g],
-    }));
+    const out = gi.map((g, j) => {
+      const raw = ys[j] - trend(xs[j]);                              // log-variance above the mean-variance trend
+      // Squash by the variance estimate's reliability: log(sample variance) has SE ≈ sqrt(2/df), and the
+      // EFFECTIVE d.o.f. is the number of EXPRESSING cells (zeros carry ~no info about a gene's variance).
+      // A gene seen in a handful of cells (e.g. IGLV1-36) is thus demoted despite a large raw residual.
+      const resid = raw * Math.sqrt(Math.max(nobs[g] - 1, 1) / 2);
+      return { gene: geneCol ? geneCol[g] : g, symbol: symbols[g], mean: mean[g], varr: varr[g], resid, nobs: nobs[g] };
+    });
     out.sort((a, b) => b.resid - a.resid);
     return out.slice(0, topN);
   }
