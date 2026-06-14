@@ -1,7 +1,7 @@
 import { mk } from "./dom.ts";
 import { Ctx } from "../data/ctx.ts";
 import { Coord, handleLabel, EntityRef } from "../data/coord.ts";
-import { Panel, PanelView, PanelHooks, CompReactor, bodyFor, paintEmbedding } from "./panels.ts";
+import { Panel, PanelView, PanelHooks, CompReactor, BuiltBody, bodyFor, paintEmbedding } from "./panels.ts";
 import { EmbeddingView } from "../render/embedding.ts";
 import { Agent, Scope, REGISTRY } from "../agent/agent.ts";
 import { checkLive } from "../agent/live.ts";
@@ -57,6 +57,9 @@ export class App {
         { type: "Embedding", title: "Embedding", cap: "coloured by program", bind: "embedding:main" },
         { type: "Overdispersion", title: "Overdispersed programs", cap: "gene programs", bind: "aspect:overdispersion" }] },
     };
+    // don't offer a workspace whose data this store lacks — Aspects needs precomputed gene programs (aspects),
+    // which many stores (e.g. this PBMC set) don't carry. Keeps every visible tab functional.
+    if (!ctx.view.ds.axisNames().includes("aspects")) delete (this.WS as Record<string, unknown>)["Aspects"];
     this.wsOrder = Object.keys(this.WS);
     this.root = mk("div", "app");
   }
@@ -214,7 +217,11 @@ export class App {
     const H = this.ctx.handleOf(p.bind);
     if (H?.caveat) d.appendChild(this.caveatEl(p.bind, H.caveat));
     const b = mk("div", "pbody");
-    const built = await bodyFor(p, this.ctx, this.hooks());
+    // A panel body that throws (e.g. data this dataset lacks) must NOT abort the whole render — that would
+    // leave the previous workspace's DOM stale. Catch it and show an in-panel notice instead.
+    let built: BuiltBody;
+    try { built = await bodyFor(p, this.ctx, this.hooks()); }
+    catch (err) { const m = mk("div", "panelerr"); m.textContent = `⚠ couldn't render this panel — ${(err as Error)?.message || err}`; built = { el: m }; }
     if (built.headerControls) sp.insertBefore(built.headerControls, sp.firstChild);   // e.g. a gene filter, in the header
     b.appendChild(built.el); d.appendChild(b);
     const prov = H?.prov || (this.ctx.handleOf(p.bind)?.prov);

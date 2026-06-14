@@ -289,6 +289,12 @@ async function boxBody(p: Panel, ctx: Ctx): Promise<BuiltBody> {
 }
 
 async function overdispBody(ctx: Ctx, hooks: PanelHooks): Promise<BuiltBody> {
+  // gene programs (aspects) are an optional pipeline product — many datasets (e.g. this PBMC store) lack them.
+  // Show a clear notice instead of throwing, so the panel degrades gracefully rather than breaking the render.
+  if (!ctx.view.ds.axisNames().includes("aspects") || !ctx.view.ds.hasField("aspect_adjvar")) {
+    const m = mk("div", "panelerr"); m.textContent = "No gene programs (aspects) were computed for this dataset.";
+    return { el: m };
+  }
   const names = await ctx.view.ds.axisLabels("aspects");
   const adj = (await ctx.view.ds.fieldDense("aspect_adjvar")).data as Float32Array;
   const order = names.map((n, i) => ({ n, v: adj[i] })).sort((a, b) => b.v - a.v);

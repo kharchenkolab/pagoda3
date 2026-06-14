@@ -59,6 +59,7 @@ button{font-family:inherit}
 .segtog{display:inline-flex;gap:0;margin-right:2px}     /* heatmap/dotplot segmented toggle */
 .segtog .mini{border-radius:0} .segtog .mini:first-child{border-radius:6px 0 0 6px} .segtog .mini:last-child{border-radius:0 6px 6px 0;border-left:0}
 .pbody{padding:11px;min-height:0}
+.panelerr{font-size:11.5px;color:var(--amber,#e0a458);line-height:1.5;padding:6px 2px}   /* a panel whose body failed to build */
 .workbench .pbody{flex:1 1 auto;overflow:auto}      /* canvas panel bodies fill their (stretched) cell */
 .embpanel .pbody{padding:0;position:relative}
 .workbench .embpanel .pbody{overflow:hidden}        /* the embedding fills its panel; deck.gl re-fits */
