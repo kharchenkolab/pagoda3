@@ -72,7 +72,9 @@ button{font-family:inherit}
 .placeholder .phnote{font-size:11px;color:var(--dim)}
 
 /* rail drawer */
-.rail{flex:0 0 0;width:0;background:var(--panel);border-left:1px solid var(--line);transition:width .25s ease,flex-basis .25s ease;overflow:hidden;display:flex;flex-direction:column}
+.rail{flex:0 0 0;width:0;background:var(--panel);border-left:1px solid var(--line);transition:width .25s ease,flex-basis .25s ease;overflow:hidden;display:flex;flex-direction:column;position:relative}
+.railgrip{position:absolute;left:0;top:0;bottom:0;width:6px;cursor:col-resize;z-index:6}
+.railgrip:hover{background:rgba(92,200,255,.25)}
 .rail.open{flex-basis:330px;width:330px}
 .railhd{display:flex;align-items:center;height:38px;padding:0 12px;border-bottom:1px solid var(--line);flex:0 0 auto}
 .railhd .t{font-family:var(--mono);font-size:10px;letter-spacing:1.4px;color:var(--dim)}

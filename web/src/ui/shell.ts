@@ -66,7 +66,7 @@ export class App {
       <div class="stage">
         <div class="convo" id="convo"></div>
         <div class="canvas"><div class="workbench" id="workbench"></div></div>
-        <div class="rail" id="rail"><div class="railhd"><span class="t">ANSWERS · DISPOSABLE</span><span class="x" id="railX">✕</span></div><div class="railbody" id="railbody"></div></div>
+        <div class="rail" id="rail"><div class="railgrip" id="railgrip"></div><div class="railhd"><span class="t">ANSWERS · DISPOSABLE</span><span class="x" id="railX">✕</span></div><div class="railbody" id="railbody"></div></div>
       </div>
       <div class="timeline" id="timeline">
         <div class="thread" id="thread"></div>
@@ -424,6 +424,11 @@ export class App {
     this.$("lockBtn").onclick = () => { this.locked = !this.locked; this.$("lockBtn").classList.toggle("on", this.locked); this.$("lockBtn").textContent = this.locked ? "🔒 Layout" : "🔓 Layout"; this.toast(this.locked ? "Layout locked" : "Layout unlocked", this.locked ? "The agent will route bigger changes to the rail instead of touching your workbench." : null); };
     this.$("railBtn").onclick = () => this.setRail(!this.$("rail").classList.contains("open"));
     this.$("railX").onclick = () => this.setRail(false);
+    // drag the Answers column's left edge to resize it (width persists for the session)
+    { const grip = this.$("railgrip"), rail = this.$("rail"); let gx = 0, gw = 0, drag = false;
+      grip.addEventListener("pointerdown", (e) => { const pe = e as PointerEvent; drag = true; gx = pe.clientX; gw = rail.offsetWidth; rail.style.transition = "none"; try { grip.setPointerCapture(pe.pointerId); } catch {} e.preventDefault(); });
+      grip.addEventListener("pointermove", (e) => { if (!drag) return; const w = Math.max(240, Math.min(760, gw + (gx - (e as PointerEvent).clientX))); rail.style.flexBasis = w + "px"; rail.style.width = w + "px"; });
+      grip.addEventListener("pointerup", () => { drag = false; rail.style.transition = ""; }); }
     this.$("tlhd").onclick = () => this.$("timeline").classList.toggle("collapsed");
     this.$("dockBtn").onclick = (e) => { e.stopPropagation(); this.agent.setThreadDock(!this.threadDocked); };
     this.$("scrim").onclick = () => this.closePalette();

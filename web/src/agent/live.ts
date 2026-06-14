@@ -78,7 +78,7 @@ async function execTool(app: App, name: string, input: any): Promise<string> {
       else if (f) { ids = Array.from(app.ctx.cellsOfCategory(f.dim, f.value)); scope = f.value; }
       else { ids = Array.from({ length: app.ctx.n }, (_, i) => i); scope = "whole dataset"; }
       if (!ids.length) return `no cells found for ${scope}`;
-      const hv = await app.ctx.view.overdispersedGenes(ids, 25);
+      const hv = await app.ctx.view.overdispersedGenes(ids, 100);
       if (!hv.length) return "no overdispersion (store has no cell-major counts panel)";
       const rows = hv.map((h) => ({ symbol: h.symbol, score: h.resid }));
       const label = scope === "whole dataset" ? scope : `${scope} (${ids.length} cells)`;
@@ -97,7 +97,7 @@ async function execTool(app: App, name: string, input: any): Promise<string> {
       const ids = app.ctx.selectedCells(); if (!ids.length) return "no selection — ask the user to drag-select cells first";
       const set = new Set(ids); const rest: number[] = []; for (let i = 0; i < app.ctx.n; i++) if (!set.has(i)) rest.push(i);
       const { ranked, nA, nB, panel, nGenesRanked } = await app.ctx.view.subsampleDE(Array.from(ids), rest);
-      const rows = ranked.slice(0, 20).map((r) => ({ gene: r.gene, symbol: r.symbol, lfc: r.lfc, padj: Math.exp(-Math.abs(r.lfc) * 2) }));
+      const rows = ranked.slice(0, 200).map((r) => ({ gene: r.gene, symbol: r.symbol, lfc: r.lfc, meanA: r.meanA, meanB: r.meanB }));
       ag.addRail({ type: "DeTable", title: `DE · selection (${ids.length})`, cap: panel ? "vs rest · panel" : "vs rest · approx", bind: "de:selection", rows });
       const how = panel ? `O(rows) cell-major counts, all ${nGenesRanked} genes` : "ranking-grade";
       return `subsample DE (n=${nA} vs ${nB}, ${how}); top up: ${rows.filter((r) => r.lfc > 0).slice(0, 6).map((r) => r.symbol).join(", ")}`;
@@ -133,7 +133,7 @@ async function execTool(app: App, name: string, input: any): Promise<string> {
       const B = app.ctx.cellsOfCategories([{ grouping: input.scopeGrouping, value: input.scopeValue }, { grouping: input.splitField, value: input.valueB }]);
       if (!A.length || !B.length) return `no cells for ${input.scopeValue} split ${input.valueA}/${input.valueB} (${A.length} vs ${B.length})`;
       const { ranked, panel } = await app.ctx.view.subsampleDE(Array.from(A), Array.from(B));
-      const rows = ranked.slice(0, 20).map((r: any) => ({ gene: r.gene, symbol: r.symbol, lfc: r.lfc, padj: Math.exp(-Math.abs(r.lfc) * 2) }));
+      const rows = ranked.slice(0, 200).map((r: any) => ({ gene: r.gene, symbol: r.symbol, lfc: r.lfc, meanA: r.meanA, meanB: r.meanB }));
       const spec = { type: "DeTable", title: `Residual batch · ${input.scopeValue}`, cap: `${input.valueA} vs ${input.valueB}${panel ? " · panel" : " · approx"}`, bind: "de:selection", rows };
       if (input.toCanvas) app.addPanel(spec); else ag.addRail(spec);
       return `DE within ${input.scopeValue} (${input.valueA} ${A.length} vs ${input.valueB} ${B.length} cells). Top donor-split genes: ${rows.slice(0, 8).map((r: any) => r.symbol).join(", ")} — ribosomal/MT among them = residual batch.`;

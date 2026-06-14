@@ -64,7 +64,7 @@ export class Agent {
       if (/\bde\b|differential|chang|marker/.test(q)) {
         const ids = sc.ids!; const setB = new Set(ids); const rest: number[] = []; for (let i = 0; i < this.ctx.n; i++) if (!setB.has(i)) rest.push(i);
         const { ranked, nA, nB, approx, panel, nGenesRanked } = await this.ctx.view.subsampleDE(ids, rest);
-        const rows = ranked.slice(0, 20).map((r) => ({ gene: r.gene, symbol: r.symbol, lfc: r.lfc, padj: Math.exp(-Math.abs(r.lfc) * 2) }));
+        const rows = ranked.slice(0, 200).map((r) => ({ gene: r.gene, symbol: r.symbol, lfc: r.lfc, meanA: r.meanA, meanB: r.meanB }));
         this.addRail({ type: "DeTable", title: `DE · selection (${ids.length} cells)`, cap: `vs rest${approx ? " · approx" : ""}`, bind: "de:selection", rows }, qraw);
         const how = panel ? `read only your ${nA + nB} sampled rows from the cell-major counts — O(rows) over all ${nGenesRanked} genes` : `subsampled n=${nA} vs ${nB}`;
         this.app.toast(`DE for your ${ids.length}-cell selection is in the rail`, `${how}, ranking-grade. You gave the agent a referent by selecting — the selection carried the 'what', your words the verb. The donor caveat rides on the handle.`);
@@ -104,7 +104,7 @@ export class Agent {
     if (/highly variable|variable gene|\bhvg\b|overdispersed gene|most variable/.test(q)) {
       const selCells = this.ctx.selectedCells();
       const ids = selCells.length ? Array.from(selCells) : Array.from({ length: this.ctx.n }, (_, i) => i);
-      const hv = await this.ctx.view.overdispersedGenes(ids, 25);
+      const hv = await this.ctx.view.overdispersedGenes(ids, 100);
       const scope = selCells.length ? `selection (${selCells.length} cells)` : "whole dataset";
       this.addRail({ type: "GeneList", title: `Overdispersed · ${scope}`, cap: "od (resid)", bind: "hvg:scope", rows: hv.map((h) => ({ symbol: h.symbol, score: h.resid })) }, qraw);
       this.app.toast(`Overdispersed genes for the ${scope}`, `Recomputed for this scope — residual above the mean-variance trend over all ${this.ctx.view.nGenes.toLocaleString()} genes, not a global shortlist.${hv.length ? " Top: " + hv.slice(0, 6).map((h) => h.symbol).join(", ") : ""}`);

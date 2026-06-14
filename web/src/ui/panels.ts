@@ -19,7 +19,7 @@ export interface Panel {
   bind?: string; text?: string; q?: string; group?: string; gene?: string;
   view?: PanelView;
   split?: { levels: string[]; genes: string[]; means: number[][] };   // gene × donor concordance matrix (SplitHeat)
-  rows?: { gene?: number; symbol: string; lfc?: number; padj?: number; score?: number }[];
+  rows?: { gene?: number; symbol: string; lfc?: number; padj?: number; score?: number; meanA?: number; meanB?: number }[];
 }
 
 export interface PanelHooks {
@@ -146,11 +146,14 @@ function geneTable(rows: any[], cols: GCol[], onPick: (symbol: string) => void):
   return { el: wrap, headerControls: search };
 }
 
+// Subsample DE is fold-change RANKING (no p-value by design — see the caveat), so we show the real effect
+// size (logFC = Δ mean log1p) and each side's mean expression — never a fabricated p.adj.
 function deBody(p: Panel, _ctx: Ctx, hooks: PanelHooks): BuiltBody {
   return geneTable(p.rows || [], [
     { key: "symbol", label: "gene", get: (r) => r.symbol },
-    { key: "lfc", label: "log2FC", num: true, get: (r) => r.lfc ?? 0, fmt: (v) => v.toFixed(2), cls: (v) => (v > 0 ? "up" : "dn") },
-    { key: "padj", label: "p.adj", num: true, get: (r) => r.padj ?? 1, fmt: (v) => (v < 1e-3 ? v.toExponential(1) : v.toFixed(3)) },
+    { key: "lfc", label: "logFC", num: true, get: (r) => r.lfc ?? 0, fmt: (v) => (v > 0 ? "+" : "") + v.toFixed(2), cls: (v) => (v > 0 ? "up" : "dn") },
+    { key: "meanA", label: "A", num: true, get: (r) => r.meanA ?? 0, fmt: (v) => v.toFixed(2) },
+    { key: "meanB", label: "B", num: true, get: (r) => r.meanB ?? 0, fmt: (v) => v.toFixed(2) },
   ], hooks.onGeneClick);
 }
 
