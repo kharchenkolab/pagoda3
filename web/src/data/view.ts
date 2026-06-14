@@ -150,6 +150,25 @@ export class LstarView {
     return { groups, nGenes: ng, n, mean, frac };
   }
 
+  // Per (group, gene) mean(log1p) + fraction-expressing computed over a CELL SUBSET (e.g. one condition's
+  // cells), via the cell-major CSR panel. Lets a dotplot be FACETED — the same genes×groups grid, with dots
+  // reflecting just that subset — so two scoped panels (day0 / day7) are directly comparable. `codes` maps each
+  // cell to its group index; G = number of groups. Genes are global indices (matches markers' gene ids).
+  async groupStatsForCells(codes: ArrayLike<number>, G: number, cellIds: ArrayLike<number>): Promise<{ mean: Float32Array; frac: Float32Array; n: Int32Array }> {
+    const ng = this.nGenes;
+    const mean = new Float32Array(G * ng), frac = new Float32Array(G * ng), n = new Int32Array(G);
+    const dp = await this.dePanel(); if (!dp) return { mean, frac, n };   // no cell-major panel → no faceting (caller falls back)
+    const { data, indices, indptr, geneCol, lognorm } = dp;
+    const sum = new Float64Array(G * ng), nz = new Float64Array(G * ng);
+    for (let j = 0; j < cellIds.length; j++) {
+      const i = cellIds[j], grp = codes[i]; if (grp < 0 || grp >= G) continue; n[grp]++;
+      const base = grp * ng;
+      for (let k = indptr[i]; k < indptr[i + 1]; k++) { const gc = geneCol ? geneCol[indices[k]] : indices[k]; sum[base + gc] += lognorm ? data[k] : Math.log1p(data[k]); nz[base + gc]++; }
+    }
+    for (let grp = 0; grp < G; grp++) { const cnt = Math.max(n[grp], 1), base = grp * ng; for (let g = 0; g < ng; g++) { mean[base + g] = sum[base + g] / cnt; frac[base + g] = nz[base + g] / cnt; } }
+    return { mean, frac, n };
+  }
+
   // Ranked marker genes per group. Reads the precomputed table when present, else derives markers
   // (group mean(log1p) vs rest) from on-the-fly group stats — so a bare store still gets markers.
   async markers(grouping = "leiden", topN = 25): Promise<Map<string, { gene: number; symbol: string; lfc: number; padj: number }[]>> {

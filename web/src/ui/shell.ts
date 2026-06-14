@@ -26,6 +26,7 @@ export class App {
   WS: Record<string, WS>; wsOrder: string[]; currentWS = "Overview";
   history: Checkpoint[] = []; viewing = -1; locked = false; uid = 0;
   suspendRender = false;   // set while applyViewPatch batches a multi-op patch into a single render
+  renderToken = 0;         // guards fullRender against concurrent re-entry (async panel build → stale double-append)
   liveMessages: any[] = [];   // the running Anthropic conversation (persists across asks so follow-ups keep context)
   embeddings: EmbeddingView[] = [];
   compReactors: CompReactor[] = [];   // vocabulary-bound panels that highlight a category on a coord hint
@@ -130,12 +131,16 @@ export class App {
 
   async fullRender() {
     const wb = this.$("workbench");
+    const token = ++this.renderToken;   // panelEl is async; if a newer render starts mid-build, drop this one (no double-append)
     const old: Record<string, DOMRect> = {};
     wb.querySelectorAll<HTMLElement>(".panel[data-pid]").forEach((el) => (old[el.dataset.pid!] = el.getBoundingClientRect()));
+    const built: { dom: HTMLElement; afterAttach?: () => void }[] = [];
+    for (const p of this.canvas) built.push(await this.panelEl(p));   // build off-DOM first; old panels stay visible meanwhile
+    if (token !== this.renderToken) return;   // superseded by a newer fullRender → discard this build
     this.embeddings = []; this.compReactors = [];
     wb.innerHTML = "";
     const afters: (() => void)[] = [];
-    for (const p of this.canvas) { const { dom, afterAttach } = await this.panelEl(p); wb.appendChild(dom); if (afterAttach) afters.push(afterAttach); }
+    for (const b of built) { wb.appendChild(b.dom); if (b.afterAttach) afters.push(b.afterAttach); }
     this.layoutCanvas(wb);   // place panels into two columns (row-major by default; per-panel col pins override)
     // FLIP for surviving panels
     wb.querySelectorAll<HTMLElement>(".panel[data-pid]").forEach((el) => {

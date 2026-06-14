@@ -308,8 +308,16 @@ function splitHeatBody(p: Panel): BuiltBody {
 
 async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltBody> {
   const grouping = p.group || "leiden";
-  const gs = await ctx.groupStatsCached(grouping);
-  const markers = await ctx.markers(grouping);
+  const markers = await ctx.markers(grouping);   // ROWS: all-cell markers — shared across scopes so two faceted panels align
+  // FACETING: if the panel is scoped (e.g. condition=day0), compute the dots WITHIN that population. Columns stay in
+  // the grouping's full order, so two scoped panels (day0 / day7) share identical rows AND columns — directly comparable.
+  const scope = p.view?.scope as any;
+  const scopeCells = scope ? ctx.refToCells(scope) : null;
+  const scoped = !!(scopeCells && scopeCells.length);
+  const scopeLabel = scoped ? (scope.kind === "category" ? scope.value : `${scopeCells!.length} cells`) : "";
+  const gs = scoped
+    ? await ctx.groupStatsForCells(grouping, scopeCells!, scope.kind === "category" ? `${scope.grouping}=${scope.value}` : undefined)
+    : await ctx.groupStatsCached(grouping);
   // top 3 genes per group, unique
   const seen = new Set<number>(); const markerRows: { gene: number; symbol: string; pinned?: boolean }[] = [];
   for (const grp of gs.groups) for (const m of (markers.get(grp) || []).slice(0, 3)) if (!seen.has(m.gene)) { seen.add(m.gene); markerRows.push({ gene: m.gene, symbol: m.symbol }); }
@@ -341,7 +349,7 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
   const tip = mk("div"); tip.style.cssText = "position:absolute;display:none;background:var(--ink);border:1px solid var(--line2);border-radius:6px;padding:3px 8px;font-size:11px;color:var(--text);pointer-events:none;z-index:20;white-space:nowrap;box-shadow:0 4px 14px rgba(0,0,0,.45)";
   w.appendChild(tip);
   const hint = mk("div"); hint.style.cssText = "flex:0 0 auto;font-size:10.5px;color:var(--faint);padding:5px 7px 2px;line-height:1.4";
-  hint.textContent = "hover to read mean & % expressing · dot view: size = % of cells expressing · click a gene to colour by it";
+  hint.textContent = (scoped ? `within ${scopeLabel} · ` : "") + "hover to read mean & % expressing · dot size = % expressing · click a gene to colour";
   w.appendChild(hint);
   const showTip = (e: PointerEvent, html: string) => {
     tip.innerHTML = html; tip.style.display = "block";
