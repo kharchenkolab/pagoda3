@@ -7,6 +7,8 @@ import { Agent, Scope, REGISTRY } from "../agent/agent.ts";
 import { checkLive } from "../agent/live.ts";
 import { normalizeViewPatch, RawViewPatch, World, PanelSpec, PanelPatch } from "../agent/viewpatch.ts";
 import { validateCellSet, resolveCellSet, describeCellSet, CellSet, CellWorld, CellEnv } from "../agent/cellset.ts";
+import { validateComputeResult, runInWorker } from "../agent/codeapi.ts";
+import { setCodeValues } from "../render/colors.ts";
 
 interface Checkpoint { i: number; q: string; why: string; state: any; kind?: "ask" | "act"; exchange?: { kind: string; entries?: any[]; turns?: any[] }; }
 interface WS { colorBy: string; panels: Partial<Panel>[]; }
@@ -336,6 +338,41 @@ export class App {
     const up = rows.filter((r: any) => r.lfc > 0).slice(0, 6).map((r: any) => r.symbol).join(", ");
     const dn = rows.filter((r: any) => r.lfc < 0).slice(0, 6).map((r: any) => r.symbol).join(", ");
     return { ok: `DE ${aL} (${Aids.length}) vs ${bL} (${Bids.length}), compared directly. Higher in ${aL}: ${up || "—"}. Higher in ${bL}: ${dn || "—"}.` };
+  }
+
+  // ----- the code escape hatch: sandboxed ad-hoc computation over a data snapshot, typed result binds to a panel -----
+  async runComputeCode(input: { code?: string; genes?: string[]; grouping?: string; title?: string; toCanvas?: boolean }): Promise<{ ok?: string; error?: string }> {
+    const ctx = this.ctx;
+    if (typeof input.code !== "string" || !input.code.trim()) return { error: "code (an async function body returning {kind,…}) is required" };
+    await ctx.view.genes();
+    // build the worker snapshot: warmed categoricals, declared gene vectors, the embedding, optional grouping stats
+    const cats: Record<string, { codes: any; categories: string[] }> = {};
+    for (const f of ctx.categoricalFields()) { const m: any = await ctx.metaOf(f); cats[f] = { codes: m.codes, categories: m.categories }; }
+    const genes: Record<string, Float32Array> = {}; const unknown: string[] = [];
+    for (const sym of input.genes || []) { const s = String(sym).trim(); if (!s) continue; const gi = await ctx.view.geneCol(s); if (gi == null) { unknown.push(s); continue; } genes[s] = (await ctx.view.geneExpression(s)).values; }
+    let stats: any; if (input.grouping && ctx.groupings().includes(input.grouping)) { const gs = await ctx.groupStatsCached(input.grouping); stats = { groups: gs.groups, mean: gs.mean, frac: gs.frac, nGenes: gs.nGenes }; }
+    const run = await runInWorker(input.code, { n: ctx.n, cats, genes, embedding: ctx.embedding.data, stats }, 5000);
+    if (!run.ok) return { error: run.error };
+    const v = validateComputeResult(run.result, ctx.n);
+    const note = unknown.length ? ` Unknown genes (pass exact symbols; not measured here): ${unknown.join(", ")}.` : "";
+    if (v.error) return { error: v.error + (unknown.length ? ` (also: ${unknown.join(", ")} not found)` : "") };
+    const res = v.result!;
+    if (res.kind === "genes") {
+      const hasLfc = res.rows.some((r) => r.lfc != null);
+      const spec: Partial<Panel> = { type: hasLfc ? "DeTable" : "GeneList", title: res.title || "Computed genes", cap: "custom code", bind: "code:result", rows: res.rows };
+      if (input.toCanvas) this.addPanel(spec); else this.agent.addRail(spec);
+      return { ok: `genes table (${res.rows.length}): ${res.rows.slice(0, 8).map((r) => r.symbol).join(", ")}.${note}` };
+    }
+    if (res.kind === "values") {
+      setCodeValues(res.label, Float32Array.from(res.values)); this.recolorAll("code:" + res.label);
+      return { ok: `coloured the embedding by your computed per-cell score "${res.label}".${note}` };
+    }
+    if (res.kind === "note") {
+      this.agent.addRail({ type: "Note", title: res.title || "Computed note", text: res.text, bind: "code:result" });
+      return { ok: `added a note.${note}` };
+    }
+    this.coord.setSelection({ kind: "cells", ids: Int32Array.from(res.ids) });   // cells → selection
+    return { ok: `selected ${res.ids.length} cells${res.label ? ` (${res.label})` : ""}.${note}` };
   }
 
   // "Recolour everything" — a gene click or the agent's set_color. Clears per-panel colour overrides so the

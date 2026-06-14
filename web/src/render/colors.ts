@@ -22,6 +22,14 @@ export async function focusMaskFor(view: LstarView, focus: { dim: string; value:
 
 import { catColor } from "../data/view.ts";
 
+// Custom per-cell vectors produced by the code escape hatch (compute_code → kind:"values"). Stored here so a
+// `code:<label>` handle resolves like any other numeric colouring, with no special-casing in the paint path.
+const codeStore = new Map<string, { values: Float32Array; max: number }>();
+export function setCodeValues(label: string, values: Float32Array): void {
+  let mx = 0; for (let i = 0; i < values.length; i++) if (values[i] > mx) mx = values[i];
+  codeStore.set(label, { values, max: mx || 1 });
+}
+
 export async function colorsFor(view: LstarView, colorBy: string, focusMask?: Uint8Array): Promise<{ rgba: Uint8Array; legend: Legend }> {
   const [kind, rest] = colorBy.split(/:(.+)/);
   if (kind === "meta") {
@@ -43,6 +51,11 @@ export async function colorsFor(view: LstarView, colorBy: string, focusMask?: Ui
   if (kind === "gene") {
     const { values, max } = await view.geneExpression(rest);
     return { rgba: scalarToRGBA(values, max, focusMask), legend: numericLegend(rest) };
+  }
+  if (kind === "code") {
+    const e = codeStore.get(rest);
+    const vals = e ? e.values : new Float32Array(view.nCells);
+    return { rgba: scalarToRGBA(vals, e ? e.max : 1, focusMask), legend: numericLegend(rest) };
   }
   if (kind === "geneset") {
     const m = await md(view, "aspect_scores"); // dense (cells, aspects)

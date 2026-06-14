@@ -2,6 +2,7 @@
 // coordination space and earns bigger moves through tools. Renders into the timeline
 // thread (the live tip), interruptible. Falls back to the mock planner if unreachable.
 import type { App } from "../ui/shell.ts";
+import { CODE_API_DOC } from "./codeapi.ts";
 
 const PROXY = "/api/agent/stream";
 
@@ -41,6 +42,8 @@ const TOOLS: Tool[] = [
   { name: "propose_workspace", description: "Propose switching to a named workspace (a bigger, reversible layout change the human confirms). name is one of: Overview, Markers, QC triage, Aspects.", input_schema: { type: "object", properties: { name: { type: "string" } }, required: ["name"] } },
   { name: "add_note", description: "Add a short text note to the rail (for an answer that needs no view).", input_schema: { type: "object", properties: { text: { type: "string" } }, required: ["text"] } },
   { name: "concordance_panel", description: "Per-donor MARKER concordance for one cell type — the companion to a within-type compute(stat:de). Takes that cell type's top markers and shows their mean expression split by donor (a gene × donor heat). Markers reading the SAME across donors confirm a genuinely merged population; divergent ones are suspect. scopeGrouping/scopeValue = the cell type (e.g. cell_type, \"CD8+ T cells\"); splitField = the donor/batch field (sample). Adds the panel to the workbench.", input_schema: { type: "object", properties: { scopeGrouping: { type: "string" }, scopeValue: { type: "string" }, splitField: { type: "string" } }, required: ["scopeGrouping", "scopeValue", "splitField"] } },
+  // ---- escape hatch: sandboxed ad-hoc computation when the primitives above can't express it ----
+  { name: "compute_code", description: "ESCAPE HATCH — run a short SANDBOXED JS computation when neither update_view (config) nor compute (de/overdispersion over cell sets) can express what you need: custom signature scores, ad-hoc per-cell metrics, bespoke filters, simple correlations. Prefer the dedicated tools when they fit; reach here only for the long tail. " + CODE_API_DOC + " Declare every gene your code reads in `genes`. The result lands in the disposable rail (or set toCanvas); it carries an 'unvalidated custom code' caveat.", input_schema: { type: "object", properties: { code: { type: "string", description: "async function BODY that returns a typed result (see above)" }, genes: { type: "array", items: { type: "string" }, description: "exact HGNC symbols the code reads via api.expr" }, grouping: { type: "string", description: "optional: expose api.stats (mean/frac) for this grouping" }, title: { type: "string" }, toCanvas: { type: "boolean" } }, required: ["code"] } },
 ];
 
 async function systemPrompt(app: App): Promise<string> {
@@ -52,6 +55,7 @@ PRINCIPLE OF RESTRAINT — always prefer the SMALLEST change that answers the qu
 - recolour/focus in place via update_view ({color:…} or {focus:…}) — the default;
 - a disposable answer in the rail (compute for DE/overdispersion over any cell set, get_markers, get_composition, get_overdispersion, add_note), or add a Heatmap panel via update_view, when a new view is needed;
 - a workspace proposal (propose_workspace) only for a deliberate layout change — and it is a PROPOSAL the human confirms.
+- compute_code is the ESCAPE HATCH — sandboxed ad-hoc JS (declare the genes it reads) for the long tail only (custom signature scores, bespoke per-cell metrics/filters). Try update_view and compute FIRST; its results carry an "unvalidated" caveat.
 The change itself is visible, so keep your prose to ONE short sentence. Never narrate state the user can already see.
 
 METHODOLOGY (cacoa — encode these, don't forget them):
@@ -89,6 +93,7 @@ async function execTool(app: App, name: string, input: any): Promise<string> {
       return `added marker table for ${grouping}=${input.cluster}; top genes: ${rows.slice(0, 8).map((r) => r.symbol).join(", ")}`;
     }
     case "compute": { const { ok, error } = await app.runCompute(input); return error ? `error: ${error}` : ok!; }
+    case "compute_code": { const { ok, error } = await app.runComputeCode(input); return error ? `error: ${error}` : ok!; }
     case "get_composition": {
       const comp = await app.ctx.composition("leiden"); ag.addRail({ type: "CompositionBars", title: "Composition by sample", cap: "compositional", bind: "composition:bySample" });
       const c0dis = comp.props.filter((_, i) => comp.conds[i] === "disease").map((p) => p[comp.groups.indexOf("c0")]);
@@ -176,6 +181,7 @@ function toolLabel(tu: any): string {
   }
   if (tu.name === "get_markers") return `markers · ${i.cluster}`;
   if (tu.name === "compute") return i.stat === "overdispersion" ? "overdispersion" : "DE (compute)";
+  if (tu.name === "compute_code") return "custom code";
   if (tu.name === "concordance_panel") return `concordance · ${i.scopeValue}`;
   if (tu.name === "propose_workspace") return `propose workspace · ${i.name}`;
   return tu.name.replace(/_/g, " ");

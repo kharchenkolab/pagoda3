@@ -63,5 +63,6 @@ export function handleLabel(handle: string): string {
   if (kind === "gene") return rest;
   if (kind === "qc") return rest;
   if (kind === "geneset") return rest;
+  if (kind === "code") return rest;   // a custom per-cell score from compute_code
   return handle;
 }
