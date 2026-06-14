@@ -307,12 +307,12 @@ export class LstarView {
     }
     const trend = lowess(xs, ys);                                    // log(v) ~ smooth(log(m))
     const out = gi.map((g, j) => {
-      const raw = ys[j] - trend(xs[j]);                              // log-variance above the mean-variance trend
-      // Squash by the variance estimate's reliability: log(sample variance) has SE ≈ sqrt(2/df), and the
-      // EFFECTIVE d.o.f. is the number of EXPRESSING cells (zeros carry ~no info about a gene's variance).
-      // A gene seen in a handful of cells (e.g. IGLV1-36) is thus demoted despite a large raw residual.
-      const resid = raw * Math.sqrt(Math.max(nobs[g] - 1, 1) / 2);
-      return { gene: geneCol ? geneCol[g] : g, symbol: symbols[g], mean: mean[g], varr: varr[g], resid, nobs: nobs[g] };
+      const res = ys[j] - trend(xs[j]);                              // residual: log(variance) above the trend
+      // pagoda2 adjustVariance: test the variance ratio exp(res) against F(nobs, nobs). The EFFECTIVE d.o.f.
+      // is the number of EXPRESSING cells, so F(small,small) is wide and a sparsely-expressed gene (e.g. IGLV1-36)
+      // can't reach significance despite a large raw residual. Score = -log p (↑ = more overdispersed).
+      const lp = logFupperTail(Math.exp(res), nobs[g], nobs[g]);
+      return { gene: geneCol ? geneCol[g] : g, symbol: symbols[g], mean: mean[g], varr: varr[g], resid: -lp, nobs: nobs[g] };
     });
     out.sort((a, b) => b.resid - a.resid);
     return out.slice(0, topN);
@@ -352,6 +352,40 @@ function lowerBound(arr: number[], x: number): number {
   let lo = 0, hi = arr.length;
   while (lo < hi) { const m = (lo + hi) >> 1; if (arr[m] < x) lo = m + 1; else hi = m; }
   return lo;
+}
+
+// ----- overdispersion F-test (matches pagoda2 adjustVariance: pf(var-ratio, nobs, nobs, upper, log)) -----
+function lgammaFn(x: number): number {
+  const c = [76.18009172947146, -86.50532032941677, 24.01409824083091, -1.231739572450155, 0.1208650973866179e-2, -0.5395239384953e-5];
+  let y = x; let tmp = x + 5.5; tmp -= (x + 0.5) * Math.log(tmp); let ser = 1.000000000190015;
+  for (let j = 0; j < 6; j++) { y += 1; ser += c[j] / y; }
+  return -tmp + Math.log(2.5066282746310005 * ser / x);
+}
+function betacf(a: number, b: number, x: number): number {
+  const FPMIN = 1e-300, EPS = 3e-12, MAXIT = 300, qab = a + b, qap = a + 1, qam = a - 1;
+  let c = 1, d = 1 - qab * x / qap; if (Math.abs(d) < FPMIN) d = FPMIN; d = 1 / d; let h = d;
+  for (let m = 1; m <= MAXIT; m++) {
+    const m2 = 2 * m;
+    let aa = m * (b - m) * x / ((qam + m2) * (a + m2));
+    d = 1 + aa * d; if (Math.abs(d) < FPMIN) d = FPMIN; c = 1 + aa / c; if (Math.abs(c) < FPMIN) c = FPMIN; d = 1 / d; h *= d * c;
+    aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2));
+    d = 1 + aa * d; if (Math.abs(d) < FPMIN) d = FPMIN; c = 1 + aa / c; if (Math.abs(c) < FPMIN) c = FPMIN; d = 1 / d; const del = d * c; h *= del;
+    if (Math.abs(del - 1) < EPS) break;
+  }
+  return h;
+}
+// log of the regularised incomplete beta I_x(a,b)
+function logIncBeta(a: number, b: number, x: number): number {
+  if (x <= 0) return -Infinity; if (x >= 1) return 0;
+  const logbt = lgammaFn(a + b) - lgammaFn(a) - lgammaFn(b) + a * Math.log(x) + b * Math.log1p(-x);
+  return x < (a + 1) / (a + b + 2)
+    ? logbt + Math.log(betacf(a, b, x) / a)
+    : Math.log1p(-Math.exp(logbt + Math.log(betacf(b, a, 1 - x) / b)));
+}
+// log of the upper-tail F p-value: log P(F_{d1,d2} > f)
+function logFupperTail(f: number, d1: number, d2: number): number {
+  if (f <= 0) return 0;
+  return logIncBeta(d2 / 2, d1 / 2, d2 / (d2 + d1 * f));
 }
 
 function sample(arr: number[], k: number): number[] {
