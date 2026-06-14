@@ -4,6 +4,21 @@ Running log of an autonomous stage-test campaign. Each scenario: observe (functi
 graphics/layout + density/wasted-space) → list issues → fix the clear ones via OODA (commit refs) →
 park questionable calls for review.
 
+## Campaign summary (this run)
+Ran 8 scenario groups (Markers, Layout, Coordination, Encoding, Compute, Conversation,
+Persistence/Honesty/Stress, long-tail). **9 bugs fixed + 1 new feature**, all committed; S3–S7 verified
+working (no fixes needed). Tests: 29 pass.
+- **Fixed:** embedding labels invisible on mount (A); lexical cluster order + cramped dotplot labels (B);
+  panel title wrap (C); faceted panels not comparable (D, → facet feature); panels scrolling off the
+  viewport (E); narrow faceted headers clipping controls (F); grid rows blowing past their track (G);
+  composition wasting ~40% of its height (H); a throwing panel leaving stale DOM + data-less workspaces
+  offered (I).
+- **New feature:** `update_view.facet({by,…})` — declarative panel splits that are guaranteed comparable.
+- **Verified working:** cross-panel coordination, colormap/heat-dot/alpha, DE/overdispersion/compute_code,
+  conversation clarify+continuity, workspace restore, unmeasured-gene + impossible-view honesty, rapid-
+  switch stress.
+- **For you:** annotation design (proposal below); + 6 parked judgment calls (review section).
+
 ## For review (questionable — decide later)
 - **Markers dotplot default grouping = leiden (28 clusters), embedding colours by cell_type.** The two
   panels in the Markers workspace describe different partitions. Grouping the dotplot by `cell_type`
@@ -24,6 +39,44 @@ park questionable calls for review.
   (embedding collapsed to 2px — likely deck.gl canvas width feedback), so I reverted it. Desktop is the
   target and works well; proper responsive (1-col stack + collapsible top bar + deck re-fit) needs real
   design. Parked. (app.css .workbench / topbar)
+
+## Proposal — Annotation (new functionality, for your approval)
+You flagged annotation as a direction beyond inspection/comparison. Here's a concrete design that fits
+the existing architecture (cell-set algebra + the declarative `update_view` surface + generative control).
+I did NOT build it — it has real design choices that are yours to make. Recommended v1 below.
+
+**Core idea — annotation = naming a cell set.** A new synthetic grouping `annotation` whose categories
+are user/agent-defined labels. Each label IS a cell-set expression (reuse the existing algebra). Once it
+exists it behaves like any categorical: colour by it, scope/facet by it, `compute` DE between two
+annotations, cross-panel coordination — all for free.
+
+**The operation (one new declarative field):**
+`update_view({ annotate: { cells: <CellSet>, label: "Exhausted CD8", color?: "#.." } })`
+- `cells` reuses the cell-set algebra ({selection:true}, {category:…}, {intersect:[…]}, …).
+- creates/updates a label in an `annotations` layer; "Rename cluster 5 → NK" is just
+  `annotate({cells:{category:{grouping:'leiden',value:'5'}}, label:'NK'})`.
+
+**v1 scope I'd recommend (all clearly-good, minimal surface):**
+1. `annotate` field + an `annotations` grouping that shows up everywhere a categorical can (colour/scope/
+   facet/compute). Unlabeled cells = grey.
+2. Manual trigger: when a selection exists, a "Label selection…" affordance (the selection is already a
+   first-class cell set). 
+3. An annotations legend card: rename / recolour / delete each label; click to select its cells.
+4. Generative: the agent can create annotations AND *propose* them ("cluster 5 is GNLY/NKG7/GZMB-high —
+   label it 'NK'?") as a confirm-style proposal, mirroring propose_workspace.
+
+**Decisions for you (why I didn't just build it):**
+- **Persistence.** Recommend app-state + JSON export/import (download/upload a small annotations file).
+  NOT writing back into the .zarr (heavy, makes the store mutable). Acceptable?
+- **Overlaps.** Recommend single-label per cell, last-write-wins, for v1 (the algebra still answers
+  multi-membership questions). Or do you want layered/multi-label annotations?
+- **Rename semantics.** Should renaming leiden 5 → "NK" shadow leiden everywhere (legend, DE headers,
+  dotplot columns), or only create a separate `annotation` grouping that leaves leiden intact? I lean
+  separate-grouping (non-destructive, reversible).
+- **Scope of v1** — just labeling selections/clusters, or also free-form brush → label → iterate?
+
+If you bless a shape, it's ~the size of the facet primitive to build (a pure reducer field + an app
+executor + a small legend card + a couple of agent-prompt lines), with unit tests.
 
 ## Fixed
 
@@ -136,3 +189,6 @@ park questionable calls for review.
   when the data is absent; (3) the Aspects workspace tab is dropped entirely when the store has no
   aspect tables (don't offer a workspace that can't render). Verified: QC triage→Aspects no longer
   leaves stale DOM; tabs now Overview/Markers/QC triage. (shell.ts panelEl + WS init, panels.ts)
+- Pinning many genes (14, incl. unmeasured IL17A) to a dotplot — PASS: 13 pinned + highlighted at top
+  with a separator, IL17A shown as a "not in this dataset" footnote, rows scroll within the panel.
+- Rapid/responsive viewport — parked (see For review).
