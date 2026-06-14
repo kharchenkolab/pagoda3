@@ -59,3 +59,21 @@ park questionable calls for review.
 - L4 maximize/restore verified (panel → full-width 709px and back to 349px).
 - Minor polish: panel titles carry a tooltip (full title on hover) since narrow embedding headers
   truncate the title to keep the color dropdown + toggles reachable.
+
+### Scenario 3 — Coordination (select / hover / deselect) — ALL PASS, no fixes
+- C1: selecting leiden cluster 3 highlights across all panels — embedding lifts those cells (in their
+  cell_type colour, rest greyed), dotplot column banded, composition stratum + legend highlighted. The
+  leiden→cells→embedding translation works even with the embedding coloured by a different field.
+- C2: hovering a dotplot cell drives category + gene hints; the OTHER faceted dotplot shows both the
+  column band and the gene-row band (full crosshair). Verified receiver overlays = 1 col + 1 row.
+- C3: clearing the selection removes all cross-panel highlights.
+
+### Scenario 4 — Encoding (colormap / heat-dot / alpha / legend) — ALL PASS, no fixes
+- E1: agent request "colour by CD3E, red-to-blue scale" → colorBy=gene:CD3E, colormap=rdbu, diverging
+  palette renders correctly (T cells blue=high, monocytes red=low), legend matches. This was the exact
+  thing the agent COULDN'T do before the colormap fix earlier this session — now end-to-end via agent.
+- E2: heat↔dot toggle — heat mode = 1176 filled rects, 0 circles; dot mode = circles. Both clean.
+- E3: alpha (0.25) applied; labels toggle (25→0); legend toggle (swatch removed). All work.
+- NOTE for S7: display state (labels/legend/alpha) is GLOBAL (coord.state.display), not per-workspace —
+  toggling labels off in Overview leaves them off after switching to Markers. Check if this should be
+  per-workspace.
