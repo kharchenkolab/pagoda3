@@ -122,3 +122,12 @@ park questionable calls for review.
   click → selection) preserved. Verified: bars fill the panel, no overflow, click still selects.
   (panels.ts compositionBody). [Watch out: needed pb.position=relative to contain the absolute fill — an
   SVG height:100% won't resolve against a flex parent, so draw() sets explicit px width/height/viewBox.]
+- **Bug I — a throwing panel body left the previous workspace's DOM stale.** The Aspects workspace's
+  Overdispersion panel reads `aspects`/`aspect_adjvar`, which pbmc6 lacks → overdispBody threw →
+  `fullRender`'s serial `await panelEl` rejected → the whole render aborted, leaving the prior
+  workspace's panel (Composition) on screen while the model said Overdispersion. Three fixes: (1)
+  panelEl catches a throwing body and shows an in-panel "⚠ couldn't render" notice so one bad panel
+  never aborts the render; (2) overdispBody degrades to a clean "No gene programs (aspects)…" message
+  when the data is absent; (3) the Aspects workspace tab is dropped entirely when the store has no
+  aspect tables (don't offer a workspace that can't render). Verified: QC triage→Aspects no longer
+  leaves stale DOM; tabs now Overview/Markers/QC triage. (shell.ts panelEl + WS init, panels.ts)
