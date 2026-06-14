@@ -19,6 +19,11 @@ park questionable calls for review.
 - **Display state (labels/legend/alpha) is global, not per-workspace.** Toggling labels off in one
   workspace leaves them off after switching. Could be intentional (consistent viewing prefs) or should
   be saved per-workspace like colorBy/panels. Decide. (coord.state.display vs switchWS save)
+- **Narrow/mobile responsiveness.** At ~560px the workbench stays 2 columns (panels ~260px, cramped) and
+  the top bar overflows ("Answers" clipped). A naive `@media{grid-template-columns:1fr}` broke worse
+  (embedding collapsed to 2px — likely deck.gl canvas width feedback), so I reverted it. Desktop is the
+  target and works well; proper responsive (1-col stack + collapsible top bar + deck re-fit) needs real
+  design. Parked. (app.css .workbench / topbar)
 
 ## Fixed
 
