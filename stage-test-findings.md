@@ -12,6 +12,13 @@ park questionable calls for review.
 - **Dotplot x-axis: rotate vs thin.** Chose −45° rotation (scanpy/Seurat style) so every group label
   stays present — no thinning/hiding, consistent with the density+honesty principles. If you'd rather a
   cleaner look with fewer labels, say so and I'll switch to thinning. (panels.ts draw)
+- **compute_code coloring caveat is chat-only.** A `code:` signature coloring looks identical to a
+  validated gene coloring; the "unvalidated custom code" caveat is in the agent's chat reply but there's
+  no persistent visual badge on the panel/legend. Given the honesty emphasis, a small "custom"/"~" badge
+  on code-derived legends might be warranted. Prominence is a design call — left for you.
+- **Display state (labels/legend/alpha) is global, not per-workspace.** Toggling labels off in one
+  workspace leaves them off after switching. Could be intentional (consistent viewing prefs) or should
+  be saved per-workspace like colorBy/panels. Decide. (coord.state.display vs switchWS save)
 
 ## Fixed
 
@@ -77,3 +84,13 @@ park questionable calls for review.
 - NOTE for S7: display state (labels/legend/alpha) is GLOBAL (coord.state.display), not per-workspace —
   toggling labels off in Overview leaves them off after switching to Markers. Check if this should be
   per-workspace.
+
+### Scenario 5 — Compute (DE / overdispersion / compute_code) — ALL PASS, no fixes
+- M1: agent DE "naive B vs memory B" → direct two-group table (B (naive) vs B (memory)), distinct real
+  means, honest caveat ("donor is the replicate; verify per-sample…"), one rail card (not flooded).
+  Biologically correct: TCL1A/IGHM up in naive, CRIP1/VIM/IGHA1 up in memory. The old "same results on
+  both sides" / 0.00-columns bug is gone.
+- M2: scoped overdispersion in CD14 mono (6671 cells, recomputed for scope) → interferon-stimulated
+  genes (IFITM3, IFI27, ISG15…) — meaningful for COVID monocytes.
+- M3: agent compute_code cytotoxicity signature (mean of GZMB/PRF1/GNLY/NKG7) → embedding recolours via
+  code: handle, lights up NK/CD8; caveat conveyed in the agent reply ("unvalidated-custom-code caveat").
