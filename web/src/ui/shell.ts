@@ -89,12 +89,13 @@ export class App {
         <div class="tb pip" id="askBtn"><span class="dot"></span>Ask<span class="kbd">⌘K</span></div>
         <div class="tb" id="lockBtn">🔓 Layout</div>
         <div class="tb" id="themeBtn" title="toggle light / dark theme">☾</div>
-        <div class="tb" id="railBtn">Answers</div>
+        <div class="tb" id="convoBtn" title="show / hide the Chat column">Chat</div>
+        <div class="tb" id="railBtn" title="show / hide the Answers column">Answers</div>
       </div>
       <div class="stage">
         <div class="convo" id="convo"></div>
         <div class="canvas"><div class="workbench" id="workbench"></div></div>
-        <div class="rail" id="rail"><div class="railgrip" id="railgrip"></div><div class="railhd"><span class="t">ANSWERS · DISPOSABLE</span><span class="x" id="railX">✕</span></div><div class="railbody" id="railbody"></div></div>
+        <div class="rail" id="rail"><div class="railgrip" id="railgrip"></div><div class="railhd"><span class="t">ANSWERS · DISPOSABLE</span><span class="x" id="railX" title="collapse">⇥</span></div><div class="railbody" id="railbody"></div></div>
       </div>
       <div class="timeline" id="timeline">
         <div class="thread" id="thread"></div>
@@ -904,7 +905,7 @@ export class App {
   }
 
   // ---------- rail ----------
-  setRail(open: boolean) { this.$("rail").classList.toggle("open", open); }
+  setRail(open: boolean) { this.$("rail").classList.toggle("open", open); this.$("railBtn").classList.toggle("on", open); }
   async renderRail() {
     const rb = this.$("railbody"); rb.innerHTML = "";
     if (this.proposal) {
@@ -1089,6 +1090,7 @@ export class App {
     this.applyTheme((localStorage.getItem("p2-theme") as "light" | "dark") || "dark");   // restore the saved preference
     this.$("railBtn").onclick = () => this.setRail(!this.$("rail").classList.contains("open"));
     this.$("railX").onclick = () => this.setRail(false);
+    this.$("convoBtn").onclick = () => this.agent.setThreadDock(!this.threadDocked);   // mirror of railBtn: top-bar toggle for the Chat column
     // drag the Answers column's left edge to resize it (width persists for the session)
     { const grip = this.$("railgrip"), rail = this.$("rail"); let gx = 0, gw = 0, drag = false;
       grip.addEventListener("pointerdown", (e) => { const pe = e as PointerEvent; drag = true; gx = pe.clientX; gw = rail.offsetWidth; rail.style.transition = "none"; try { grip.setPointerCapture(pe.pointerId); } catch {} e.preventDefault(); });

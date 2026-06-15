@@ -168,7 +168,7 @@ export class Agent {
   renderDockedConvo() {
     this.app.$("thread").classList.remove("show"); this.app.$("thread").innerHTML = "";
     const host = this.app.$("convo"); host.classList.add("open"); host.innerHTML = "";
-    const hd = mk("div", "convohd"); hd.appendChild(mk("span", "t", "CONVERSATION · PINNED")); const x = mk("span", "x", "⇤"); x.onclick = () => this.setThreadDock(false); hd.appendChild(x); host.appendChild(hd);
+    const hd = mk("div", "convohd"); hd.appendChild(mk("span", "t", "CONVERSATION · PINNED")); const x = mk("span", "x", "⇤"); x.title = "collapse"; x.onclick = () => this.setThreadDock(false); hd.appendChild(x); host.appendChild(hd);
     const body = mk("div", "convobody");
     let lastCard: HTMLElement | null = null;
     for (const h of this.app.history as any[]) {
@@ -211,7 +211,7 @@ export class Agent {
     return card;
   }
   dockSend(text: string) { const t = this.app.thread; const last = t?.turns?.[t.turns.length - 1]; if (t && t.kind === "dialogue" && last?.role === "agent" && last.replies?.length) this.threadReply(text); else this.ask(text); }
-  setThreadDock(on: boolean) { this.app.threadDocked = on; const b = this.app.$("dockBtn"); b.textContent = on ? "⇤ undock" : "⇥ dock chat"; if (on) { this.renderThread(); this.app.toast("Conversation pinned open", "An always-on transcript — the same timeline rendered as a thread. The default stays collapsed."); } else { this.app.$("convo").classList.remove("open"); this.app.$("convo").innerHTML = ""; this.renderThread(); this.app.toast("Conversation unpinned", null); } }
+  setThreadDock(on: boolean) { this.app.threadDocked = on; const b = this.app.$("dockBtn"); b.textContent = on ? "⇤ undock" : "⇥ dock chat"; this.app.$("convoBtn").classList.toggle("on", on); if (on) { this.renderThread(); this.app.toast("Conversation pinned open", "An always-on transcript — the same timeline rendered as a thread. The default stays collapsed."); } else { this.app.$("convo").classList.remove("open"); this.app.$("convo").innerHTML = ""; this.renderThread(); this.app.toast("Conversation unpinned", null); } }
   settleThread(label: string | null, why?: string) {
     const t = this.app.thread;
     let exchange: any;
