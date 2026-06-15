@@ -214,6 +214,33 @@ overview (completeness before export), B4 stable colour-by-name registry.
   0-cell category lingering in the legend / table / overview. Fix: `compact(layer)` at the `commitLayer`
   chokepoint, so every mutation yields a phantom-free layer.
 
+## Phase C (2026-06-15) — agent-assisted suggestions (the conversational core)
+
+Peter: "the agent should be helping to SUGGEST things — names, categories, explanations — instead of export
+CAP (rare). Add agent suggestion controls. Still looks far from the originally designed functionality." This
+was the gap: §8 ("reconciliation is conversational; the agent reads markers + cross-tab and proposes") wasn't
+realized — only the mechanical scaffolding was. Phase C makes agent suggestion a first-class affordance.
+
+- **propose_label** (tool) — agent writes a proposed CAP record (clean `name` to rename to, fullName, parent
+  category, Cell-Ontology CL term, canonicalMarkers, marker-grounded rationale) onto a working label; CapRecord
+  gains `suggested:true` → record card badges "✨ suggested" (reviewable/editable). App.proposeLabel + the
+  per-label "✨ Suggest" button (which replaced "export CAP" on the card) → App.proposeRecord asks the agent
+  with a prompt scoped to the cluster's cells + seeded with its top DE markers.
+- **propose_labels** (tool, batch) — ONE call applies records to MANY labels (reliable; a single tool call
+  beats hoping the model fans out N calls). App.proposeLabels loops a no-render applyRename + one commit. The
+  labels-overview header has "✨ Suggest names" (batch) + "export CAP" (moved here — rare, review-before-deposit).
+- **system prompt**: propose_label is the main assist; the agent proactively offers to name/document clusters
+  after adopt_source/annotate.
+- **FIX found by stage-testing**: the agent loop sent `max_tokens:1500`, which truncated a batch propose_labels
+  call over ~28 clusters mid-tool-call → it never executed (the agent looked "done" with nothing applied).
+  Raised to 4096 — also unblocks any large response/tool call.
+
+Verified end-to-end (the realistic multi-step scenario): per-label "✨ Suggest" on a cluster → agent renames it
+"Non-classical monocyte", fills CL:0000875 + category + canonical markers + rationale. Batch "✨ Suggest names"
+on a draft seeded from raw leiden (28 cluster-ids) → one propose_labels call names all 28 into 21 distinct PBMC
+types, each with ontology + marker-grounded rationale → export = 21 valid CAP records; colours stable, no
+phantom/numeric labels. 45 node --test pass.
+
 ## 11. Test approach
 
 Pure cores get `node --test` cases (zero deps, Node strips TS), consistent with viewpatch/cellset/codeapi:
