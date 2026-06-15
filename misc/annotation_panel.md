@@ -179,6 +179,41 @@ Increments 1–5, 3, agent surface, and 7 are done, tested, UI-verified, committ
   JSON {genes, classes, W[genes×classes], b} and load it (fetch/upload). Until then `run_annotation` keeps
   `method` = sctype only; runCellTypist is callable once a model is provided.
 
+## Iteration 2 (2026-06-15) — design feedback + B-series + bug fixes
+
+Peter's 4-point review of the pilot, and how each was resolved:
+1. **Record-card colours off-theme** → CAP card re-themed dark (`.pbody input/textarea`), matches agent chat.
+2. **Record card too big / wanted narrower** → the standalone AnnoRecord panel was removed; the CAP form was
+   extracted into `renderCapRecord` and folded into the Reconcile panel as a slim bottom detail
+   (`showRecord(label)`), driven by selecting a cluster. Annotate workspace is now just Embedding + Reconcile.
+3. **UX drifted from the proposal** → recentred on the reconcile surface: one panel with `table | matrix |
+   labels` segmented views + the folded record, instead of a panel zoo.
+4. **"labels don't always map to the same clusters"** → addressed at three levels:
+   - *table*: each source's read of a base cluster shows the runner-up in amber when it splits the cluster
+     (dominant <70%), so a non-1:1 mapping is visible, not hidden behind the majority (`reconcile` returns
+     `alt/altFrac`).
+   - *matrix*: the confusion grid is resolution-agnostic — it shows the actual A×B joint counts regardless of
+     how either source was clustered.
+   - *reconcile-by-intersection (B5)*: clicking a matrix cell selects the A∩B intersection **and** opens the
+     "Label as…" popover (routes through `hooks.onSelect`), so you resolve a cross-clustering disagreement by
+     labelling the exact intersecting set — not by base cluster. Verified end-to-end (6671-cell working×scType
+     off-diagonal → labelled across 3 leiden clusters).
+
+B-series also delivered: B1 rename/merge (non-destructive, merge = rename-to-existing), B2 source-confidence
+colouring (`conf:<source>` handle — colour by scType margin / CellTypist prob to find ambiguous cells; the
+honest "where is reconciliation hard" signal, since cross-vocab string "agreement" is noise), B3 labels
+overview (completeness before export), B4 stable colour-by-name registry.
+
+**Bugs found while stage-testing (fixed + committed):**
+- **Stale colour-cache → black categories.** `render/colors.ts` had a module `mdCache` that was never
+  invalidated; any annotation edit that *added* a category left a stale `{codes(new), colors(old/short)}`
+  pair, so `colorMap[newCode]` was `undefined` → `catColor(undefined)` → NaN → the new label rendered BLACK
+  until a full reload. Fix: `invalidateColor(name)` at the `commitLayer` chokepoint; defensive
+  `colorMap[code] ?? code` in `codesToRGBA` + the categorical legend so a short map can never render NaN.
+- **Phantom empty categories.** Merging a label (and, generally, relabelling a category's *last* cells) left a
+  0-cell category lingering in the legend / table / overview. Fix: `compact(layer)` at the `commitLayer`
+  chokepoint, so every mutation yields a phantom-free layer.
+
 ## 11. Test approach
 
 Pure cores get `node --test` cases (zero deps, Node strips TS), consistent with viewpatch/cellset/codeapi:
