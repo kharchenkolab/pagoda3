@@ -105,9 +105,14 @@ export async function paintEmbedding(ev: EmbeddingView, ctx: Ctx) {
 
   // dim mask: scope frames the panel; else the committed SELECTION (bright cells, grey context); else metadata focus.
   const selCells = ctx.refToCells(c.selection);   // this panel is cell-space — read the selection as cells
+  // A continuous colouring (gene/qc/score) is read for its WHOLE distribution — dimming to the selected cluster
+  // would hide exactly what you're inspecting (e.g. clicking a marker in Annotate to judge how specific it is
+  // everywhere). So the SELECTION greys the map only for CATEGORICAL colourings; scope and focus (deliberate
+  // "restrict my view" acts) still dim regardless.
+  const numericColoring = !colorBy.startsWith("meta:");   // gene:/qc:/code:/conf:/geneset: are continuous
   let mask: Uint8Array | undefined;
   if (scopeCells && scopeCells.length) { mask = new Uint8Array(ctx.n); for (let j = 0; j < scopeCells.length; j++) mask[scopeCells[j]] = 1; }
-  else if (selCells.length) { mask = new Uint8Array(ctx.n); for (let j = 0; j < selCells.length; j++) mask[selCells[j]] = 1; }
+  else if (selCells.length && !numericColoring) { mask = new Uint8Array(ctx.n); for (let j = 0; j < selCells.length; j++) mask[selCells[j]] = 1; }
   else mask = focusMaskFor(c.focus, ctx.n);
   // display is PER-PANEL: a panel's own overrides win over the coord default, so panels are independent
   // (toggle labels on one embedding without touching another). coord.display is just the starting default.
@@ -357,7 +362,7 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
   let recLabel: string | null = (p as any).recordLabel || null;
   let selCluster: string | null = null;   // the base cluster the user last clicked (drives the card's context line)
   let recCollapsed: boolean = !!(p as any).recCollapsed;   // user minimized the card (frees space, esp. in matrix view)
-  const flashCard = () => { recDetail.style.transition = "none"; recDetail.style.background = "var(--cardflash)"; requestAnimationFrame(() => { recDetail.style.transition = "background .5s"; recDetail.style.background = "var(--card)"; }); };
+  const flashCard = () => { recDetail.style.transition = "none"; recDetail.style.background = "var(--sel)"; requestAnimationFrame(() => { recDetail.style.transition = "background .5s"; recDetail.style.background = "var(--card)"; }); };
   const showRecord = (lbl: string | null) => {
     // show the card ONLY for a real selection — no fallback to an arbitrary first label (which made a record
     // appear on load with no row selected). No valid label → hide the panel entirely.

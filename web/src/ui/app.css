@@ -1,5 +1,5 @@
 :root{
-  --ink:#0d1117; --panel:#161b22; --inset:#1b2230; --card:#1b2230; --cardflash:#2c2519; --line:#2a3340; --line2:#222a35;   /* --card = resting record card (bluish slate); --cardflash = warm transient on switch */
+  --ink:#0d1117; --panel:#161b22; --inset:#1b2230; --card:#1b2230; --line:#2a3340; --line2:#222a35;   /* --card = resting record-card surface */
   --text:#d7dee8; --dim:#8a97a8; --faint:#5b6675;
   --teal:#3fb6b2; --cyan:#5cc8ff; --amber:#e0a458; --ok:#5bbf8f; --good:#5bbf8f; --bad:#e07a7a;
   --on-accent:#04222e;   /* text on a filled accent (cyan/amber) — accents are BRIGHT on dark, so dark text reads */
@@ -14,10 +14,10 @@
    foreground (slightly darker). So ink=white › panel=barely-off-white › card=a touch more. The warm cream (--inset)
    stays a designation tint (header shade, working column). Embedding canvas is transparent; its dot colour is JS-set. */
 html.light{
-  --ink:#ffffff; --panel:#fbfaf7; --inset:#f3ecd9; --card:#e8edf4; --cardflash:#ede7da; --line:#e0ddd2; --line2:#eeece3;
+  --ink:#ffffff; --panel:#fbfaf7; --inset:#f3ecd9; --card:#ece8df; --line:#e0ddd2; --line2:#eeece3;
   /* --ink (desktop behind panels) = white; --panel = barely-off-white so panels read as raised against it.
-     --card (record card) = a cool BLUISH tint so it reads as a distinct surface vs the warm panel/table; --cardflash
-     (the on-switch transient) is the warm beige, fading back to the bluish resting colour. */
+     --card (record card) = a warm, desaturated greige — a clear step below the near-white table, but less yellow
+     than the cream --inset designation, so it reads as its own calm surface and fits the warm palette. */
   --text:#33444b; --dim:#5a6970; --faint:#7c8789;
   --teal:#2a9d96; --cyan:#1f7faf; --amber:#a9750a; --ok:#5f8500; --good:#5f8500; --bad:#cb2f2f;
   --on-accent:#ffffff;   /* light-theme accents are DARKER → white text on them reads */
