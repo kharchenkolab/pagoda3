@@ -300,18 +300,21 @@ export class App {
   }
 
   async repaint() {
-    for (const ev of this.embeddings) await paintEmbedding(ev, this.ctx);
-    // committed selection → each vocabulary-bound panel reads the ref in ITS grouping (direct when the
-    // selection is a category of that grouping — no scan; else translated via cells). Committed: ungated.
-    // re-dispatch the selection to reactors only when it actually CHANGED (or reactors were just rebuilt). A
-    // colour-only repaint (e.g. clicking a gene chip) leaves the selection untouched — re-firing reactors would
-    // pointlessly re-render the record card (and flash it, and re-add listeners). Embeddings recolour above regardless.
+    // REACTORS FIRST (card + table highlight) — cheap and synchronous-ish, so the UI responds immediately.
+    // The embedding recolour below can be slow (a gene colouring re-derives expression); don't make the card
+    // wait behind it. committed selection → each vocabulary-bound panel reads the ref in ITS grouping (direct
+    // when the selection is a category of that grouping; else translated via cells).
+    // Re-dispatch only when the selection actually CHANGED (or reactors were just rebuilt) — a colour-only
+    // repaint leaves the selection untouched, so re-firing reactors would pointlessly re-render the card.
     const sel = this.coord.state.selection;
     if (this.reactorsStale || sel !== this.lastSel) {
       for (const r of this.compReactors) r.setSelect(sel ? new Set(this.ctx.refToCategories(sel, r.grouping).filter((t) => t.frac >= 0.08).map((t) => t.value)) : null);
       this.lastSel = sel; this.reactorsStale = false;
     }
     this.$("railBtn").innerHTML = "Answers" + (this.rail.length ? ` <span class="badge">${this.rail.length}</span>` : "");
+    // embeddings AFTER — the recolour/highlight catches up a frame later (imperceptible for categorical; for a
+    // gene colouring the expression is cached so a selection-only change is just a focus-mask recompute).
+    for (const ev of this.embeddings) await paintEmbedding(ev, this.ctx);
   }
 
   // Deep per-panel view control — the agent's configure_panel verb (and the path the per-panel UI will use).

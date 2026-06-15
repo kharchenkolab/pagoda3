@@ -99,7 +99,12 @@ export class LstarView {
   }
 
   // Per-cell scalar for one gene (lognorm), via a single CSC column read.
+  private geneExprCache = new Map<string, { values: Float32Array; max: number; col: number }>();
   async geneExpression(symbol: string, lognorm = true): Promise<{ values: Float32Array; max: number; col: number }> {
+    // cache per gene: expression is immutable core data, but it was re-fetched + re-decompressed on EVERY repaint
+    // — so colouring by a gene made every selection change (focus-mask only) re-derive the whole column (~700ms).
+    const key = symbol + (lognorm ? "" : "|raw");
+    const hit = this.geneExprCache.get(key); if (hit) return hit;
     const col = await this.geneCol(symbol);
     if (col === undefined) throw new Error("no gene " + symbol);
     const { rows, vals } = await this.ds.cscColumn("counts", col);
@@ -110,7 +115,10 @@ export class LstarView {
       out[rows[k]] = v;
       if (v > max) max = v;
     }
-    return { values: out, max, col };
+    const res = { values: out, max, col };
+    if (this.geneExprCache.size >= 32) this.geneExprCache.delete(this.geneExprCache.keys().next().value!);   // simple bound (~140KB/gene)
+    this.geneExprCache.set(key, res);
+    return res;
   }
 
   // Full counts in CSC (gene-major), loaded + cached once. Backs the group-stats / DE fallbacks.
