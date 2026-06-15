@@ -37,6 +37,7 @@ const TOOLS: Tool[] = [
         clearGenes: { type: "boolean", description: "Heatmap: drop existing pinned genes first" },
       } } },
       facet: { type: "object", description: "SPLIT one panel into aligned copies that differ only by scope — the right way to compare a factor (e.g. day0 vs day7). `by` = the field to split on (condition, sample, outcome…). Optional: `panel` (id to split; default = the most recent Heatmap, else Embedding), `values` (subset of the field's values; default = all), `layout` ('stack' = full-width one over another, best for dotplots; 'side' = columns, best for embeddings; default auto by type). The copies share group/genes/mode (Heatmap) or the same projection reframed (Embedding), so rows+columns line up — do NOT hand-build several scoped panels.", properties: { by: { type: "string" }, panel: { type: "number" }, values: { type: "array", items: { type: "string" } }, layout: { type: "string", enum: ["stack", "side"] } } },
+      arrange: { type: "object", description: "REPOSITION existing panels into the 2-column grid — the right way to satisfy '2×2', 'side by side', 'stack these', 'put X above Y'. Give EITHER `rows` (one array per grid ROW, ≤2 ids each: a 1-id row spans full width, a 2-id row is left|right) OR `columns` (one array per COLUMN, ≤2 columns: each column's ids stack top-to-bottom). Use panel ids from LAYOUT. Examples — 2×2 with embeddings on top, dotplots below: rows:[[7,8],[5,6]]. Embeddings stacked in the left column, dotplots in the right: columns:[[7,8],[5,6]]. Everything stacked full-width: rows:[[7],[8],[5],[6]]. This ONLY moves panels (never recreates them, so scopes/genes are preserved) — prefer it over setting col/full one panel at a time, and NEVER remove+re-add panels just to rearrange.", properties: { rows: { type: "array", items: { type: "array", items: { type: "number" } } }, columns: { type: "array", items: { type: "array", items: { type: "number" } } } } },
     } } },
   // ---- compute primitives ("what to derive") — small, named, carry methodology + caveats ----
   { name: "get_markers", description: "Add a ranked marker-gene table for a group (cluster or annotation) to the disposable answer rail, and return the top genes. Rung-1 answer.", input_schema: { type: "object", properties: { cluster: { type: "string", description: "group id, e.g. a leiden cluster (c0 / 5) or a cell type name" }, grouping: { type: "string", description: "which precomputed grouping the id belongs to (e.g. leiden or cell_type); defaults to leiden" } }, required: ["cluster"] } },
@@ -196,6 +197,7 @@ function toolLabel(tu: any): string {
     if (i.display) bits.push("display");
     for (const p of (i.panels || [])) bits.push(p.add ? `+ ${p.add}` : p.remove ? `− panel #${p.id}` : `panel #${p.id}`);
     if (i.facet?.by) bits.push(`facet by ${i.facet.by}`);
+    if (i.arrange) bits.push("arrange grid");
     return bits.join(" · ") || "update view";
   }
   if (tu.name === "get_markers") return `markers · ${i.cluster}`;

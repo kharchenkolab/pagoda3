@@ -17,6 +17,7 @@ function makeWorld(): World {
   const panels: Record<number, { type: string; genes: string[] }> = {
     4: { type: "Heatmap", genes: ["GNLY"] },
     5: { type: "Embedding", genes: [] },
+    6: { type: "Heatmap", genes: [] },
   };
   return {
     panelTypes: ["Embedding", "Heatmap", "CompositionBars", "DeTable", "Note"],
@@ -183,6 +184,22 @@ test("facet: by-field expands to values; defaults to all; bad field/values handl
   const badPanel = normalizeViewPatch({ facet: { by: "condition", panel: 99 } }, w);
   assert.equal(find(badPanel.ops, "facet").length, 0);
   assert.match(badPanel.rejected.join(" "), /no panel/);
+});
+
+test("arrange: rows + columns place existing panels; bad ids / overflow rejected", () => {
+  const w = makeWorld();   // panels 4 (Heatmap), 5 (Embedding) exist
+  const rows = normalizeViewPatch({ arrange: { rows: [[4, 5]] } }, w);
+  assert.deepEqual(find(rows.ops, "arrange"), [{ kind: "arrange", place: [{ id: 4, col: 0, full: false }, { id: 5, col: 1, full: false }] }]);
+
+  const oneRow = normalizeViewPatch({ arrange: { rows: [[4], [5]] } }, w);   // 1-id rows → full-width stack
+  assert.deepEqual((find(oneRow.ops, "arrange")[0] as any).place, [{ id: 4, full: true }, { id: 5, full: true }]);
+
+  const cols = normalizeViewPatch({ arrange: { columns: [[4], [5]] } }, w);  // two columns, one each
+  assert.deepEqual((find(cols.ops, "arrange")[0] as any).place, [{ id: 4, col: 0, full: false }, { id: 5, col: 1, full: false }]);
+
+  assert.match(normalizeViewPatch({ arrange: { rows: [[4, 5, 6]] } }, w).rejected.join(" "), /at most 2 panels/);
+  assert.match(normalizeViewPatch({ arrange: { rows: [[4, 4]] } }, w).rejected.join(" "), /more than once/);
+  assert.match(normalizeViewPatch({ arrange: { rows: [[404]] } }, w).rejected.join(" "), /unknown panel/);
 });
 
 test("a compound patch yields ops in order with no rejections", () => {

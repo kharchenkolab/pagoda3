@@ -298,7 +298,8 @@ export class App {
   applyPanelModel(p: Panel, patch: { title?: string; col?: 0 | 1; full?: boolean; colorBy?: string; scope?: EntityRef | null; embedding?: string; colormap?: string; heatMode?: "heat" | "dot"; genes?: string[] }): boolean {
     let rebuild = false;
     if (patch.title != null && patch.title !== p.title) { p.title = patch.title; rebuild = true; }   // title shows in the header (panelEl) → rebuild
-    if (patch.col === 0 || patch.col === 1) { if (patch.col !== p.col) rebuild = true; p.col = patch.col; }   // column pin → re-layout
+    if (patch.col === 0 || patch.col === 1) { if (patch.col !== p.col) rebuild = true; p.col = patch.col;
+      if (patch.full === undefined && p.full) { p.full = false; rebuild = true; } }   // a column pin means NOT full-width — clear full (it would otherwise override col and the pin would silently no-op)
     if (typeof patch.full === "boolean" && patch.full !== p.full) { p.full = patch.full; rebuild = true; }   // full-width → re-layout
     if (patch.colorBy != null) { this.noteColor(patch.colorBy); if (p.type !== "Embedding") rebuild = true; }   // recolouring a non-embedding (e.g. composition restack) needs a rebuild
     if (patch.embedding != null && patch.embedding !== p.view?.embedding) rebuild = true;
@@ -370,6 +371,15 @@ export class App {
             this.canvas.splice(idx, 1, ...facets);
             applied.push(`facet ${base} by ${op.by} → ${op.values.join(", ")}`); needFull = true;
           }
+        }
+        else if (op.kind === "arrange") {
+          // pure rearrangement: reposition EXISTING panels (col/full + order) — never recreates a panel, so it
+          // can't drop or duplicate a scope the way the agent did when it rebuilt panels to "rearrange".
+          const byId = new Map(this.canvas.map((p) => [p.id, p]));
+          const placed: Panel[] = [];
+          for (const pl of op.place) { const p = byId.get(pl.id); if (!p) continue; p.col = pl.col; p.full = pl.full; placed.push(p); byId.delete(pl.id); }
+          this.canvas = [...placed, ...this.canvas.filter((p) => byId.has(p.id))];   // grid order first, any unmentioned panels after
+          applied.push(`arrange ${placed.length} panels`); needFull = true;
         }
       }
     } finally { this.suspendRender = false; }

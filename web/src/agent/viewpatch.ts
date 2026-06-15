@@ -36,6 +36,7 @@ export interface RawViewPatch {
   display?: { labels?: boolean; legend?: boolean; alpha?: number };
   panels?: RawPanelOp[];
   facet?: { by?: string; panel?: number; values?: string[]; layout?: string };   // split one panel into aligned copies
+  arrange?: { rows?: number[][]; columns?: number[][] };   // place EXISTING panels into a 2-col grid (pure reposition)
 }
 
 export interface Scope { grouping: string; value: string; }
@@ -50,7 +51,8 @@ export type NormOp =
   | { kind: "addPanel"; spec: PanelSpec }
   | { kind: "configPanel"; id: number; patch: PanelPatch }
   | { kind: "removePanel"; id: number }
-  | { kind: "facet"; by: string; values: string[]; panel?: number; layout: "stack" | "side" | "auto" };
+  | { kind: "facet"; by: string; values: string[]; panel?: number; layout: "stack" | "side" | "auto" }
+  | { kind: "arrange"; place: { id: number; col?: 0 | 1; full: boolean }[] };
 
 // Everything the reducer needs to know about the live app — supplied by the caller so the reducer stays pure.
 // `categoricals` are the colour-/scope-/focus-able metadata fields (cell_type, leiden, sample, condition…);
@@ -201,6 +203,39 @@ export function normalizeViewPatch(patch: RawViewPatch, w: World): NormResult {
       else {
         const layout = f.layout === "stack" || f.layout === "side" ? f.layout : "auto";
         ops.push({ kind: "facet", by, values, panel: f.panel, layout });
+      }
+    }
+  }
+
+  // ---- arrange: place EXISTING panels into the 2-column grid (pure reposition, never recreates) ----
+  if (patch.arrange && typeof patch.arrange === "object") {
+    const a = patch.arrange;
+    const mode = Array.isArray(a.rows) ? "rows" : Array.isArray(a.columns) ? "columns" : null;
+    const grid = (mode === "rows" ? a.rows : a.columns) as number[][] | undefined;
+    if (!mode || !grid) rejected.push("arrange: give rows:[[id,id],…] (each inner array is a grid ROW) or columns:[[…],[…]] (one array per COLUMN)");
+    else {
+      const flat = grid.flat();
+      const bad = flat.filter((id) => typeof id !== "number" || !w.panelExists(id));
+      if (!flat.length) rejected.push("arrange: no panel ids given");
+      else if (bad.length) rejected.push(`arrange: unknown panel(s) ${bad.join(", ")}`);
+      else if (flat.length !== new Set(flat).size) rejected.push("arrange: a panel id appears more than once");
+      else if (mode === "rows" && grid.some((r) => r.length > 2)) rejected.push("arrange: a row can hold at most 2 panels (two columns) — use more rows");
+      else if (mode === "columns" && grid.length > 2) rejected.push("arrange: at most 2 columns");
+      else {
+        const place: { id: number; col?: 0 | 1; full: boolean }[] = [];
+        if (mode === "rows") {
+          for (const row of grid) {
+            if (row.length === 1) place.push({ id: row[0], full: true });
+            else { place.push({ id: row[0], col: 0, full: false }); place.push({ id: row[1], col: 1, full: false }); }
+          }
+        } else {
+          const left = grid[0] || [], right = grid[1] || [], single = grid.length === 1;
+          for (let i = 0; i < Math.max(left.length, right.length); i++) {
+            if (left[i] != null) place.push(single ? { id: left[i], full: true } : { id: left[i], col: 0, full: false });
+            if (right[i] != null) place.push({ id: right[i], col: 1, full: false });
+          }
+        }
+        ops.push({ kind: "arrange", place });
       }
     }
   }
