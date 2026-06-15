@@ -306,8 +306,7 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
   const base = p.group || (ctx.groupings().includes("leiden") ? "leiden" : ctx.defaultGrouping());
   const baseMeta: any = await ctx.view.metadata(base);
   if (baseMeta.kind !== "categorical") { const m = mk("div", "panelerr"); m.textContent = `base "${base}" is not a categorical partition`; return { el: m }; }
-  const hasCellType = ctx.categoricalFields().includes("cell_type");
-  const srcNames = [...new Set([...ctx.annotationLayers(), ...(hasCellType ? ["cell_type"] : [])])].filter((n) => n !== "annotation");
+  const srcNames = ctx.annotationSources();
   const sources: { name: string; codes: ArrayLike<number>; categories: string[] }[] = [];
   for (const n of srcNames) { const m: any = await ctx.view.metadata(n); if (m.kind === "categorical") sources.push({ name: n, codes: m.codes, categories: m.categories }); }
   const rows = reconcile({ codes: baseMeta.codes, categories: baseMeta.categories }, sources);
@@ -409,7 +408,7 @@ async function annoRecordBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bu
 
   const draw = async () => {
     const saved = layer.records![current] || {};
-    const rec: CapRecord = { label: current, ...saved };
+    const rec: CapRecord = { ...saved, label: current };
     if (!rec.markerEvidence || !rec.markerEvidence.length) { const mm = await ctx.markers(layerName); rec.markerEvidence = (mm.get(current) || []).slice(0, 8).map((m: any) => m.symbol); }
     const idx = layer.categories.indexOf(current); let n = 0; for (const c of layer.codes) if (c === idx) n++;
     w.innerHTML = `
@@ -443,7 +442,7 @@ async function annoRecordBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bu
     };
     (w.querySelector("#arexport") as HTMLButtonElement).onclick = async () => {
       const mm = await ctx.markers(layerName);
-      const recs = layer.categories.map((c) => ({ label: c, markerEvidence: (mm.get(c) || []).slice(0, 8).map((m: any) => m.symbol), ...(layer.records![c] || {}) }));
+      const recs = layer.categories.map((c) => ({ ...(layer.records![c] || {}), label: c, markerEvidence: (layer.records![c]?.markerEvidence) || (mm.get(c) || []).slice(0, 8).map((m: any) => m.symbol) }));
       const blob = new Blob([JSON.stringify(recs, null, 2)], { type: "application/json" });
       const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "annotation_cap.json"; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
     };

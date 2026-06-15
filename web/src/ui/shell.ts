@@ -484,7 +484,7 @@ export class App {
     const ctx = this.ctx;
     const base = input?.base && ctx.groupings().includes(input.base) ? input.base : (ctx.groupings().includes("leiden") ? "leiden" : ctx.defaultGrouping());
     const baseMeta: any = await ctx.view.metadata(base);
-    const srcNames = [...new Set([...ctx.annotationLayers(), ...(ctx.categoricalFields().includes("cell_type") ? ["cell_type"] : [])])].filter((n) => n !== "annotation");
+    const srcNames = ctx.annotationSources();
     if (!srcNames.length) return "no annotation sources yet — run_annotation (e.g. scType) or add a labeling first.";
     const sources: { name: string; codes: ArrayLike<number>; categories: string[] }[] = [];
     for (const n of srcNames) { const m: any = await ctx.view.metadata(n); if (m.kind === "categorical") sources.push({ name: n, codes: m.codes, categories: m.categories }); }
@@ -492,6 +492,17 @@ export class App {
     const lines = rows.map((r) => `${base} ${r.group} (${r.n}): ${r.sources.map((s) => `${s.name}=${s.label ?? "—"}`).join(", ")}`);
     const diff = rows.filter((r) => { const o = r.sources.map((s) => s.label).filter(Boolean); return o.length > 1 && !o.every((l) => l === o[0]); });
     return `base=${base}, sources=${srcNames.join("/")}.\n${lines.join("\n")}\n\n${diff.length} clusters where sources differ (may be vocabulary OR real): ${diff.map((r) => r.group).join(", ") || "none"}. Differences are often just vocabulary — weigh the confusion matrix + markers before calling a real conflict.`;
+  }
+
+  // Classify obs fields (agent-inferred / user override): which are annotation sources, partitions, covariates,
+  // QC. Changes which fields the reconcile panel offers as sources. Re-renders so the panel updates.
+  setFieldRoles(patch: { annotation?: string[]; partition?: string[]; covariate?: string[]; qc?: string[] }): string {
+    const applied: string[] = [];
+    for (const role of ["annotation", "partition", "covariate", "qc"] as const) {
+      for (const n of (patch[role] || [])) { if (this.ctx.categoricalFields().includes(n) || this.ctx.annotationLayers().includes(n)) { this.ctx.setFieldRole(n, role); applied.push(`${n}=${role}`); } }
+    }
+    if (applied.length) this.fullRender();
+    return applied.length ? `roles set: ${applied.join(", ")}` : "no valid fields in the patch";
   }
 
   // Label a cell set in a layer (default the working draft). Last-write-wins; re-renders.
