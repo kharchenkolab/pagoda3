@@ -10,7 +10,7 @@ import { validateCellSet, resolveCellSet, describeCellSet, CellSet, CellWorld, C
 import { validateComputeResult, runInWorker } from "../agent/codeapi.ts";
 import { setCodeValues, setConfValues, invalidateColor } from "../render/colors.ts";
 import { paletteNames, normalizePalette } from "../render/palettes.ts";
-import { AnnotationLayer, seedLayer, setLabel, reconcile } from "../anno/model.ts";
+import { AnnotationLayer, seedLayer, setLabel, reconcile, compact } from "../anno/model.ts";
 import { PBMC_MARKERS, MarkerDB } from "../anno/markerdb.ts";
 import { zscoreByGroup, scoreClusters, assignClusters, MarkerIdx } from "../anno/sctype.ts";
 import { LRModel, lrFinalize } from "../anno/celltypist.ts";
@@ -583,6 +583,7 @@ export class App {
       for (let i = 0; i < layer.codes.length; i++) if (layer.codes[i] === fi) layer.codes[i] = ti;
       if (layer.records[from] && !layer.records[to]) layer.records[to] = { ...layer.records[from], label: to };
       delete layer.records[from];
+      compact(layer);   // the merged-away "from" slot is now empty — drop it so no phantom 0-cell label lingers
       this.commitLayer(layer);
       return { ok: `merged "${from}" into "${to}"` };
     }
