@@ -357,7 +357,7 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
   let recLabel: string | null = (p as any).recordLabel || null;
   let selCluster: string | null = null;   // the base cluster the user last clicked (drives the card's context line)
   let recCollapsed: boolean = !!(p as any).recCollapsed;   // user minimized the card (frees space, esp. in matrix view)
-  const flashCard = () => { recDetail.style.transition = "none"; recDetail.style.background = "var(--sel)"; requestAnimationFrame(() => { recDetail.style.transition = "background .5s"; recDetail.style.background = "var(--card)"; }); };
+  const flashCard = () => { recDetail.style.transition = "none"; recDetail.style.background = "var(--cardflash)"; requestAnimationFrame(() => { recDetail.style.transition = "background .5s"; recDetail.style.background = "var(--card)"; }); };
   const showRecord = (lbl: string | null) => {
     // show the card ONLY for a real selection — no fallback to an arbitrary first label (which made a record
     // appear on load with no row selected). No valid label → hide the panel entirely.
