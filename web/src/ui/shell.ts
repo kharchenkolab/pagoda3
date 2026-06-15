@@ -11,6 +11,8 @@ import { validateComputeResult, runInWorker } from "../agent/codeapi.ts";
 import { setCodeValues } from "../render/colors.ts";
 import { paletteNames, normalizePalette } from "../render/palettes.ts";
 import { AnnotationLayer, seedLayer, setLabel } from "../anno/model.ts";
+import { PBMC_MARKERS, MarkerDB } from "../anno/markerdb.ts";
+import { zscoreByGroup, scoreClusters, assignClusters, MarkerIdx } from "../anno/sctype.ts";
 
 interface Checkpoint { i: number; q: string; why: string; state: any; kind?: "ask" | "act"; exchange?: { kind: string; entries?: any[]; turns?: any[] }; }
 interface WS { colorBy: string; panels: Partial<Panel>[]; }
@@ -419,6 +421,34 @@ export class App {
     this.fullRender();
     return { ok: `started annotation draft from ${src} (${layer.categories.length} labels)` };
   }
+  // Run scType-style marker scoring over the base clustering → a new annotation SOURCE layer ("scType").
+  // Serverless: reuses the group means we already compute; resolves the bundled marker DB to gene indices,
+  // z-scores across clusters, assigns each cluster its top cell type, broadcasts to cells (confidence = margin).
+  async runScType(opts?: { base?: string; db?: MarkerDB }): Promise<{ ok?: string; error?: string }> {
+    const base = opts?.base || (this.ctx.groupings().includes("leiden") ? "leiden" : this.ctx.defaultGrouping());
+    const baseMeta: any = await this.ctx.view.metadata(base);
+    if (baseMeta.kind !== "categorical") return { error: `base "${base}" is not categorical` };
+    const gs = await this.ctx.groupStatsCached(base);
+    await this.ctx.view.genes();
+    const db = opts?.db || PBMC_MARKERS;
+    const markerIdx: Record<string, MarkerIdx> = {};
+    for (const [ct, set] of Object.entries(db)) {
+      const pos: number[] = [], neg: number[] = [];
+      for (const s of set.positive) { const gi = await this.ctx.view.geneCol(s); if (gi != null) pos.push(gi); }
+      for (const s of (set.negative || [])) { const gi = await this.ctx.view.geneCol(s); if (gi != null) neg.push(gi); }
+      if (pos.length) markerIdx[ct] = { positive: pos, negative: neg };
+    }
+    if (!Object.keys(markerIdx).length) return { error: "no marker genes from the DB are present in this dataset" };
+    const assigned = assignClusters(scoreClusters(zscoreByGroup(gs.mean, gs.groups.length, gs.nGenes), gs.groups.length, gs.nGenes, markerIdx));
+    const cats: string[] = []; const catIdx = new Map<string, number>();
+    const groupToCat = assigned.map((a) => { let i = catIdx.get(a.cellType); if (i == null) { i = cats.length; cats.push(a.cellType); catIdx.set(a.cellType, i); } return i; });
+    const codes = new Int32Array(baseMeta.codes.length), conf = new Float32Array(baseMeta.codes.length);
+    for (let i = 0; i < codes.length; i++) { const g = baseMeta.codes[i]; if (g >= 0 && g < groupToCat.length) { codes[i] = groupToCat[g]; conf[i] = assigned[g].margin; } else codes[i] = -1; }
+    const layer: AnnotationLayer = { name: "scType", source: "sctype", codes, categories: cats, confidence: conf, records: {}, provenance: { method: "scType", params: { base, db: opts?.db ? "custom" : "PBMC_MARKERS" } } };
+    this.commitLayer(layer);
+    return { ok: `scType labeled ${gs.groups.length} ${base} clusters → ${cats.length} cell types (${cats.slice(0, 5).join(", ")}${cats.length > 5 ? "…" : ""})` };
+  }
+
   // Label a cell set in a layer (default the working draft). Last-write-wins; re-renders.
   labelCells(cellIds: ArrayLike<number>, label: string, layerName = "annotation"): void {
     let layer = this.annoLayers.get(layerName);

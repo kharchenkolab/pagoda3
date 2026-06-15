@@ -150,6 +150,20 @@ operate on annotations unchanged.
 6. **Confusion matrix view** + embedding agreement coloring.
 7. **CellTypist** in-browser + agent proposal/conflict-flagging.
 
+## Build notes (discovered while implementing)
+
+- **Increment 1 + 2 done** (committed): the layer infra (writable categoricals via view.overlays + ctx)
+  and the scType source. scType independently re-derived sensible PBMC types in-browser (CD16 mono→CD16+
+  monocyte, B (naive)→Naive B cell, CD8 T→CD8 T cell).
+- **Cross-source string matching over-reports conflicts.** reconcile(leiden; [cell_type, scType]) flagged
+  26/28 clusters as "conflict" — but almost all are *vocabulary* mismatches ("CD14 mono" vs "CD14+
+  monocyte", "CD4 T (naive)" vs "Naive T cell"), not real disagreement. Implication for increments 4–5:
+  the **confusion matrix (raw counts of A-label × B-label) is the honest, vocabulary-agnostic primitive** —
+  a clean off-diagonal that's *consistent* (CD14 mono always ↔ CD14+ monocyte) reveals the mapping. The
+  string-based `status` only means something within one vocabulary or AFTER ontology/agent normalization.
+  So: matrix shows the counts; the agent (and OLS/CL term mapping) decides what's truly the same vs a real
+  split/merge. Validates the "agent-in-chat resolution" + ontology decisions.
+
 ## 11. Test approach
 
 Pure cores get `node --test` cases (zero deps, Node strips TS), consistent with viewpatch/cellset/codeapi:
