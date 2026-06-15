@@ -12,6 +12,7 @@ export interface PanelView {
   scope?: EntityRef;    // restrict the panel to a cell set — the embedding reframes to it + desaturates the rest
   embedding?: string;   // which embedding this panel renders (e.g. "umap" vs "umap.unintegrated"); else the default
   colormap?: string;    // palette for NUMERIC colourings (gene/qc/score): amber (default), viridis, rdbu, bluered, …
+  display?: { labels?: boolean; legend?: boolean; alpha?: number };   // per-PANEL display overrides (independent of other panels)
   // (future: scale, clip, splitBy, highlight, overlays)
 }
 
@@ -98,11 +99,13 @@ export async function paintEmbedding(ev: EmbeddingView, ctx: Ctx) {
   const { rgba, legend } = await colorsFor(ctx.view, colorBy, mask, view?.colormap);
   ev.setColors(rgba);
   ev.setSelection(selCells.length ? selCells : null);
-  ev.setAlpha(c.display.alpha);
-  // view options come from the coordination space (agent- and user-drivable), never decided here.
+  // display is PER-PANEL: a panel's own overrides win over the coord default, so panels are independent
+  // (toggle labels on one embedding without touching another). coord.display is just the starting default.
+  const disp = { ...c.display, ...(view?.display || {}) };
+  ev.setAlpha(disp.alpha);
   const isCat = legend.kind === "categorical";
-  ev.setLabels(c.display.labels && isCat ? await categoryLabels(ctx, colorBy, ctx.embeddingOf(view?.embedding).data) : []);
-  const showLegend = c.display.legend ?? !isCat;   // auto: key for numeric colourings; hidden when on-plot labels carry identity
+  ev.setLabels(disp.labels && isCat ? await categoryLabels(ctx, colorBy, ctx.embeddingOf(view?.embedding).data) : []);
+  const showLegend = disp.legend ?? !isCat;   // auto: key for numeric colourings; hidden when on-plot labels carry identity
   const lg = (ev as any)._legend as HTMLElement | undefined;
   if (lg) lg.innerHTML = showLegend
     ? `<span class="lt">${legend.title}</span>` + (legend.unvalidated ? `<span class="lbadge" title="custom agent code — unvalidated; sanity-check before trusting">~ custom</span>` : "") + legend.items.map((it) => `<span><span class="sw" style="background:rgb(${it.rgb.join(",")})"></span>${it.label}</span>`).join("")

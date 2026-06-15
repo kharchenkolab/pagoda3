@@ -198,15 +198,18 @@ export class App {
       }
     }
     if (p.type === "Embedding") {
-      // view-option toggles — the direct-manipulation tier of display state (the agent drives the same via set_display).
-      // data-tg lets syncToggles() refresh their on/off when the agent flips display, so both tiers stay in step.
-      const disp = this.coord.state.display, cat = this.ctx.colorIsCategorical();
-      const lblBtn = Object.assign(mk("button", "mini" + (disp.labels && cat ? " on" : ""), "labels"), { title: "toggle on-plot labels" }) as HTMLButtonElement;
-      lblBtn.dataset.tg = "labels";
-      lblBtn.onclick = () => this.coord.setDisplay({ labels: !this.coord.state.display.labels });
-      const legBtn = Object.assign(mk("button", "mini" + ((disp.legend ?? !cat) ? " on" : ""), "legend"), { title: "toggle colour legend" }) as HTMLButtonElement;
-      legBtn.dataset.tg = "legend";
-      legBtn.onclick = () => this.coord.setDisplay({ legend: !(this.coord.state.display.legend ?? !this.ctx.colorIsCategorical()) });
+      // view-option toggles — PER-PANEL display (this embedding only; panels are independent). data-pid lets
+      // syncToggles() refresh each button against its own panel; the closures read the live value so repeated
+      // clicks toggle correctly. coord.display is just the starting default a panel overrides.
+      const pcat = !this.isNumericColoring(p.view?.colorBy ?? this.coord.state.colorBy);
+      const pdisp = { ...this.coord.state.display, ...(p.view?.display || {}) };
+      const setPDisp = (patch: { labels?: boolean; legend?: boolean }) => { p.view = { ...p.view, display: { ...(p.view?.display || {}), ...patch } }; this.repaint(); this.syncToggles(); };
+      const lblBtn = Object.assign(mk("button", "mini" + (pdisp.labels && pcat ? " on" : ""), "labels"), { title: "toggle on-plot labels (this panel)" }) as HTMLButtonElement;
+      lblBtn.dataset.tg = "labels"; lblBtn.dataset.pid = String(p.id);
+      lblBtn.onclick = () => setPDisp({ labels: !((p.view?.display?.labels) ?? this.coord.state.display.labels) });
+      const legBtn = Object.assign(mk("button", "mini" + ((pdisp.legend ?? !pcat) ? " on" : ""), "legend"), { title: "toggle colour legend (this panel)" }) as HTMLButtonElement;
+      legBtn.dataset.tg = "legend"; legBtn.dataset.pid = String(p.id);
+      legBtn.onclick = () => setPDisp({ legend: !((p.view?.display?.legend) ?? this.coord.state.display.legend ?? !pcat) });
       sp.appendChild(lblBtn);   // always present (no-op for numeric colourings) so it can't vanish on recolour
       sp.appendChild(legBtn);
     }
@@ -346,7 +349,10 @@ export class App {
         if (op.kind === "color") { for (const p of this.canvas) if (p.type === "Embedding" && p.view?.colorBy) delete p.view.colorBy; this.noteColor(op.handle); this.coord.setColor(op.handle); applied.push(`colour → ${handleLabel(op.handle)}`); needRepaint = true; }
         else if (op.kind === "focus") { this.coord.setFocus(op.dim, op.value); applied.push(`focus ${op.dim}=${op.value}`); needRepaint = true; }
         else if (op.kind === "clearFocus") { this.coord.clearFocus(); applied.push("cleared focus"); needRepaint = true; }
-        else if (op.kind === "display") { this.coord.setDisplay(op.patch); applied.push(`display ${JSON.stringify(op.patch)}`); needRepaint = true; }
+        else if (op.kind === "display") {   // display is per-panel — a top-level display patch fans out to every embedding (so "show labels" applies to all, with no global coupling)
+          for (const p of this.canvas) if (p.type === "Embedding") p.view = { ...p.view, display: { ...(p.view?.display || {}), ...op.patch } };
+          applied.push(`display ${JSON.stringify(op.patch)}`); needRepaint = true;
+        }
         else if (op.kind === "addPanel") { const id = this.addPanelModel(op.spec); applied.push(`+#${id} ${op.spec.type}${op.spec.heatMode === "dot" ? " · dotplot" : ""}`); needFull = true; }
         else if (op.kind === "configPanel") { const p = all().find((z) => z.id === op.id); if (p) { if (this.applyPanelModel(p, this.patchToModel(op.patch))) needFull = true; needRepaint = true; applied.push(`#${op.id} ${Object.keys(op.patch).join("/")}`); } }
         else if (op.kind === "removePanel") { this.removePanel(op.id); applied.push(`–#${op.id}`); needFull = true; }
@@ -745,10 +751,13 @@ export class App {
     const opts = cur && !this.colorChoices.some(([h]) => h === cur) ? [[cur, handleLabel(cur)] as [string, string], ...this.colorChoices] : this.colorChoices;
     return opts.map(([v, l]) => `<option value="${v}"${v === cur ? " selected" : ""}>${l}</option>`).join("");
   }
-  // reflect display state (set by the agent or a toggle) onto the header toggle buttons — keeps both tiers in step
+  // reflect display state onto the header toggle buttons — PER PANEL (each button reads its own panel's
+  // effective display = the coord default merged with the panel's override), so both tiers stay in step.
   syncToggles() {
-    const d = this.coord.state.display, cat = this.ctx.colorIsCategorical();
     document.querySelectorAll<HTMLButtonElement>("button.mini[data-tg]").forEach((b) => {
+      const p = this.canvas.find((z) => z.id === +(b.dataset.pid || -1));
+      const d = { ...this.coord.state.display, ...(p?.view?.display || {}) };
+      const cat = !this.isNumericColoring(p?.view?.colorBy ?? this.coord.state.colorBy);
       const on = b.dataset.tg === "labels" ? (d.labels && cat) : (d.legend ?? !cat);
       b.classList.toggle("on", on);
     });
