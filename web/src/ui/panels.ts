@@ -4,6 +4,7 @@ import { EmbeddingView } from "../render/embedding.ts";
 import { colorsFor, focusMaskFor } from "../render/colors.ts";
 import { catColor } from "../data/view.ts";
 import type { EntityRef } from "../data/coord.ts";
+import { reconcile, ReconRow } from "../anno/model.ts";
 
 // Per-panel view spec — the agent's deep-control surface (configure_panel). Each property overrides the
 // GLOBAL coord default for THIS panel only; the shared bus (selection/hint) stays global. See docs/deep-view-control.md.
@@ -36,6 +37,7 @@ export interface PanelHooks {
   registerComposition: (r: CompReactor) => void;               // a panel that reacts to selection + hint
   onConfigurePanel: (panelId: number, patch: any) => void;     // a panel reconfiguring itself (e.g. dismissing pinned genes)
   registerGeneHover: (fn: (sym: string | null) => void) => void;   // a panel that highlights a gene's row on cross-panel geneHint
+  annotate: (cellIds: ArrayLike<number>, label: string, layer?: string) => void;   // write a label onto a cell set in an annotation layer (default the working draft)
 }
 
 // A vocabulary-bound panel that reacts to the two tiers, distinctly: `setSelect` is the committed selection
@@ -56,6 +58,7 @@ export async function bodyFor(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bu
     case "BoxBySample": return boxBody(p, ctx);
     case "Overdispersion": return overdispBody(ctx, hooks);
     case "Heatmap": return heatmapBody(p, ctx, hooks);
+    case "Reconcile": return reconcileBody(p, ctx, hooks);
     case "SplitHeat": return splitHeatBody(p);
     case "GeneList": return geneListBody(p, hooks);
     case "Note": { const d = mk("div", "notebody"); d.innerHTML = p.text || ""; d.style.cssText = "font-size:12.5px;line-height:1.5"; return { el: d }; }
@@ -289,6 +292,73 @@ async function boxBody(p: Panel, ctx: Ctx): Promise<BuiltBody> {
   });
   const svg = S("svg", { viewBox: `0 0 ${W} ${H}` }); svg.innerHTML = g;
   const w = mk("div"); w.appendChild(svg); return { el: w };
+}
+
+// Reconciliation table: rows = base-partition clusters; columns = the working draft + each annotation source's
+// dominant label (+ its coverage of the cluster). Clicking a source cell ACCEPTS that label into the working
+// draft for the cluster's cells (last-write-wins). Exact agreement across sources gets a ✓; we deliberately do
+// NOT flag "conflict" on a string mismatch (vocabulary differs across sources — the matrix view + agent judge).
+async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltBody> {
+  const base = p.group || (ctx.groupings().includes("leiden") ? "leiden" : ctx.defaultGrouping());
+  const baseMeta: any = await ctx.view.metadata(base);
+  if (baseMeta.kind !== "categorical") { const m = mk("div", "panelerr"); m.textContent = `base "${base}" is not a categorical partition`; return { el: m }; }
+  const hasCellType = ctx.categoricalFields().includes("cell_type");
+  const srcNames = [...new Set([...ctx.annotationLayers(), ...(hasCellType ? ["cell_type"] : [])])].filter((n) => n !== "annotation");
+  const sources: { name: string; codes: ArrayLike<number>; categories: string[] }[] = [];
+  for (const n of srcNames) { const m: any = await ctx.view.metadata(n); if (m.kind === "categorical") sources.push({ name: n, codes: m.codes, categories: m.categories }); }
+  const rows = reconcile({ codes: baseMeta.codes, categories: baseMeta.categories }, sources);
+  const workMeta: any = ctx.annotationLayers().includes("annotation") ? await ctx.view.metadata("annotation") : null;
+  const workRows = workMeta ? reconcile({ codes: baseMeta.codes, categories: baseMeta.categories }, [{ name: "annotation", codes: workMeta.codes, categories: workMeta.categories }]) : null;
+
+  const w = mk("div"); w.style.cssText = "position:absolute;inset:0;display:flex;flex-direction:column;overflow:hidden;font-size:12px";
+  const hdr = mk("div"); hdr.style.cssText = "flex:0 0 auto;display:flex;align-items:center;gap:7px;padding:6px 10px;border-bottom:1px solid var(--line2);flex-wrap:wrap";
+  const nResolved = workRows ? workRows.filter((r) => r.sources[0].label != null).length : 0;
+  hdr.innerHTML = `<span style="color:var(--faint)">base</span> <b>${esc(base)}</b> · <span style="color:var(--faint)">${rows.length} clusters, ${nResolved} labeled</span> <span style="color:var(--faint)">·</span> ${sources.length ? sources.map((s) => `<span style="border:1px solid var(--line2);border-radius:5px;padding:1px 6px;color:var(--dim)">${esc(s.name)}</span>`).join(" ") : '<span style="color:var(--amber,#e0a458)">no sources — run scType or add one</span>'}`;
+  w.appendChild(hdr);
+  const host = mk("div"); host.style.cssText = "flex:1 1 auto;min-height:0;overflow:auto"; w.appendChild(host);
+
+  const colorOf = (cats: string[], label: string | null) => label == null ? "var(--faint)" : `rgb(${catColor(cats.indexOf(label)).join(",")})`;
+  const cell = (label: string | null, frac: number, accept?: string) => {
+    if (label == null) return `<td style="color:var(--faint);padding:3px 8px">—</td>`;
+    return `<td class="${accept ? "rcaccept" : ""}" ${accept ? `data-accept="${esc(accept)}"` : ""} style="padding:3px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:150px${accept ? ";cursor:pointer" : ""}" title="${accept ? "click to set as the working label" : ""}">${esc(label)} <span style="color:var(--faint);font-size:10.5px">${frac < 0.999 ? (frac * 100).toFixed(0) + "%" : ""}</span></td>`;
+  };
+  let html = `<table class="rctab" style="width:100%;border-collapse:collapse"><thead><tr style="color:var(--faint);text-align:left">
+    <th style="padding:4px 8px;position:sticky;top:0;background:var(--panel)">cluster</th>
+    <th style="padding:4px 8px;position:sticky;top:0;background:var(--panel)">working</th>
+    ${sources.map((s) => `<th style="padding:4px 8px;position:sticky;top:0;background:var(--panel)">${esc(s.name)}</th>`).join("")}
+    <th style="padding:4px 8px;position:sticky;top:0;background:var(--panel)"></th></tr></thead><tbody>`;
+  rows.forEach((r: ReconRow, gi) => {
+    const wl = workRows ? workRows[gi].sources[0].label : null;
+    const opinions = r.sources.map((s) => s.label).filter((l): l is string => l != null);
+    const allAgree = opinions.length >= 2 && opinions.every((l) => l === opinions[0]) && (wl == null || wl === opinions[0]);
+    const wcolor = colorOf(workMeta?.categories || [], wl);
+    html += `<tr class="rcrow" data-g="${gi}" data-grp="${esc(r.group)}" style="border-top:1px solid var(--line);cursor:pointer">
+      <td style="padding:3px 8px;color:var(--dim);white-space:nowrap">${esc(r.group)} <span style="color:var(--faint);font-size:10.5px">${r.n}</span></td>
+      <td style="padding:3px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px">${wl ? `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${wcolor};margin-right:5px"></span>${esc(wl)}` : '<span style="color:var(--faint)">—</span>'}</td>
+      ${r.sources.map((s) => cell(s.label, s.frac, s.label || undefined)).join("")}
+      <td style="padding:3px 8px;color:var(--good,#6bbf73)">${allAgree ? "✓" : ""}</td></tr>`;
+  });
+  html += `</tbody></table>`;
+  host.innerHTML = html;
+
+  // accept a source's label → write it onto the cluster's cells in the working draft
+  host.querySelectorAll<HTMLElement>("td.rcaccept").forEach((td) => {
+    td.addEventListener("click", (e) => { e.stopPropagation(); const tr = td.closest("tr") as HTMLElement; const grp = tr.dataset.grp!; const label = td.dataset.accept!;
+      hooks.annotate(ctx.cellsOfCategory(base, grp), label); });
+  });
+  // coordination: row hover/click selects the cluster everywhere
+  let selRows: Set<string> | null = null;
+  const paint = () => host.querySelectorAll<HTMLElement>("tr.rcrow").forEach((tr) => { tr.style.background = selRows?.has(tr.dataset.grp!) ? "rgba(92,200,255,0.12)" : ""; });
+  host.querySelectorAll<HTMLElement>("tr.rcrow").forEach((tr) => {
+    const grp = tr.dataset.grp!;
+    tr.addEventListener("pointerenter", () => ctx.coord.setHint({ kind: "category", grouping: base, value: grp }));
+    tr.addEventListener("pointerleave", () => ctx.coord.clearHint());
+    tr.addEventListener("click", () => ctx.coord.setSelection({ kind: "category", grouping: base, value: grp }));
+  });
+  return { el: w, afterAttach: () => {
+    const pb = w.parentElement as HTMLElement | null; if (pb) { pb.style.position = "relative"; if (pb.clientHeight < 80) pb.style.height = "320px"; }
+    hooks.registerComposition({ grouping: base, setSelect: (v) => { selRows = v; paint(); }, setHover: (v) => { if (!selRows?.size) { selRows = v; paint(); } } });
+  } };
 }
 
 async function overdispBody(ctx: Ctx, hooks: PanelHooks): Promise<BuiltBody> {

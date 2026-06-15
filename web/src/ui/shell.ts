@@ -56,6 +56,9 @@ export class App {
       "Markers": { colorBy: defGroup, panels: [
         { type: "Embedding", title: "Embedding", cap: "clusters", bind: "embedding:main" },
         { type: "Heatmap", title: "Marker genes", cap: "top genes per group", group: defGrp }] },
+      "Annotate": { colorBy: defGroup, panels: [
+        { type: "Embedding", title: "Embedding", bind: "embedding:main", view: { colorBy: "meta:annotation" } },
+        { type: "Reconcile", title: "Reconcile labels", group: "leiden" }] },
       "QC triage": { colorBy: "qc:mito", panels: [
         { type: "Embedding", title: "Embedding", cap: "mito fraction", bind: "embedding:main" },
         { type: "CompositionBars", title: "Composition", cap: "by sample", bind: "composition:bySample" }] },
@@ -123,6 +126,7 @@ export class App {
       registerComposition: (r) => this.compReactors.push(r),
       onConfigurePanel: (id, patch) => this.configurePanel(id, patch),
       registerGeneHover: (fn) => this.geneHoverSinks.push(fn),
+      annotate: (ids, label, layer) => this.labelCells(ids, label, layer),
     };
   }
 
@@ -449,6 +453,19 @@ export class App {
     return { ok: `scType labeled ${gs.groups.length} ${base} clusters → ${cats.length} cell types (${cats.slice(0, 5).join(", ")}${cats.length > 5 ? "…" : ""})` };
   }
 
+  // Ensure the Annotate workspace has something to work with: a working draft (seeded from cell_type/clusters,
+  // non-destructive, no colour change) + at least one computed source (scType). Re-renders when ready.
+  async ensureAnnotation(): Promise<void> {
+    let changed = false;
+    if (!this.annoLayers.has("annotation")) {
+      const src = this.ctx.groupings().includes("cell_type") ? "cell_type" : "leiden";
+      const m: any = await this.ctx.view.metadata(src);
+      if (m.kind === "categorical") { const layer = seedLayer("annotation", "derived", { codes: m.codes, categories: m.categories }); layer.provenance = { method: "seed", params: { from: src } }; this.commitLayer(layer, false); changed = true; }
+    }
+    if (!this.annoLayers.has("scType")) { await this.runScType(); changed = false; }   // runScType already re-rendered
+    else if (changed) this.fullRender();
+  }
+
   // Label a cell set in a layer (default the working draft). Last-write-wins; re-renders.
   labelCells(cellIds: ArrayLike<number>, label: string, layerName = "annotation"): void {
     let layer = this.annoLayers.get(layerName);
@@ -649,6 +666,7 @@ export class App {
     this.currentWS = name; this.coord.set({ colorBy: ws.colorBy, selection: null });
     this.canvas = ws.panels.map((p) => this.newPanel(p));
     this.fullRender();
+    if (name === "Annotate") this.ensureAnnotation();   // async: seed the working draft + an scType source, then re-render
     if (user) { this.toast("Switched to " + name, "A workspace is a named, reversible layout — your previous one is a step back in History."); this.checkpoint("workspace → " + name, "Deliberate workspace switch."); }
   }
 
