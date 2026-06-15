@@ -8,7 +8,7 @@ import { checkLive } from "../agent/live.ts";
 import { normalizeViewPatch, RawViewPatch, World, PanelSpec, PanelPatch } from "../agent/viewpatch.ts";
 import { validateCellSet, resolveCellSet, describeCellSet, CellSet, CellWorld, CellEnv } from "../agent/cellset.ts";
 import { validateComputeResult, runInWorker } from "../agent/codeapi.ts";
-import { setCodeValues, setConfValues } from "../render/colors.ts";
+import { setCodeValues, setConfValues, invalidateColor } from "../render/colors.ts";
 import { paletteNames, normalizePalette } from "../render/palettes.ts";
 import { AnnotationLayer, seedLayer, setLabel, reconcile } from "../anno/model.ts";
 import { PBMC_MARKERS, MarkerDB } from "../anno/markerdb.ts";
@@ -415,6 +415,7 @@ export class App {
   commitLayer(layer: AnnotationLayer, render = true): void {
     this.annoLayers.set(layer.name, layer);
     this.ctx.setAnnotationLayer(layer.name, layer.codes, layer.categories);
+    invalidateColor(layer.name);   // the overlay changed (often a new category) → drop the stale colour-cache snapshot
     if (render) this.fullRender();
   }
   // Begin a working annotation draft by seeding the `annotation` layer from an existing categorical

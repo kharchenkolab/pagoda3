@@ -23,6 +23,9 @@ async function md(view: LstarView, field: string) {
   if (!mdCache.has(field)) mdCache.set(field, await view.metadata(field));
   return mdCache.get(field)!;
 }
+// Drop a field's cached metadata (call after a writable overlay changes — annotation edits add categories,
+// so the stale snapshot would carry an outdated codes/colors pairing). No arg = clear all.
+export function invalidateColor(field?: string) { if (field) mdCache.delete(field); else mdCache.clear(); }
 
 export async function focusMaskFor(view: LstarView, focus: { dim: string; value: string } | null, n: number): Promise<Uint8Array | undefined> {
   if (!focus) return undefined;
@@ -58,7 +61,7 @@ export async function colorsFor(view: LstarView, colorBy: string, focusMask?: Ui
     if (m.kind === "categorical") {
       return {
         rgba: codesToRGBA(m.codes, focusMask, m.colors),
-        legend: { kind: "categorical", title: rest, items: m.categories.map((c, i) => ({ label: c, rgb: catColor(m.colors ? m.colors[i] : i) })) },
+        legend: { kind: "categorical", title: rest, items: m.categories.map((c, i) => ({ label: c, rgb: catColor(m.colors?.[i] ?? i) })) },
       };
     }
     return { rgba: numericRGBA(m.values, m.max, pal, focusMask), legend: numericLegend(rest, pal) };

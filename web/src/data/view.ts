@@ -495,7 +495,9 @@ export function codesToRGBA(codes: Int32Array, focusMask?: Uint8Array, colorMap?
   const n = codes.length, out = new Uint8Array(n * 4);
   for (let i = 0; i < n; i++) {
     if (focusMask && !focusMask[i]) { out[i * 4] = DIM_RGB[0]; out[i * 4 + 1] = DIM_RGB[1]; out[i * 4 + 2] = DIM_RGB[2]; out[i * 4 + 3] = DIM_A; continue; }
-    const code = codes[i]; const c = catColor(colorMap && code >= 0 ? colorMap[code] : code);
+    // colorMap[code] ?? code: if a per-category palette index is missing (e.g. a stale/short map after a
+    // just-added category), fall back to the raw code so catColor still yields a real hue — never NaN→black.
+    const code = codes[i]; const c = catColor(colorMap && code >= 0 ? (colorMap[code] ?? code) : code);
     out[i * 4] = c[0]; out[i * 4 + 1] = c[1]; out[i * 4 + 2] = c[2]; out[i * 4 + 3] = 230;
   }
   return out;

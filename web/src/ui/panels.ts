@@ -427,12 +427,14 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
     h += `</tbody></table>`;
     mhost.innerHTML = h;
     mhost.querySelectorAll<HTMLSelectElement>("select[data-ax]").forEach((s) => s.onchange = () => { if (s.dataset.ax === "a") mA = s.value; else mB = s.value; renderMatrix(); });
-    // click a matrix cell → select the cells in that A∩B bucket, so you can SEE a disagreement spatially
+    // click a matrix cell → select the A∩B intersection AND offer to label it (via onSelect → selpop). This is
+    // the answer to "labels don't map to the same clusters": reconcile by INTERSECTION, not by base cluster —
+    // isolate the cells where A says X but B says Y, see them spatially, then label that exact set directly.
     mhost.querySelectorAll<HTMLElement>("td.mcell").forEach((td) => td.addEventListener("click", () => {
       const ri = +td.dataset.r!, ci = +td.dataset.c!; const ids: number[] = [];
       const n = Math.min(A.codes.length, B.codes.length);
       for (let i = 0; i < n; i++) if (A.codes[i] === ri && B.codes[i] === ci) ids.push(i);
-      if (ids.length) ctx.coord.setSelection({ kind: "cells", ids: Int32Array.from(ids) });
+      if (ids.length) { const r = td.getBoundingClientRect(); hooks.onSelect(Int32Array.from(ids), { left: r.left, top: r.top }); }
     }));
   };
   seg.querySelectorAll<HTMLButtonElement>("button").forEach((b) => b.onclick = () => {
