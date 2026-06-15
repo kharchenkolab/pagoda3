@@ -45,6 +45,7 @@ export interface PanelHooks {
   renameLabel: (layerName: string, from: string, to: string) => void;   // rename a working label (to an existing one = merge)
   proposeRecord: (layerName: string, label: string) => void;  // ask the agent to suggest a CAP record for one label
   proposeAllNames: (layerName: string) => void;               // ask the agent to name+explain all working clusters
+  splitLabel: (label: string) => void;                        // isolate a working label's cells to split it (brush a subset)
 }
 
 // A vocabulary-bound panel that reacts to the two tiers, distinctly: `setSelect` is the committed selection
@@ -613,7 +614,13 @@ async function renderCapRecord(host: HTMLElement, layer: AnnotationLayer, label:
           <input id="ar_canon" value="${esc((rec.canonicalMarkers || []).join(", "))}" placeholder="comma-separated">
           <div id="ar_canonchips">${geneChips(rec.canonicalMarkers || [])}</div></label>
       </div>
-    </div></div>`;
+    </div>
+    ${opts?.onRename ? `<div style="display:flex;align-items:center;gap:7px;margin-top:10px;border-top:1px solid var(--line2);padding-top:9px">
+      <button id="ar_split" class="mini" title="isolate this label's cells, then brush a subset to break out as a new label">⋔ split…</button>
+      <button id="ar_merge" class="mini" title="merge this label into another working label">⋃ merge into…</button>
+      <select id="ar_mergesel" class="inline" style="display:none;font-size:11px"></select>
+      <span style="margin-left:auto;color:var(--faint);font-size:10.5px">the working draft is the finest level</span>
+    </div>` : ""}</div>`;
   host.querySelectorAll<HTMLElement>("label").forEach((l) => l.style.cssText = "display:flex;flex-direction:column;gap:3px;color:var(--faint);font-size:11px");
   const val = (id: string) => (host.querySelector("#" + id) as HTMLInputElement | null)?.value || "";
   const flash = () => { const s = host.querySelector("#arsaved") as HTMLElement | null; if (s) { s.style.opacity = "1"; setTimeout(() => { s.style.opacity = "0"; }, 1200); } };
@@ -638,6 +645,15 @@ async function renderCapRecord(host: HTMLElement, layer: AnnotationLayer, label:
   const sug = host.querySelector("#arsuggest") as HTMLButtonElement;
   sug.onclick = () => { sug.disabled = true; sug.textContent = "✨ thinking…"; save(); hooks.proposeRecord(layerName, label); };   // save current edits, then let the agent propose (re-renders on propose_label)
   const minBtn = host.querySelector("#armin") as HTMLButtonElement | null; if (minBtn && opts?.onCollapse) minBtn.onclick = () => { save(); opts.onCollapse!(); };
+  // SPLIT: isolate this label's cells (focus), then the user brushes a subset + labels it (the rest stay). MERGE:
+  // pick another working label → rename-to-existing collapses the two (the existing merge path).
+  const splitBtn = host.querySelector("#ar_split") as HTMLButtonElement | null; if (splitBtn) splitBtn.onclick = () => hooks.splitLabel(label);
+  const mergeBtn = host.querySelector("#ar_merge") as HTMLButtonElement | null; const mergeSel = host.querySelector("#ar_mergesel") as HTMLSelectElement | null;
+  if (mergeBtn && mergeSel) {
+    const others = layer.categories.filter((c) => c !== label && layer.codes.some((x) => x === layer.categories.indexOf(c)));
+    mergeBtn.onclick = () => { if (!others.length) return; mergeSel.innerHTML = `<option value="">merge “${esc(label)}” into…</option>` + others.map((c) => `<option>${esc(c)}</option>`).join(""); mergeBtn.style.display = "none"; mergeSel.style.display = ""; mergeSel.focus(); };
+    mergeSel.onchange = () => { const to = mergeSel.value; if (to) hooks.renameLabel("annotation", label, to); };
+  }
   if (opts?.accept) host.querySelectorAll<HTMLButtonElement>(".rcacc").forEach((b) => b.onclick = () => { const o = opts.accept!.options[+b.dataset.acc!]; if (o) opts.accept!.onAccept(o.label); });
   // fill marker evidence asynchronously (the DE call is slow — don't block the card). Staleness-guarded: if the
   // user has switched the card to another label by the time markers resolve, drop this update.

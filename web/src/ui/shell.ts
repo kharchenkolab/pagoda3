@@ -140,6 +140,7 @@ export class App {
       renameLabel: (layerName, from, to) => { this.renameLabel(layerName, from, to); },
       proposeRecord: (layerName, label) => { this.proposeRecord(label, layerName); },
       proposeAllNames: (layerName) => { this.proposeAllNames(layerName); },
+      splitLabel: (label) => { this.splitLabel(label); },
     };
   }
 
@@ -590,6 +591,17 @@ export class App {
   }
   // Release the focus restriction (the UI control + agent clearFocus both land here).
   releaseFocus(): void { if (this.coord.state.focus) { this.coord.clearFocus(); this.fullRender(); } }
+
+  // SPLIT a working label: isolate its cells (focus), so the user can brush a sub-population in the embedding
+  // and label it (the existing brush → "Label as…" flow) — the rest keep the original label. Reuses focus +
+  // selection rather than a bespoke mechanism. (Merge is the inverse — rename-to-existing, in the card.)
+  splitLabel(label: string): void {
+    const ids = this.ctx.cellsOfCategory("annotation", label);
+    if (!ids.length) { this.toast(`“${label}” has no cells to split`, null); return; }
+    this.coord.setFocus({ label, ids: Int32Array.from(ids), spec: { category: { grouping: "annotation", value: label } } });
+    this.fullRender();
+    this.toast(`Splitting “${label}” (${ids.length.toLocaleString()} cells)`, `Shift-drag a subset in the embedding and "Label as…" to break it out — the rest stay “${label}”. "show all" when done.`);
+  }
 
   // A compact reconciliation read-out for the agent: per base cluster, every source's dominant label, plus
   // which clusters the sources DISAGREE on (string-wise — vocabulary differences included; the agent judges).
