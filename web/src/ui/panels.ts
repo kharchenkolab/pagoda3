@@ -379,11 +379,18 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
     h += `<table style="border-collapse:collapse;font-size:10px"><thead><tr><th></th>${ct.cols.map((c) => `<th style="padding:2px 3px;font-weight:400;color:var(--faint);writing-mode:vertical-rl;transform:rotate(180deg);max-height:90px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(c)}">${esc(c.length > 16 ? c.slice(0, 15) + "…" : c)}</th>`).join("")}</tr></thead><tbody>`;
     ct.counts.forEach((row, ri) => {
       const tot = ct.rowTotals[ri] || 1;
-      h += `<tr><td style="padding:2px 6px 2px 0;color:var(--dim);white-space:nowrap;text-align:right;max-width:140px;overflow:hidden;text-overflow:ellipsis" title="${esc(ct.rows[ri])}">${esc(ct.rows[ri])} <span style="color:var(--faint)">${tot}</span></td>${row.map((c) => { const f = c / tot; return `<td style="text-align:center;padding:2px 4px;color:${f > 0.5 ? "#0d1117" : "var(--dim)"};background:${c ? `rgba(92,200,255,${(0.1 + f * 0.85).toFixed(2)})` : ""}" title="${c} cells">${c || ""}</td>`; }).join("")}</tr>`;
+      h += `<tr><td style="padding:2px 6px 2px 0;color:var(--dim);white-space:nowrap;text-align:right;max-width:140px;overflow:hidden;text-overflow:ellipsis" title="${esc(ct.rows[ri])}">${esc(ct.rows[ri])} <span style="color:var(--faint)">${tot}</span></td>${row.map((c, ci) => { const f = c / tot; return `<td class="${c ? "mcell" : ""}" data-r="${ri}" data-c="${ci}" style="text-align:center;padding:2px 4px;color:${f > 0.5 ? "#0d1117" : "var(--dim)"};background:${c ? `rgba(92,200,255,${(0.1 + f * 0.85).toFixed(2)})` : ""}${c ? ";cursor:pointer" : ""}" title="${c} cells${c ? " — click to select these cells" : ""}">${c || ""}</td>`; }).join("")}</tr>`;
     });
     h += `</tbody></table>`;
     mhost.innerHTML = h;
     mhost.querySelectorAll<HTMLSelectElement>("select[data-ax]").forEach((s) => s.onchange = () => { if (s.dataset.ax === "a") mA = s.value; else mB = s.value; renderMatrix(); });
+    // click a matrix cell → select the cells in that A∩B bucket, so you can SEE a disagreement spatially
+    mhost.querySelectorAll<HTMLElement>("td.mcell").forEach((td) => td.addEventListener("click", () => {
+      const ri = +td.dataset.r!, ci = +td.dataset.c!; const ids: number[] = [];
+      const n = Math.min(A.codes.length, B.codes.length);
+      for (let i = 0; i < n; i++) if (A.codes[i] === ri && B.codes[i] === ci) ids.push(i);
+      if (ids.length) ctx.coord.setSelection({ kind: "cells", ids: Int32Array.from(ids) });
+    }));
   };
   seg.querySelectorAll<HTMLButtonElement>("button").forEach((b) => b.onclick = () => {
     mode = b.dataset.m as any; seg.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b));
