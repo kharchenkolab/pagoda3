@@ -9,13 +9,14 @@
   --mono: ui-monospace,"SF Mono","Cascadia Code",Menlo,Consolas,monospace;
   --sans: -apple-system,"Segoe UI",system-ui,Roboto,sans-serif;
 }
-/* LIGHT theme — WHITE base; the warm cream is reserved for highlights/designation (header shade, working column,
-   selection). The DOM re-themes via these vars; the embedding canvas is transparent and its non-focus dot colour
-   is JS-set (theme.ts). */
+/* LIGHT theme — depth mirrors the dark theme: there the desktop (ink) is the DARKEST and each nested surface steps
+   toward the foreground (lighter); here the desktop (ink) is pure WHITE and each nested surface steps toward the
+   foreground (slightly darker). So ink=white › panel=barely-off-white › card=a touch more. The warm cream (--inset)
+   stays a designation tint (header shade, working column). Embedding canvas is transparent; its dot colour is JS-set. */
 html.light{
-  --ink:#ecebe4; --panel:#ffffff; --inset:#f3ecd9; --card:#f4f0e5; --line:#e0ddd2; --line2:#eeece3;
-  /* --ink (desktop behind panels) is a subtle warm-grey, NOT white, so the white panels lift off it (the mockup's
-     ink<panel depth). --card is a faint off-white raised surface (record card) so it stands out from the white table. */
+  --ink:#ffffff; --panel:#f7f5ef; --inset:#f3ecd9; --card:#ede7da; --line:#e0ddd2; --line2:#eeece3;
+  /* --ink (desktop behind panels) = white; --panel = a tiny bit off-white so panels read as raised against it;
+     --card (record card) steps one more, so it stands out from the panel/table — paralleling the dark theme's layering. */
   --text:#33444b; --dim:#5a6970; --faint:#7c8789;
   --teal:#2a9d96; --cyan:#1f7faf; --amber:#a9750a; --ok:#5f8500; --good:#5f8500; --bad:#cb2f2f;
   --on-accent:#ffffff;   /* light-theme accents are DARKER → white text on them reads */
@@ -252,7 +253,7 @@ svg{display:block;width:100%;height:auto}
 .comphost .cseg.sel{fill-opacity:1;stroke:var(--text);stroke-width:.9}
 .comphost .cribbons{pointer-events:none}
 .legend .lgi{cursor:pointer} .legend .lgi.hov{color:var(--dim)} .legend .lgi.sel{color:var(--text)} .legend .lgi.sel .sw{box-shadow:0 0 0 1.5px var(--text)}
-.legend{display:flex;flex-wrap:wrap;gap:9px;margin-top:8px;font-size:11px;color:var(--dim)}
+.legend{display:flex;flex-wrap:wrap;gap:9px;margin-top:8px;padding:0 10px 10px;font-size:11px;color:var(--dim)}   /* the composition legend fills edge-to-edge — pad it off the panel boundary */
 .legend span{display:flex;align-items:center;gap:5px} .sw{width:9px;height:9px;border-radius:3px;display:inline-block;box-shadow:inset 0 0 0 1px rgba(128,128,128,.4)}
 table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:11px}
 th{text-align:right;color:var(--dim);font-weight:500;padding:4px 7px;border-bottom:1px solid var(--line2)} th:first-child{text-align:left}
