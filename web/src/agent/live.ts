@@ -55,6 +55,7 @@ const TOOLS: Tool[] = [
   { name: "get_reconciliation", description: "Read how the annotation sources compare per base cluster (working draft + each source's dominant label) and which clusters they DIFFER on — so you can advise, explain, and resolve. Differences are often just vocabulary across sources (CD14 mono vs CD14+ monocyte); weigh markers + the confusion matrix before calling a real conflict.", input_schema: { type: "object", properties: { base: { type: "string", description: "clustering as the reconciliation unit (default leiden)" } } } },
   { name: "adopt_source", description: "Set the WORKING annotation draft to a source's per-cluster labeling in ONE step (the fast 'start from scType / cell_type'), then fix the few wrong clusters with annotate. source = an annotation source name (see get_reconciliation); base = clustering (default leiden).", input_schema: { type: "object", properties: { source: { type: "string" }, base: { type: "string" } }, required: ["source"] } },
   { name: "import_labeling", description: "Import an EXTERNAL cluster-level labeling as a new reconciliation SOURCE — e.g. CellTypist/Azimuth output or a colleague's annotation the user pastes. labels = { clusterValue: cellTypeLabel } mapping base clusters to labels; base = the clustering the keys refer to (default leiden); name = the source's name. Sources aren't limited to what's stored — this brings any labeling in to reconcile.", input_schema: { type: "object", properties: { labels: { type: "object", description: "{ cluster: label } — keys are base cluster values" }, base: { type: "string" }, name: { type: "string" } }, required: ["labels"] } },
+  { name: "rename_label", description: "Rename a label in the WORKING annotation draft (clean up names for deposition). Renaming to an EXISTING label MERGES the two — the way to collapse 'two of my labels are really the same cell type'. from = current label, to = new name.", input_schema: { type: "object", properties: { from: { type: "string" }, to: { type: "string" } }, required: ["from", "to"] } },
   { name: "set_field_roles", description: "Classify obs/metadata fields so the annotation panel knows which are SOURCES. L* can't read roles from the store, so YOU decide from the category values: 'annotation' = a cell-type labeling (a reconciliation source), 'partition' = a clustering (the reconciliation unit, e.g. leiden), 'covariate' = sample/donor/condition/batch, 'qc' = metrics/calls. Read FIELDS in the dataset brief. Only annotation-role fields become sources.", input_schema: { type: "object", properties: { annotation: { type: "array", items: { type: "string" } }, partition: { type: "array", items: { type: "string" } }, covariate: { type: "array", items: { type: "string" } }, qc: { type: "array", items: { type: "string" } } } } },
 ];
 
@@ -116,6 +117,7 @@ async function execTool(app: App, name: string, input: any): Promise<string> {
     case "get_reconciliation": return await app.reconciliationSummary(input);
     case "adopt_source": { if (!input.source) return "adopt_source: 'source' is required"; const { ok, error } = await app.adoptSource(input.source, input.base); return error ? `error: ${error}` : ok!; }
     case "import_labeling": { const { ok, error } = await app.importLabeling(input); return error ? `error: ${error}` : ok!; }
+    case "rename_label": { if (!input.from || !input.to) return "rename_label: 'from' and 'to' are required"; const { ok, error } = app.renameLabel("annotation", String(input.from), String(input.to)); return error ? `error: ${error}` : ok!; }
     case "set_field_roles": return app.setFieldRoles(input);
     case "get_composition": {
       const comp = await app.ctx.composition("leiden"); ag.addRail({ type: "CompositionBars", title: "Composition by sample", cap: "compositional", bind: "composition:bySample" });
@@ -225,6 +227,7 @@ function toolLabel(tu: any): string {
   if (tu.name === "annotate") return `label · ${i.label}`;
   if (tu.name === "adopt_source") return `adopt · ${i.source}`;
   if (tu.name === "import_labeling") return `import · ${i.name || "labeling"}`;
+  if (tu.name === "rename_label") return `rename · ${i.from}→${i.to}`;
   if (tu.name === "get_reconciliation") return "reconciliation";
   if (tu.name === "concordance_panel") return `concordance · ${i.scopeValue}`;
   if (tu.name === "propose_workspace") return `propose workspace · ${i.name}`;

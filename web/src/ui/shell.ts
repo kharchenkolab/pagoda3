@@ -131,6 +131,7 @@ export class App {
       annoLayer: (name) => this.annoLayers.get(name),
       saveRecord: (layerName, record) => { const L = this.annoLayers.get(layerName); if (L) { L.records = L.records || {}; L.records[record.label] = record; } },
       adoptSource: (name) => { this.adoptSource(name); },
+      renameLabel: (layerName, from, to) => { this.renameLabel(layerName, from, to); },
     };
   }
 
@@ -564,6 +565,28 @@ export class App {
     }
     if (applied.length) this.fullRender();
     return applied.length ? `roles set: ${applied.join(", ")}` : "no valid fields in the patch";
+  }
+
+  // Rename a label (rename-in-place keeps its colour/index stable). Renaming to an EXISTING label MERGES
+  // the two (the core "two of my labels are the same cell type" action). Carries the CAP record.
+  renameLabel(layerName: string, from: string, to: string): { ok?: string; error?: string } {
+    const layer = this.annoLayers.get(layerName); if (!layer) return { error: `no layer "${layerName}"` };
+    to = (to || "").trim(); if (!to) return { error: "empty label" };
+    const fi = layer.categories.indexOf(from); if (fi < 0) return { error: `no label "${from}"` };
+    if (from === to) return { ok: "unchanged" };
+    layer.records = layer.records || {};
+    const ti = layer.categories.indexOf(to);
+    if (ti >= 0) {   // MERGE from → to
+      for (let i = 0; i < layer.codes.length; i++) if (layer.codes[i] === fi) layer.codes[i] = ti;
+      if (layer.records[from] && !layer.records[to]) layer.records[to] = { ...layer.records[from], label: to };
+      delete layer.records[from];
+      this.commitLayer(layer);
+      return { ok: `merged "${from}" into "${to}"` };
+    }
+    layer.categories[fi] = to;   // RENAME in place
+    if (layer.records[from]) { layer.records[to] = { ...layer.records[from], label: to }; delete layer.records[from]; }
+    this.commitLayer(layer);
+    return { ok: `renamed "${from}" → "${to}"` };
   }
 
   // Label a cell set in a layer (default the working draft). Last-write-wins; re-renders.

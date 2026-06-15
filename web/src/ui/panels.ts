@@ -42,6 +42,7 @@ export interface PanelHooks {
   annoLayer: (name: string) => AnnotationLayer | undefined;   // the rich annotation layer (with CAP records)
   saveRecord: (layerName: string, record: CapRecord) => void; // persist a per-label CAP record
   adoptSource: (name: string) => void;                        // set the working draft to a source's per-cluster labeling
+  renameLabel: (layerName: string, from: string, to: string) => void;   // rename a working label (to an existing one = merge)
 }
 
 // A vocabulary-bound panel that reacts to the two tiers, distinctly: `setSelect` is the committed selection
@@ -337,7 +338,7 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
     if (!workLayer || !workLayer.categories.length) { recDetail.innerHTML = '<span style="color:var(--faint);font-size:11.5px">accept or label clusters to build a working draft — each label\'s record appears here</span>'; return; }
     const l = (lbl && workLayer.categories.includes(lbl)) ? lbl : (recLabel && workLayer.categories.includes(recLabel) ? recLabel : workLayer.categories.find((_, i) => workLayer.codes.includes(i)) || null);
     if (!l) { recDetail.innerHTML = '<span style="color:var(--faint);font-size:11.5px">select a cluster to edit its label record</span>'; return; }
-    recLabel = l; (p as any).recordLabel = l; renderCapRecord(recDetail, workLayer, l, ctx, hooks);
+    recLabel = l; (p as any).recordLabel = l; renderCapRecord(recDetail, workLayer, l, ctx, hooks, { onRename: (to) => { (p as any).recordLabel = to; hooks.renameLabel("annotation", l, to); } });
   };
 
   const colorOf = (cats: string[], label: string | null) => label == null ? "var(--faint)" : `rgb(${catColor(cats.indexOf(label)).join(",")})`;
@@ -428,16 +429,19 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
 // reconcile panel's detail section and the standalone record panel. CAP schema (celltype.info): name/full
 // name, Cell-Ontology term (live OLS lookup), parent category, marker evidence (auto from derived markers),
 // canonical markers, rationale. Edits persist to the layer; export → JSON. opts.picker adds a label dropdown.
-async function renderCapRecord(host: HTMLElement, layer: AnnotationLayer, label: string, ctx: Ctx, hooks: PanelHooks, opts?: { picker?: boolean; onPick?: (l: string) => void }): Promise<void> {
+async function renderCapRecord(host: HTMLElement, layer: AnnotationLayer, label: string, ctx: Ctx, hooks: PanelHooks, opts?: { picker?: boolean; onPick?: (l: string) => void; onRename?: (to: string) => void }): Promise<void> {
   const layerName = layer.name; layer.records = layer.records || {};
   const rec: CapRecord = { ...(layer.records[label] || {}), label };
   if (!rec.markerEvidence || !rec.markerEvidence.length) { const mm = await ctx.markers(layerName); rec.markerEvidence = (mm.get(label) || []).slice(0, 8).map((m: any) => m.symbol); }
   const counts = new Int32Array(layer.categories.length); for (const c of layer.codes) if (c >= 0) counts[c]++;
   const idx = layer.categories.indexOf(label); const n = idx >= 0 ? counts[idx] : 0;
   const live = layer.categories.filter((c, i) => counts[i] > 0 || c === label);
+  const dot = `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${idx >= 0 ? `rgb(${catColor(idx).join(",")})` : "var(--faint)"}"></span>`;
   const head = opts?.picker
     ? `<select id="arlabel" class="inline" style="font-size:13px;font-weight:600;max-width:220px">${live.map((c) => `<option${c === label ? " selected" : ""}>${esc(c)}</option>`).join("")}</select>`
-    : `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${idx >= 0 ? `rgb(${catColor(idx).join(",")})` : "var(--faint)"}"></span><b style="font-size:13px">${esc(label)}</b>`;
+    : dot + (opts?.onRename
+      ? `<input id="arname" value="${esc(label)}" title="rename this label — type an existing label to merge" style="font-size:13px;font-weight:500;width:180px">`
+      : `<b style="font-size:13px">${esc(label)}</b>`);
   host.innerHTML = `
    <div style="max-width:720px">
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:9px">${head}
@@ -459,8 +463,9 @@ async function renderCapRecord(host: HTMLElement, layer: AnnotationLayer, label:
   const val = (id: string) => (host.querySelector("#" + id) as HTMLInputElement | null)?.value || "";
   const flash = () => { const s = host.querySelector("#arsaved") as HTMLElement | null; if (s) { s.style.opacity = "1"; setTimeout(() => { s.style.opacity = "0"; }, 1200); } };
   const save = () => { hooks.saveRecord(layerName, { label, fullName: val("ar_full"), category: val("ar_cat"), ontologyTermId: val("ar_oid"), ontologyTerm: val("ar_oterm"), canonicalMarkers: val("ar_canon").split(",").map((s) => s.trim()).filter(Boolean), rationale: val("ar_rat"), markerEvidence: rec.markerEvidence }); flash(); };
-  host.querySelectorAll("input,textarea").forEach((i) => i.addEventListener("change", save));
+  host.querySelectorAll("input:not(#arname),textarea").forEach((i) => i.addEventListener("change", save));
   if (opts?.picker) (host.querySelector("#arlabel") as HTMLSelectElement).onchange = (e) => { save(); opts.onPick?.((e.target as HTMLSelectElement).value); };
+  if (opts?.onRename) { const ni = host.querySelector("#arname") as HTMLInputElement; ni.addEventListener("keydown", (e) => { if ((e as KeyboardEvent).key === "Enter") ni.blur(); }); ni.addEventListener("change", () => { const v = ni.value.trim(); if (v && v !== label) opts.onRename!(v); }); }
   (host.querySelector("#ar_ols") as HTMLButtonElement).onclick = async () => {
     const box = host.querySelector("#ar_olshits") as HTMLElement; box.innerHTML = '<span style="color:var(--faint);font-size:11px">searching OLS…</span>';
     const hits = await olsLookup(label);
