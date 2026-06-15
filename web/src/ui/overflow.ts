@@ -23,7 +23,9 @@ export function installOverflow(row: HTMLElement, bucket: HTMLElement): void {
     menu.style.left = Math.max(6, Math.min(r.right - menu.offsetWidth, window.innerWidth - menu.offsetWidth - 6)) + "px";
     menu.style.top = (r.bottom + 4) + "px";
   };
-  menu.addEventListener("click", () => close());   // acting on a folded control closes the menu
+  // acting on a folded BUTTON closes the menu; but a folded <select>/<input> needs its own click to open/edit —
+  // closing on that click would hide the control before it can be used (the winsor/colour-map pickers bug).
+  menu.addEventListener("click", (e) => { if ((e.target as HTMLElement).closest("select,input,textarea,label")) return; close(); });
 
   let raf = 0;
   const relayout = () => {
