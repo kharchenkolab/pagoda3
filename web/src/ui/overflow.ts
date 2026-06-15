@@ -36,6 +36,10 @@ export function installOverflow(row: HTMLElement, bucket: HTMLElement): void {
     while (row.scrollWidth > row.clientWidth + 1 && i >= 0 && guard-- > 0) { menu.insertBefore(controls[i], menu.firstChild); i--; }
   };
   const schedule = () => { if (!raf) raf = requestAnimationFrame(relayout); };
+  // Expose the relayout so callers can re-fold after a CONTENT change that doesn't resize the row — e.g. a control
+  // toggling visible/hidden (the colour-map / winsor pickers appear only for numeric colourings). A ResizeObserver
+  // alone misses that (the row's box is unchanged), so the now-visible control would overflow-clip instead of folding.
+  (row as any)._ovfSchedule = schedule;
   new ResizeObserver(schedule).observe(row);
   schedule();
 }

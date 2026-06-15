@@ -23,13 +23,13 @@ export interface CoordState {
 
   // view options live HERE (not hardcoded in paint) so the agent AND direct manipulation both drive them
   // — the generative-UX premise. legend:null = auto (key for numeric colourings, hidden when labels carry it).
-  display: { labels: boolean; legend: boolean | null; alpha: number };   // alpha = embedding point opacity (<1 shows density)
+  display: { labels: boolean; legend: boolean | null; alpha: number; winsor: number };   // alpha = embedding point opacity (<1 shows density); winsor = quantile clipped off each tail of a numeric colour scale (0.01 = 1%)
 }
 
 type Listener = (s: CoordState, changed: (keyof CoordState)[]) => void;
 
 export class Coord {
-  private s: CoordState = { colorBy: "meta:leiden", focus: null, selection: null, geneFocus: null, hint: null, geneHint: null, display: { labels: true, legend: null, alpha: 0.7 } };
+  private s: CoordState = { colorBy: "meta:leiden", focus: null, selection: null, geneFocus: null, hint: null, geneHint: null, display: { labels: true, legend: null, alpha: 0.7, winsor: 0.01 } };
   private listeners = new Set<Listener>();
 
   get state() { return this.s; }

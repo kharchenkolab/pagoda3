@@ -33,7 +33,7 @@ export interface RawViewPatch {
   color?: string;                                              // global colour handle
   focus?: { dim?: string; value?: string; set?: any; label?: string };   // global focus: a category (dim=value) OR a cell-SET (for populations spanning several labels, e.g. T cells)
   clearFocus?: boolean;
-  display?: { labels?: boolean; legend?: boolean; alpha?: number };
+  display?: { labels?: boolean; legend?: boolean; alpha?: number; winsor?: number };
   panels?: RawPanelOp[];
   facet?: { by?: string; panel?: number; values?: string[]; layout?: string };   // split one panel into aligned copies
   arrange?: { rows?: number[][]; columns?: number[][] };   // place EXISTING panels into a 2-col grid (pure reposition)
@@ -47,7 +47,7 @@ export type NormOp =
   | { kind: "color"; handle: string }
   | { kind: "focus"; dim?: string; value?: string; set?: any; label?: string }
   | { kind: "clearFocus" }
-  | { kind: "display"; patch: { labels?: boolean; legend?: boolean; alpha?: number } }
+  | { kind: "display"; patch: { labels?: boolean; legend?: boolean; alpha?: number; winsor?: number } }
   | { kind: "addPanel"; spec: PanelSpec }
   | { kind: "configPanel"; id: number; patch: PanelPatch }
   | { kind: "removePanel"; id: number }
@@ -131,10 +131,11 @@ export function normalizeViewPatch(patch: RawViewPatch, w: World): NormResult {
     else ops.push({ kind: "focus", dim, value, label: `${dim} = ${value}` });
   }
   if (patch.display && typeof patch.display === "object") {
-    const d: { labels?: boolean; legend?: boolean; alpha?: number } = {};
+    const d: { labels?: boolean; legend?: boolean; alpha?: number; winsor?: number } = {};
     if (typeof patch.display.labels === "boolean") d.labels = patch.display.labels;
     if (typeof patch.display.legend === "boolean") d.legend = patch.display.legend;
     if (typeof patch.display.alpha === "number") d.alpha = Math.max(0.02, Math.min(1, patch.display.alpha));
+    if (typeof patch.display.winsor === "number") d.winsor = Math.max(0, Math.min(0.2, patch.display.winsor));   // quantile clipped off each tail of the numeric colour scale
     if (Object.keys(d).length) ops.push({ kind: "display", patch: d });
   }
 

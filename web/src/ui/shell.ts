@@ -229,15 +229,26 @@ export class App {
       // clicks toggle correctly. coord.display is just the starting default a panel overrides.
       const pcat = !this.isNumericColoring(p.view?.colorBy ?? this.coord.state.colorBy);
       const pdisp = { ...this.coord.state.display, ...(p.view?.display || {}) };
-      const setPDisp = (patch: { labels?: boolean; legend?: boolean }) => { p.view = { ...p.view, display: { ...(p.view?.display || {}), ...patch } }; this.repaint(); this.syncToggles(); };
+      const setPDisp = (patch: { labels?: boolean; legend?: boolean; winsor?: number }) => { p.view = { ...p.view, display: { ...(p.view?.display || {}), ...patch } }; this.repaint(); this.syncToggles(); };
       const lblBtn = Object.assign(mk("button", "mini" + (pdisp.labels && pcat ? " on" : ""), "labels"), { title: "toggle on-plot labels (this panel)" }) as HTMLButtonElement;
       lblBtn.dataset.tg = "labels"; lblBtn.dataset.pid = String(p.id);
       lblBtn.onclick = () => setPDisp({ labels: !((p.view?.display?.labels) ?? this.coord.state.display.labels) });
       const legBtn = Object.assign(mk("button", "mini" + ((pdisp.legend ?? !pcat) ? " on" : ""), "legend"), { title: "toggle colour legend (this panel)" }) as HTMLButtonElement;
       legBtn.dataset.tg = "legend"; legBtn.dataset.pid = String(p.id);
       legBtn.onclick = () => setPDisp({ legend: !((p.view?.display?.legend) ?? this.coord.state.display.legend ?? !pcat) });
+      // Winsorize the numeric colour scale — clip a % off each tail so outlier cells don't wash out the rest.
+      // Only meaningful for numeric colourings (hidden for categoricals, like the colour-map picker); folds into
+      // the ⋯ menu when the header is narrow. Default tracks coord.display.winsor (1%).
+      const winSel = document.createElement("select"); winSel.className = "inline wins"; winSel.dataset.pid = String(p.id);
+      winSel.title = "Winsorize the colour scale: clip this % off each tail so a few outlier cells don't compress the rest into the pale end";
+      const curWin = (p.view?.display?.winsor) ?? this.coord.state.display.winsor ?? 0;
+      winSel.innerHTML = ([["0", "off"], ["0.005", "0.5%"], ["0.01", "1%"], ["0.02", "2%"], ["0.05", "5%"]] as [string, string][])
+        .map(([v, l]) => `<option value="${v}"${Number(v) === curWin ? " selected" : ""}>winsor ${l}</option>`).join("");
+      winSel.onchange = () => setPDisp({ winsor: Number(winSel.value) });
+      winSel.style.display = pcat ? "none" : "";
       sp.appendChild(lblBtn);   // always present (no-op for numeric colourings) so it can't vanish on recolour
       sp.appendChild(legBtn);
+      sp.appendChild(winSel);
     }
     const span = Object.assign(mk("button", "mini", isFull ? "◫" : "▦"), { title: "maximize" }) as HTMLButtonElement;
     span.onclick = () => { p.full = !isFull; this.fullRender(); this.checkpoint((p.full ? "maximize · " : "restore · ") + p.title, "You resized a panel — the layout is yours to shape."); };
@@ -1112,7 +1123,7 @@ export class App {
   isNumericColoring(handle: string): boolean { return !handle.startsWith("meta:") || this.ctx.categoricalValues(handle.slice(5)).length === 0; }
 
   syncColorSelects() {
-    document.querySelectorAll<HTMLSelectElement>("select.inline:not(.cm)").forEach((s) => {
+    document.querySelectorAll<HTMLSelectElement>("select.inline:not(.cm):not(.wins)").forEach((s) => {
       const p = this.canvas.find((z) => z.id === Number(s.dataset.pid)); if (!p) return;
       if (p.type === "Embedding") {
         const eff = p.view?.colorBy ?? this.coord.state.colorBy;
@@ -1126,6 +1137,17 @@ export class App {
       s.style.display = this.isNumericColoring(eff) ? "" : "none";
       const cmv = p.view?.colormap || "amber"; if ([...s.options].some((o) => o.value === cmv)) s.value = cmv;
     });
+    // winsorization pickers: same show-only-for-numeric rule; keep the value in step with the panel's display.winsor
+    document.querySelectorAll<HTMLSelectElement>("select.wins").forEach((s) => {
+      const p = this.canvas.find((z) => z.id === Number(s.dataset.pid)); if (!p) return;
+      const eff = p.view?.colorBy ?? this.coord.state.colorBy;
+      s.style.display = this.isNumericColoring(eff) ? "" : "none";
+      const wv = String((p.view?.display?.winsor) ?? this.coord.state.display.winsor ?? 0);
+      if ([...s.options].some((o) => o.value === wv)) s.value = wv;
+    });
+    // toggling a picker's visibility (above) changes header content without resizing it — re-run overflow folding
+    // so a freshly-shown control lands in the ⋯ menu instead of clipping past the header edge.
+    document.querySelectorAll<HTMLElement>(".ph").forEach((ph) => (ph as any)._ovfSchedule?.());
   }
 
   // Remember a colouring handle for the embedding dropdown, capped at 5 per class (gene/meta/qc/geneset) so

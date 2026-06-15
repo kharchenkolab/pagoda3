@@ -15,7 +15,7 @@ export interface PanelView {
   scope?: EntityRef;    // restrict the panel to a cell set — the embedding reframes to it + desaturates the rest
   embedding?: string;   // which embedding this panel renders (e.g. "umap" vs "umap.unintegrated"); else the default
   colormap?: string;    // palette for NUMERIC colourings (gene/qc/score): amber (default), viridis, rdbu, bluered, …
-  display?: { labels?: boolean; legend?: boolean; alpha?: number };   // per-PANEL display overrides (independent of other panels)
+  display?: { labels?: boolean; legend?: boolean; alpha?: number; winsor?: number };   // per-PANEL display overrides (independent of other panels)
   // (future: scale, clip, splitBy, highlight, overlays)
 }
 
@@ -109,12 +109,12 @@ export async function paintEmbedding(ev: EmbeddingView, ctx: Ctx) {
   if (scopeCells && scopeCells.length) { mask = new Uint8Array(ctx.n); for (let j = 0; j < scopeCells.length; j++) mask[scopeCells[j]] = 1; }
   else if (selCells.length) { mask = new Uint8Array(ctx.n); for (let j = 0; j < selCells.length; j++) mask[selCells[j]] = 1; }
   else mask = focusMaskFor(c.focus, ctx.n);
-  const { rgba, legend } = await colorsFor(ctx.view, colorBy, mask, view?.colormap);
-  ev.setColors(rgba);
-  ev.setSelection(selCells.length ? selCells : null);
   // display is PER-PANEL: a panel's own overrides win over the coord default, so panels are independent
   // (toggle labels on one embedding without touching another). coord.display is just the starting default.
   const disp = { ...c.display, ...(view?.display || {}) };
+  const { rgba, legend } = await colorsFor(ctx.view, colorBy, mask, view?.colormap, disp.winsor ?? 0);   // winsor clips outliers off the numeric scale
+  ev.setColors(rgba);
+  ev.setSelection(selCells.length ? selCells : null);
   ev.setAlpha(disp.alpha);
   const isCat = legend.kind === "categorical";
   ev.setLabels(disp.labels && isCat ? await categoryLabels(ctx, colorBy, ctx.embeddingOf(view?.embedding).data) : []);
