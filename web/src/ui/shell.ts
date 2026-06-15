@@ -40,8 +40,10 @@ export class App {
 
   constructor(ctx: Ctx) {
     this.ctx = ctx; this.coord = ctx.coord;
-    // Open on the named annotation when the store has it — "cell type" reads; numbered leiden clusters don't.
-    const defGroup = ctx.view.ds.hasField("cell_type") ? "meta:cell_type" : "meta:leiden";
+    // Preferred grouping (annotation > cell_type > clusters): the embedding colour AND the marker/composition
+    // groupings all open on the SAME named partition, so the panels describe one biology by default.
+    const defGrp = ctx.defaultGrouping();
+    const defGroup = "meta:" + defGrp;
     this.coord.set({ colorBy: defGroup });
     this.WS = {
       Overview: { colorBy: defGroup, panels: [
@@ -49,7 +51,7 @@ export class App {
         { type: "CompositionBars", title: "Composition by sample", cap: "by condition", bind: "composition:bySample" }] },
       "Markers": { colorBy: defGroup, panels: [
         { type: "Embedding", title: "Embedding", cap: "clusters", bind: "embedding:main" },
-        { type: "Heatmap", title: "Marker genes", cap: "top genes × cluster", group: "leiden" }] },
+        { type: "Heatmap", title: "Marker genes", cap: "top genes per group", group: defGrp }] },
       "QC triage": { colorBy: "qc:mito", panels: [
         { type: "Embedding", title: "Embedding", cap: "mito fraction", bind: "embedding:main" },
         { type: "CompositionBars", title: "Composition", cap: "by sample", bind: "composition:bySample" }] },
@@ -181,7 +183,7 @@ export class App {
       // or another panel uses a different colour. Embedding: any handle; Composition: which grouping it stacks by.
       const isEmb = p.type === "Embedding";
       const s = document.createElement("select"); s.className = "inline"; s.dataset.pid = String(p.id);
-      const cur = p.view?.colorBy ?? (isEmb ? this.coord.state.colorBy : "meta:" + (this.ctx.groupings()[0] || "leiden"));
+      const cur = p.view?.colorBy ?? (isEmb ? this.coord.state.colorBy : "meta:" + this.ctx.defaultGrouping());
       s.innerHTML = isEmb
         ? this.colorOptionsHtml(cur)
         : this.ctx.groupings().map((g) => `<option value="meta:${g}"${"meta:" + g === cur ? " selected" : ""}>${handleLabel("meta:" + g)}</option>`).join("");
@@ -395,7 +397,7 @@ export class App {
     if (spec.embedding) view.embedding = spec.embedding;
     if (spec.colormap) view.colormap = spec.colormap;
     const isHeat = spec.type === "Heatmap";
-    const grp = isHeat ? (spec.group || "leiden") : undefined;
+    const grp = isHeat ? (spec.group || this.ctx.defaultGrouping()) : undefined;
     return { type: spec.type, title: spec.title || spec.type, col: spec.col, full: spec.full, group: grp, heatMode: spec.heatMode, genes: spec.genes,
       bind: spec.type === "Embedding" ? "embedding:main" : (isHeat ? "markers:" + grp : undefined),
       view: Object.keys(view).length ? view : undefined };
@@ -717,7 +719,7 @@ export class App {
       if (p.type === "Embedding") {
         const eff = p.view?.colorBy ?? this.coord.state.colorBy;
         s.innerHTML = this.colorOptionsHtml(eff);   // rebuilt from the capped list — no unbounded accumulation
-      } else { const eff = p.view?.colorBy ?? ("meta:" + (this.ctx.groupings()[0] || "leiden")); if ([...s.options].some((o) => o.value === eff)) s.value = eff; }
+      } else { const eff = p.view?.colorBy ?? ("meta:" + this.ctx.defaultGrouping()); if ([...s.options].some((o) => o.value === eff)) s.value = eff; }
     });
     // colour-map pickers: show only for numeric colourings; keep the value in step with the panel's colormap
     document.querySelectorAll<HTMLSelectElement>("select.cm").forEach((s) => {

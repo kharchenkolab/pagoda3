@@ -181,7 +181,7 @@ function geneListBody(p: Panel, hooks: PanelHooks): BuiltBody {
 }
 
 async function compositionBody(panel: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltBody> {
-  const grouping = panel.view?.colorBy?.startsWith("meta:") ? panel.view.colorBy.slice(5) : "leiden";   // per-panel stack grouping
+  const grouping = panel.view?.colorBy?.startsWith("meta:") ? panel.view.colorBy.slice(5) : ctx.defaultGrouping();   // per-panel stack grouping
   const { samples, conds, groups, props } = await ctx.composition(grouping);
   // remember each category's segment box per sample — geometry for the hover ribbons; recomputed each draw()
   const seg: ({ x: number; yTop: number; yBot: number } | null)[][] = groups.map(() => samples.map(() => null));
@@ -333,7 +333,7 @@ function splitHeatBody(p: Panel): BuiltBody {
 }
 
 async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltBody> {
-  const grouping = p.group || "leiden";
+  const grouping = p.group || ctx.defaultGrouping();
   const markers = await ctx.markers(grouping);   // ROWS: all-cell markers — shared across scopes so two faceted panels align
   // FACETING: if the panel is scoped (e.g. condition=day0), compute the dots WITHIN that population. Columns stay in
   // the grouping's full order, so two scoped panels (day0 / day7) share identical rows AND columns — directly comparable.
