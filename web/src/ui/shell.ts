@@ -154,11 +154,14 @@ export class App {
   async fullRender() {
     const wb = this.$("workbench");
     const token = ++this.renderToken;   // panelEl is async; if a newer render starts mid-build, drop this one (no double-append)
+    // During the async build the OLD panels stay visible — but a click on a stale row would act on stale state
+    // (e.g. select the wrong cluster → the card/rename lands on the wrong label). Freeze input until the swap.
+    wb.style.pointerEvents = "none";
     const old: Record<string, DOMRect> = {};
     wb.querySelectorAll<HTMLElement>(".panel[data-pid]").forEach((el) => (old[el.dataset.pid!] = el.getBoundingClientRect()));
     const built: { dom: HTMLElement; afterAttach?: () => void }[] = [];
     for (const p of this.canvas) built.push(await this.panelEl(p));   // build off-DOM first; old panels stay visible meanwhile
-    if (token !== this.renderToken) return;   // superseded by a newer fullRender → discard this build
+    if (token !== this.renderToken) return;   // superseded by a newer fullRender → it owns pointerEvents; discard this build
     this.embeddings = []; this.compReactors = []; this.geneHoverSinks = [];
     wb.innerHTML = "";
     const afters: (() => void)[] = [];
@@ -173,6 +176,7 @@ export class App {
     afters.forEach((f) => f());
     await this.repaint();
     this.renderRail(); this.renderWS();
+    wb.style.pointerEvents = "";   // re-enable input now that the new panels + selection are in place
   }
 
   async panelEl(p: Panel): Promise<{ dom: HTMLElement; afterAttach?: () => void }> {

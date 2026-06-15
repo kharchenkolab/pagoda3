@@ -417,9 +417,12 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
     const tip = mixed ? `splits this cluster: ${esc(s.label)} ${(s.frac * 100).toFixed(0)}% / ${esc(s.alt!)} ${((s.altFrac || 0) * 100).toFixed(0)}%` : esc(s.label);
     return `<td style="padding:3px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px${isWork ? ";color:var(--good,#6bbf73)" : ""}" title="${tip}">${esc(s.label)} ${pct}${altTxt}</td>`;
   };
+  // the working-annotation column is the canonical OUTPUT (what you're building); the source columns are
+  // informational reads. A subtle tint sets the working column apart from the sources.
+  const WORKBG = "rgba(110,168,254,0.07)";
   let html = `<table class="rctab" style="width:100%;border-collapse:collapse"><thead><tr style="color:var(--faint);text-align:left">
     <th style="padding:4px 8px;position:sticky;top:0;background:var(--panel)">cluster</th>
-    <th style="padding:4px 8px;position:sticky;top:0;background:var(--panel)">working</th>
+    <th style="padding:4px 8px;position:sticky;top:0;background:var(--panel);box-shadow:inset 0 0 0 999px ${WORKBG};color:var(--dim)">working annotation</th>
     ${sources.map((s) => `<th style="padding:4px 8px;position:sticky;top:0;background:var(--panel)">${esc(s.name)}</th>`).join("")}
     <th style="padding:4px 8px;position:sticky;top:0;background:var(--panel)"></th></tr></thead><tbody>`;
   rows.forEach((r: ReconRow, gi) => {
@@ -429,7 +432,7 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
     const wcolor = colorOf(workMeta?.categories || [], wl);
     html += `<tr class="rcrow" data-g="${gi}" data-grp="${esc(r.group)}" style="border-top:1px solid var(--line);cursor:pointer">
       <td style="padding:3px 8px;color:var(--dim);white-space:nowrap">${esc(r.group)} <span style="color:var(--faint);font-size:10.5px">${r.n}</span></td>
-      <td style="padding:3px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px">${wl ? `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${wcolor};margin-right:5px"></span>${esc(wl)}` : '<span style="color:var(--faint)">—</span>'}</td>
+      <td style="padding:3px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px;background:${WORKBG}">${wl ? `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${wcolor};margin-right:5px"></span>${esc(wl)}` : '<span style="color:var(--faint)">—</span>'}</td>
       ${r.sources.map((s) => cell(s, wl)).join("")}
       <td style="padding:3px 8px;color:var(--good,#6bbf73)">${allAgree ? "✓" : ""}</td></tr>`;
   });
@@ -501,6 +504,10 @@ async function renderCapRecord(host: HTMLElement, layer: AnnotationLayer, label:
   // NOTE: do NOT await markers here — that DE call blocks the whole card (the "took a while to pop up" lag).
   // Render the form now with whatever evidence we have; fill it asynchronously below.
   const haveEvidence = !!(rec.markerEvidence && rec.markerEvidence.length);
+  // genes are clickable chips → colour the embedding by that gene's expression (hooks.onGeneClick). Used for
+  // marker evidence (auto) and canonical markers — so you can eyeball a marker's pattern without leaving the card.
+  const geneChip = (g: string) => `<span class="genechip" data-gene="${esc(g)}" title="colour the embedding by ${esc(g)} expression" style="font-family:var(--mono);font-size:11px;border:1px solid var(--line2);border-radius:5px;padding:1px 6px;margin:0 4px 4px 0;display:inline-block;cursor:pointer">${esc(g)}</span>`;
+  const geneChips = (arr: string[]) => arr.map(geneChip).join("");
   const counts = new Int32Array(layer.categories.length); for (const c of layer.codes) if (c >= 0) counts[c]++;
   const idx = layer.categories.indexOf(label); const n = idx >= 0 ? counts[idx] : 0;
   const live = layer.categories.filter((c, i) => counts[i] > 0 || c === label);
@@ -526,9 +533,11 @@ async function renderCapRecord(host: HTMLElement, layer: AnnotationLayer, label:
       <label style="grid-column:1/-1">ontology term · Cell Ontology
         <span style="display:flex;gap:6px"><input id="ar_oid" value="${esc(rec.ontologyTermId || "")}" placeholder="CL:…" style="flex:0 0 110px"><input id="ar_oterm" value="${esc(rec.ontologyTerm || "")}" placeholder="term name" style="flex:1;min-width:0"><button id="ar_ols" class="mini">lookup</button></span>
         <div id="ar_olshits"></div></label>
-      <label style="grid-column:1/-1">marker evidence · this dataset <span style="color:var(--faint)">(auto)</span>
-        <div id="ar_mev">${haveEvidence ? (rec.markerEvidence || []).map((g) => `<span style="font-family:var(--mono);font-size:11px;border:1px solid var(--line2);border-radius:5px;padding:1px 6px;margin:0 4px 4px 0;display:inline-block">${esc(g)}</span>`).join("") : '<span style="color:var(--faint);font-size:11px">computing…</span>'}</div></label>
-      <label style="grid-column:1/-1">canonical markers<input id="ar_canon" value="${esc((rec.canonicalMarkers || []).join(", "))}" placeholder="comma-separated"></label>
+      <label style="grid-column:1/-1">marker evidence · this dataset <span style="color:var(--faint)">(auto · click a gene to colour the embedding)</span>
+        <div id="ar_mev">${haveEvidence ? geneChips(rec.markerEvidence || []) : '<span style="color:var(--faint);font-size:11px">computing…</span>'}</div></label>
+      <label style="grid-column:1/-1">canonical markers <span style="color:var(--faint)">(click a gene to colour)</span>
+        <input id="ar_canon" value="${esc((rec.canonicalMarkers || []).join(", "))}" placeholder="comma-separated">
+        <div id="ar_canonchips">${geneChips(rec.canonicalMarkers || [])}</div></label>
       <label style="grid-column:1/-1">rationale<textarea id="ar_rat" rows="2" style="resize:vertical">${esc(rec.rationale || "")}</textarea></label>
     </div></div>`;
   host.querySelectorAll<HTMLElement>("label").forEach((l) => l.style.cssText = "display:flex;flex-direction:column;gap:3px;color:var(--faint);font-size:11px");
@@ -536,6 +545,10 @@ async function renderCapRecord(host: HTMLElement, layer: AnnotationLayer, label:
   const flash = () => { const s = host.querySelector("#arsaved") as HTMLElement | null; if (s) { s.style.opacity = "1"; setTimeout(() => { s.style.opacity = "0"; }, 1200); } };
   const save = () => { hooks.saveRecord(layerName, { label, fullName: val("ar_full"), category: val("ar_cat"), ontologyTermId: val("ar_oid"), ontologyTerm: val("ar_oterm"), canonicalMarkers: val("ar_canon").split(",").map((s) => s.trim()).filter(Boolean), rationale: val("ar_rat"), markerEvidence: rec.markerEvidence }); flash(); };
   host.querySelectorAll("input:not(#arname),textarea").forEach((i) => i.addEventListener("change", save));
+  // click any gene chip (marker evidence / canonical) → colour the embedding by that gene's expression
+  host.addEventListener("click", (e) => { const c = (e.target as HTMLElement).closest(".genechip") as HTMLElement | null; if (c?.dataset.gene) hooks.onGeneClick(c.dataset.gene); });
+  // edited canonical markers → refresh the clickable chips to match
+  (host.querySelector("#ar_canon") as HTMLInputElement | null)?.addEventListener("input", () => { const box = host.querySelector("#ar_canonchips") as HTMLElement | null; if (box) box.innerHTML = geneChips(val("ar_canon").split(",").map((s) => s.trim()).filter(Boolean)); });
   if (opts?.picker) (host.querySelector("#arlabel") as HTMLSelectElement).onchange = (e) => { save(); opts.onPick?.((e.target as HTMLSelectElement).value); };
   if (opts?.onRename) { const ni = host.querySelector("#arname") as HTMLInputElement; ni.addEventListener("keydown", (e) => { if ((e as KeyboardEvent).key === "Enter") ni.blur(); }); ni.addEventListener("change", () => { const v = ni.value.trim(); if (v && v !== label) opts.onRename!(v); }); }
   (host.querySelector("#ar_ols") as HTMLButtonElement).onclick = async () => {
@@ -555,7 +568,7 @@ async function renderCapRecord(host: HTMLElement, layer: AnnotationLayer, label:
       const ev = (mm.get(label) || []).slice(0, 8).map((m: any) => m.symbol);
       rec.markerEvidence = ev;
       const box = host.querySelector("#ar_mev") as HTMLElement | null;
-      if (box) box.innerHTML = ev.length ? ev.map((g: string) => `<span style="font-family:var(--mono);font-size:11px;border:1px solid var(--line2);border-radius:5px;padding:1px 6px;margin:0 4px 4px 0;display:inline-block">${esc(g)}</span>`).join("") : '<span style="color:var(--faint);font-size:11px">no markers</span>';
+      if (box) box.innerHTML = ev.length ? geneChips(ev) : '<span style="color:var(--faint);font-size:11px">no markers</span>';
     }).catch(() => {});
   }
 }
