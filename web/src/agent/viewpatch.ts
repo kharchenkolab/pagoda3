@@ -166,7 +166,7 @@ export function normalizeViewPatch(patch: RawViewPatch, w: World): NormResult {
     }
     // configure an existing panel
     if (op.id == null || !w.panelExists(op.id)) { rejected.push(`panel #${op.id}: no such panel`); continue; }
-    const pp: PanelPatch = {}; const isHeat = w.panelType(op.id) === HEAT_TYPE;
+    const pp: PanelPatch = {}; const ptype = w.panelType(op.id); const isHeat = ptype === HEAT_TYPE; const groupable = isHeat || ptype === "Reconcile";
     if (op.title) pp.title = op.title;
     if (op.col === 0 || op.col === 1) pp.col = op.col;
     if (typeof op.full === "boolean") pp.full = op.full;
@@ -175,12 +175,12 @@ export function normalizeViewPatch(patch: RawViewPatch, w: World): NormResult {
     else if (op.scopeGrouping && op.scopeValue) { const s = scopeFrom(op.scopeGrouping, op.scopeValue, w, where, rejected); if (s) pp.scope = s; }
     if (typeof op.embedding === "string" && op.embedding) { if (w.embeddings.includes(op.embedding)) pp.embedding = op.embedding; else rejected.push(`${where}: unknown embedding "${op.embedding}"`); }
     if (typeof op.colormap === "string" && op.colormap) { const cm = w.normalizeColormap(op.colormap); if (cm) pp.colormap = cm; else rejected.push(`${where}: unknown colormap "${op.colormap}" (have: ${w.colormaps.join(", ")})`); }
+    if (groupable && op.group) { if (w.groupings.includes(op.group)) pp.group = op.group; else rejected.push(`${where}: unknown grouping "${op.group}"`); }   // Heatmap stacking / Reconcile base partition
     if (isHeat) {
-      if (op.group) { if (w.groupings.includes(op.group)) pp.group = op.group; else rejected.push(`${where}: unknown grouping "${op.group}"`); }
       const hm = normHeatMode(op.heatMode); if (hm) pp.heatMode = hm; else if (op.heatMode != null) notes.push(`${where}: heatMode "${op.heatMode}" ignored`);
       if (op.clearGenes || op.genes) { const base = op.clearGenes ? [] : w.panelGenes(op.id); pp.genes = resolveGenes(base, op.genes, w, where, notes); }
-    } else if (op.heatMode != null || op.genes != null || op.group != null) {
-      notes.push(`${where}: group/heatMode/genes apply only to Heatmap panels`);
+    } else if (op.heatMode != null || op.genes != null || (op.group != null && !groupable)) {
+      notes.push(`${where}: heatMode/genes apply only to Heatmap panels`);
     }
     if (Object.keys(pp).length) ops.push({ kind: "configPanel", id: op.id, patch: pp });
     else rejected.push(`panel #${op.id}: nothing to change`);

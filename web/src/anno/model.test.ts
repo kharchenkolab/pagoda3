@@ -50,7 +50,7 @@ test("reconcile: per-group dominant label, fraction, and agreement status", () =
   assert.equal(rows.length, 2);
   // cluster 0: markers→NK (3/4=0.75), CellTypist→NK (1.0) → agree
   assert.equal(rows[0].group, "c0"); assert.equal(rows[0].n, 4);
-  assert.deepEqual(rows[0].sources[0], { name: "markers", label: "NK", frac: 0.75 });
+  assert.deepEqual(rows[0].sources[0], { name: "markers", label: "NK", frac: 0.75, alt: "B", altFrac: 0.25 });   // markers SPLIT cluster 0 — runner-up surfaced
   assert.deepEqual(rows[0].sources[1], { name: "CellTypist", label: "NK", frac: 1 });
   assert.equal(rows[0].status, "agree");
   // cluster 1: markers→B (1.0), CellTypist→B (1.0) → agree

@@ -321,7 +321,7 @@ export class App {
     if (patch.colorBy != null) { this.noteColor(patch.colorBy); if (p.type !== "Embedding") rebuild = true; }   // recolouring a non-embedding (e.g. composition restack) needs a rebuild
     if (patch.embedding != null && patch.embedding !== p.view?.embedding) rebuild = true;
     if (patch.heatMode != null && patch.heatMode !== p.heatMode) { p.heatMode = patch.heatMode; rebuild = true; }
-    if (patch.group != null && patch.group !== p.group) { p.group = patch.group; p.bind = "markers:" + patch.group; rebuild = true; }   // re-group a Heatmap (markers + columns recomputed)
+    if (patch.group != null && patch.group !== p.group) { p.group = patch.group; if (p.type === "Heatmap") p.bind = "markers:" + patch.group; rebuild = true; }   // re-group a Heatmap (markers/columns) or a Reconcile base
     if (patch.genes != null) { p.genes = patch.genes; rebuild = true; }
     if (patch.scope !== undefined) rebuild = true;   // scope reframes the embedding AND drives its header caption → rebuild so both update
     const v: PanelView = { ...p.view };
@@ -549,9 +549,10 @@ export class App {
     const sources: { name: string; codes: ArrayLike<number>; categories: string[] }[] = [];
     for (const n of srcNames) { const m: any = await ctx.view.metadata(n); if (m.kind === "categorical") sources.push({ name: n, codes: m.codes, categories: m.categories }); }
     const rows = reconcile({ codes: baseMeta.codes, categories: baseMeta.categories }, sources);
-    const lines = rows.map((r) => `${base} ${r.group} (${r.n}): ${r.sources.map((s) => `${s.name}=${s.label ?? "—"}`).join(", ")}`);
+    const lines = rows.map((r) => `${base} ${r.group} (${r.n}): ${r.sources.map((s) => `${s.name}=${s.label ?? "—"}${s.frac < 0.7 && s.alt ? `(${(s.frac * 100).toFixed(0)}%, also ${s.alt} ${((s.altFrac || 0) * 100).toFixed(0)}%)` : ""}`).join(", ")}`);
     const diff = rows.filter((r) => { const o = r.sources.map((s) => s.label).filter(Boolean); return o.length > 1 && !o.every((l) => l === o[0]); });
-    return `base=${base}, sources=${srcNames.join("/")}.\n${lines.join("\n")}\n\n${diff.length} clusters where sources differ (may be vocabulary OR real): ${diff.map((r) => r.group).join(", ") || "none"}. Differences are often just vocabulary — weigh the confusion matrix + markers before calling a real conflict.`;
+    const split = rows.filter((r) => r.sources.some((s) => s.frac < 0.7 && s.alt));
+    return `base=${base}, sources=${srcNames.join("/")}.\n${lines.join("\n")}\n\n${diff.length} clusters where sources differ (often just VOCABULARY — weigh the matrix + markers): ${diff.map((r) => r.group).join(", ") || "none"}.\n${split.length} clusters a source SPLITS (labels don't map 1:1 to this clustering): ${split.map((r) => r.group).join(", ") || "none"} — for those, the cluster table can't fully resolve it; use the confusion matrix and label the sub-population (annotate with an intersect cell-set, or the user brushes it), or reconcile against a finer clustering.`;
   }
 
   // Classify obs fields (agent-inferred / user override): which are annotation sources, partitions, covariates,

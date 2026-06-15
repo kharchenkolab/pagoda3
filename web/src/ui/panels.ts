@@ -341,9 +341,15 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
   };
 
   const colorOf = (cats: string[], label: string | null) => label == null ? "var(--faint)" : `rgb(${catColor(cats.indexOf(label)).join(",")})`;
-  const cell = (label: string | null, frac: number, accept?: string) => {
-    if (label == null) return `<td style="color:var(--faint);padding:3px 8px">—</td>`;
-    return `<td class="${accept ? "rcaccept" : ""}" ${accept ? `data-accept="${esc(accept)}"` : ""} style="padding:3px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:150px${accept ? ";cursor:pointer" : ""}" title="${accept ? "click to set as the working label" : ""}">${esc(label)} <span style="color:var(--faint);font-size:10.5px">${frac < 0.999 ? (frac * 100).toFixed(0) + "%" : ""}</span></td>`;
+  // a source's read of a cluster; when it SPLITS the cluster (dominant <70%) the runner-up is shown in amber,
+  // so labelings that don't map 1:1 to clusters are visible (the matrix view + brush/agent resolve the split).
+  const cell = (s: ReconRow["sources"][number]) => {
+    if (s.label == null) return `<td style="color:var(--faint);padding:3px 8px">—</td>`;
+    const mixed = s.frac < 0.7 && !!s.alt;
+    const pct = s.frac < 0.999 ? `<span style="color:var(--faint);font-size:10.5px">${(s.frac * 100).toFixed(0)}%</span>` : "";
+    const altTxt = mixed ? `<div style="font-size:10px;color:var(--amber,#e0a458)">+ ${esc(s.alt!)} ${((s.altFrac || 0) * 100).toFixed(0)}%</div>` : "";
+    const tip = mixed ? `splits this cluster: ${esc(s.label)} ${(s.frac * 100).toFixed(0)}% / ${esc(s.alt!)} ${((s.altFrac || 0) * 100).toFixed(0)}% — click to take the majority; brush or ask the agent to split it` : "click to set as the working label";
+    return `<td class="rcaccept" data-accept="${esc(s.label)}" style="padding:3px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px;cursor:pointer" title="${tip}">${esc(s.label)} ${pct}${altTxt}</td>`;
   };
   let html = `<table class="rctab" style="width:100%;border-collapse:collapse"><thead><tr style="color:var(--faint);text-align:left">
     <th style="padding:4px 8px;position:sticky;top:0;background:var(--panel)">cluster</th>
@@ -358,7 +364,7 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
     html += `<tr class="rcrow" data-g="${gi}" data-grp="${esc(r.group)}" style="border-top:1px solid var(--line);cursor:pointer">
       <td style="padding:3px 8px;color:var(--dim);white-space:nowrap">${esc(r.group)} <span style="color:var(--faint);font-size:10.5px">${r.n}</span></td>
       <td style="padding:3px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px">${wl ? `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${wcolor};margin-right:5px"></span>${esc(wl)}` : '<span style="color:var(--faint)">—</span>'}</td>
-      ${r.sources.map((s) => cell(s.label, s.frac, s.label || undefined)).join("")}
+      ${r.sources.map((s) => cell(s)).join("")}
       <td style="padding:3px 8px;color:var(--good,#6bbf73)">${allAgree ? "✓" : ""}</td></tr>`;
   });
   html += `</tbody></table>`;
