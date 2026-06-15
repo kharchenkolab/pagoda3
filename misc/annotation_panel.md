@@ -164,6 +164,21 @@ operate on annotations unchanged.
   So: matrix shows the counts; the agent (and OLS/CL term mapping) decides what's truly the same vs a real
   split/merge. Validates the "agent-in-chat resolution" + ontology decisions.
 
+## Status (2026-06-15) — all phases built
+
+Increments 1–5, 3, agent surface, and 7 are done, tested, UI-verified, committed:
+- 1 layers · 2 scType · 4a reconcile table · 4b confusion matrix · 5 CAP card + OLS + export ·
+  agent surface (run_annotation/annotate/get_reconciliation) · 3 field-roles (+set_field_roles) ·
+  7 CellTypist inference engine.
+- 45 node --test cases pass. Live agent drove the whole workflow (ran scType, flagged leiden 22 as a
+  real doublet with marker reasoning, labeled clusters on request). OLS returns real CL terms.
+- **CellTypist — one pending ASSET, not code.** The in-browser LR inference (`anno/celltypist.ts`
+  predictLR/lrFinalize + `App.runCellTypist` sparse runner) is built + verified with a synthetic model on
+  the real data (T→CD4 T, Monocyte→CD14 mono, B→B memory, NK→NK). To ship a real source, convert a
+  CellTypist `.pkl` (`model.classifier.features`, `.classes_`, `.coef_`, `.intercept_`) to the `LRModel`
+  JSON {genes, classes, W[genes×classes], b} and load it (fetch/upload). Until then `run_annotation` keeps
+  `method` = sctype only; runCellTypist is callable once a model is provided.
+
 ## 11. Test approach
 
 Pure cores get `node --test` cases (zero deps, Node strips TS), consistent with viewpatch/cellset/codeapi:

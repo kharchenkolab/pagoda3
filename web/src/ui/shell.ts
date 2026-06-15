@@ -13,6 +13,7 @@ import { paletteNames, normalizePalette } from "../render/palettes.ts";
 import { AnnotationLayer, seedLayer, setLabel, reconcile } from "../anno/model.ts";
 import { PBMC_MARKERS, MarkerDB } from "../anno/markerdb.ts";
 import { zscoreByGroup, scoreClusters, assignClusters, MarkerIdx } from "../anno/sctype.ts";
+import { LRModel, lrFinalize } from "../anno/celltypist.ts";
 
 interface Checkpoint { i: number; q: string; why: string; state: any; kind?: "ask" | "act"; exchange?: { kind: string; entries?: any[]; turns?: any[] }; }
 interface WS { colorBy: string; panels: Partial<Panel>[]; }
@@ -454,6 +455,27 @@ export class App {
     const layer: AnnotationLayer = { name: "scType", source: "sctype", codes, categories: cats, confidence: conf, records: {}, provenance: { method: "scType", params: { base, db: opts?.db ? "custom" : "PBMC_MARKERS" } } };
     this.commitLayer(layer);
     return { ok: `scType labeled ${gs.groups.length} ${base} clusters → ${cats.length} cell types (${cats.slice(0, 5).join(", ")}${cats.length > 5 ? "…" : ""})` };
+  }
+
+  // Run a CellTypist (logistic-regression) model IN-BROWSER → a per-cell "CellTypist" source layer. Sparse
+  // accumulation (gene-by-gene into logits) so a real multi-thousand-gene model never materializes a dense X.
+  // A trained model (genes/classes/W/b) must be provided — converting CellTypist's .pkl is a pending asset.
+  async runCellTypist(model: LRModel): Promise<{ ok?: string; error?: string }> {
+    if (!model?.genes?.length || !model?.classes?.length) return { error: "invalid model (need genes, classes, W, b)" };
+    const C = model.classes.length, N = this.ctx.n;
+    const logits = new Float64Array(N * C);
+    for (let i = 0; i < N; i++) { const lb = i * C; for (let c = 0; c < C; c++) logits[lb + c] = model.b[c] || 0; }
+    let present = 0;
+    for (let g = 0; g < model.genes.length; g++) {
+      const gi = await this.ctx.view.geneCol(model.genes[g]); if (gi == null) continue; present++;
+      const { values } = await this.ctx.view.geneExpression(model.genes[g]); const wb = g * C;
+      for (let i = 0; i < N; i++) { const x = values[i]; if (!x) continue; const lb = i * C; for (let c = 0; c < C; c++) logits[lb + c] += x * model.W[wb + c]; }
+    }
+    if (!present) return { error: "none of the model's genes are present in this dataset" };
+    const { codes, conf } = lrFinalize(logits, N, C);
+    const layer: AnnotationLayer = { name: "CellTypist", source: "celltypist", codes, categories: model.classes.slice(), confidence: conf, records: {}, provenance: { method: "CellTypist", params: { genes: `${present}/${model.genes.length}` } } };
+    this.commitLayer(layer);
+    return { ok: `CellTypist labeled ${N} cells using ${present}/${model.genes.length} model genes → ${new Set(codes).size} classes` };
   }
 
   // Ensure the Annotate workspace has something to work with: a working draft (seeded from cell_type/clusters,
