@@ -43,6 +43,8 @@ export interface PanelHooks {
   saveRecord: (layerName: string, record: CapRecord) => void; // persist a per-label CAP record
   adoptSource: (name: string) => void;                        // set the working draft to a source's per-cluster labeling
   renameLabel: (layerName: string, from: string, to: string) => void;   // rename a working label (to an existing one = merge)
+  proposeRecord: (layerName: string, label: string) => void;  // ask the agent to suggest a CAP record for one label
+  proposeAllNames: (layerName: string) => void;               // ask the agent to name+explain all working clusters
 }
 
 // A vocabulary-bound panel that reacts to the two tiers, distinctly: `setSelect` is the committed selection
@@ -353,7 +355,11 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
     const live = workLayer.categories.map((c, i) => ({ c, i, n: cnt[i] })).filter((x) => x.n > 0).sort((a, b) => b.n - a.n);
     const withOnt = live.filter((x) => recs[x.c]?.ontologyTermId).length, withRat = live.filter((x) => recs[x.c]?.rationale).length;
     let unlabeled = 0; for (const c of workLayer.codes) if (c < 0) unlabeled++;
-    let h = `<div style="font-size:11px;color:var(--faint);margin-bottom:7px">${live.length} labels · <span style="color:${withOnt === live.length ? "var(--good,#6bbf73)" : "var(--amber,#e0a458)"}">${withOnt} with ontology</span> · ${withRat} with rationale${unlabeled ? ` · <span style="color:var(--amber,#e0a458)">${unlabeled} cells unlabeled</span>` : ""}</div><table style="width:100%;border-collapse:collapse;font-size:12px"><tbody>`;
+    let h = `<div style="display:flex;align-items:center;gap:8px;margin-bottom:7px">
+        <span style="font-size:11px;color:var(--faint)">${live.length} labels · <span style="color:${withOnt === live.length ? "var(--good,#6bbf73)" : "var(--amber,#e0a458)"}">${withOnt} with ontology</span> · ${withRat} with rationale${unlabeled ? ` · <span style="color:var(--amber,#e0a458)">${unlabeled} cells unlabeled</span>` : ""}</span>
+        <button id="lsuggest" class="mini" title="ask the agent to propose names + rationales for all clusters from their markers" style="margin-left:auto;border-color:var(--amber,#e0a458);color:var(--amber,#e0a458)">✨ Suggest names</button>
+        <button id="lexport" class="mini" title="download all labels as CAP-schema JSON (for deposition)">export CAP</button>
+      </div><table style="width:100%;border-collapse:collapse;font-size:12px"><tbody>`;
     for (const { c, i, n } of live) { const r = recs[c] || {};
       h += `<tr class="lrow" data-l="${esc(c)}" style="border-top:1px solid var(--line);cursor:pointer">
         <td style="padding:3px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px"><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:rgb(${catColor(ctx.labelColorIndex(c)).join(",")});margin-right:6px"></span>${esc(c)}</td>
@@ -364,6 +370,8 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
     h += `</tbody></table>`;
     lhost.innerHTML = h;
     lhost.querySelectorAll<HTMLElement>("tr.lrow").forEach((tr) => tr.addEventListener("click", () => showRecord(tr.dataset.l!)));
+    const sb = lhost.querySelector("#lsuggest") as HTMLButtonElement | null; if (sb) sb.onclick = () => { sb.disabled = true; sb.textContent = "✨ thinking…"; hooks.proposeAllNames(workLayer!.name); };
+    const eb = lhost.querySelector("#lexport") as HTMLButtonElement | null; if (eb) eb.onclick = () => exportCap(workLayer!, ctx);
   };
 
   const colorOf = (_cats: string[], label: string | null) => label == null ? "var(--faint)" : `rgb(${catColor(ctx.labelColorIndex(label)).join(",")})`;   // stable label-name colour
@@ -469,12 +477,14 @@ async function renderCapRecord(host: HTMLElement, layer: AnnotationLayer, label:
     : dot + (opts?.onRename
       ? `<input id="arname" value="${esc(label)}" title="rename this label — type an existing label to merge" style="font-size:13px;font-weight:500;width:180px">`
       : `<b style="font-size:13px">${esc(label)}</b>`);
+  const suggestedBadge = rec.suggested ? `<span id="arsug" title="the agent proposed this — review & edit, then it's yours" style="color:var(--amber,#e0a458);font-size:10px;border:1px solid var(--amber,#e0a458);border-radius:5px;padding:0 5px">✨ suggested</span>` : "";
   host.innerHTML = `
    <div style="max-width:720px">
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:9px">${head}
       <span style="color:var(--faint);font-size:11px">${n} cells</span>
+      ${suggestedBadge}
       <span id="arsaved" style="color:var(--good,#6bbf73);font-size:11px;opacity:0;transition:opacity .2s">saved ✓</span>
-      <button id="arexport" class="mini" style="margin-left:auto">export CAP</button></div>
+      <button id="arsuggest" class="mini" title="ask the agent to propose a name, category, ontology term, markers + rationale from this cluster's genes" style="margin-left:auto;border-color:var(--amber,#e0a458);color:var(--amber,#e0a458)">✨ Suggest</button></div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 14px;font-size:12px">
       <label>full name<input id="ar_full" value="${esc(rec.fullName || "")}"></label>
       <label>category · parent<input id="ar_cat" value="${esc(rec.category || "")}"></label>
@@ -499,12 +509,17 @@ async function renderCapRecord(host: HTMLElement, layer: AnnotationLayer, label:
     box.innerHTML = hits.length ? hits.map((h) => `<div class="olshit" data-id="${esc(h.id)}" data-label="${esc(h.label)}" style="cursor:pointer;padding:2px 4px;font-size:11px;border-radius:4px"><b style="color:var(--cyan)">${esc(h.id)}</b> ${esc(h.label)}</div>`).join("") : '<span style="color:var(--faint);font-size:11px">no CL match (or offline) — enter manually</span>';
     box.querySelectorAll<HTMLElement>(".olshit").forEach((el) => el.onclick = () => { (host.querySelector("#ar_oid") as HTMLInputElement).value = el.dataset.id!; (host.querySelector("#ar_oterm") as HTMLInputElement).value = el.dataset.label!; save(); box.innerHTML = ""; });
   };
-  (host.querySelector("#arexport") as HTMLButtonElement).onclick = async () => {
-    const mm = await ctx.markers(layerName);
-    const recs = layer.categories.map((c) => ({ ...(layer.records![c] || {}), label: c, markerEvidence: (layer.records![c]?.markerEvidence) || (mm.get(c) || []).slice(0, 8).map((m: any) => m.symbol) }));
-    const blob = new Blob([JSON.stringify(recs, null, 2)], { type: "application/json" });
-    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "annotation_cap.json"; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-  };
+  const sug = host.querySelector("#arsuggest") as HTMLButtonElement;
+  sug.onclick = () => { sug.disabled = true; sug.textContent = "✨ thinking…"; save(); hooks.proposeRecord(layerName, label); };   // save current edits, then let the agent propose (re-renders on propose_label)
+}
+
+// Export every working-draft label as CAP-schema JSON. Rare (full annotations only) — lives in the labels
+// OVERVIEW header (the review-before-deposit view), not on the per-label card.
+async function exportCap(layer: AnnotationLayer, ctx: Ctx): Promise<void> {
+  const mm = await ctx.markers(layer.name);
+  const recs = layer.categories.map((c) => ({ ...((layer.records || {})[c] || {}), label: c, markerEvidence: ((layer.records || {})[c]?.markerEvidence) || (mm.get(c) || []).slice(0, 8).map((m: any) => m.symbol) }));
+  const blob = new Blob([JSON.stringify(recs, null, 2)], { type: "application/json" });
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "annotation_cap.json"; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
 // Standalone record panel (optional) — a label picker + the shared CAP form, following the selection.

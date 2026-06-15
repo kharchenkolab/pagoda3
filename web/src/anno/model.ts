@@ -19,6 +19,7 @@ export interface CapRecord {
   canonicalMarkers?: string[];    // known / literature markers
   rationale?: string;
   rationaleDoi?: string[];
+  suggested?: boolean;            // the agent proposed this record (UI badges it as a reviewable suggestion)
 }
 
 export interface AnnotationLayer {

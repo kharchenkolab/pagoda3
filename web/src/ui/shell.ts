@@ -132,6 +132,8 @@ export class App {
       saveRecord: (layerName, record) => { const L = this.annoLayers.get(layerName); if (L) { L.records = L.records || {}; L.records[record.label] = record; } },
       adoptSource: (name) => { this.adoptSource(name); },
       renameLabel: (layerName, from, to) => { this.renameLabel(layerName, from, to); },
+      proposeRecord: (layerName, label) => { this.proposeRecord(label, layerName); },
+      proposeAllNames: (layerName) => { this.proposeAllNames(layerName); },
     };
   }
 
@@ -591,6 +593,59 @@ export class App {
     if (layer.records[from]) { layer.records[to] = { ...layer.records[from], label: to }; delete layer.records[from]; }
     this.commitLayer(layer);
     return { ok: `renamed "${from}" → "${to}"` };
+  }
+
+  // AGENT-ASSIST: write an agent's proposed CAP record onto a working-draft label (merge over any existing
+  // fields). Optionally renames the label (name) — the core "the agent suggests a clean name" action. The
+  // record card re-renders and badges it ✨ as a reviewable suggestion the user can edit/keep. (propose_label tool.)
+  proposeLabel(input: any): { ok?: string; error?: string } {
+    const layerName = "annotation";
+    let layer = this.annoLayers.get(layerName); if (!layer) return { error: "no working annotation draft — adopt a source or label some cells first" };
+    let label = String(input?.label || "").trim();
+    if (!label || !layer.categories.includes(label)) return { error: `no label "${label}" in the working draft (labels: ${layer.categories.slice(0, 12).join(", ")})` };
+    const newName = input?.name && String(input.name).trim();
+    if (newName && newName !== label) { this.renameLabel(layerName, label, newName); label = newName; layer = this.annoLayers.get(layerName)!; }
+    layer.records = layer.records || {};
+    const prev = layer.records[label] || { label };
+    const arr = (v: any) => Array.isArray(v) ? v.map((x) => String(x).trim()).filter(Boolean) : undefined;
+    layer.records[label] = { ...prev, label,
+      fullName: input.fullName ?? prev.fullName,
+      synonyms: arr(input.synonyms) ?? prev.synonyms,
+      category: input.category ?? prev.category,
+      ontologyTermId: input.ontologyTermId ?? prev.ontologyTermId,
+      ontologyTerm: input.ontologyTerm ?? prev.ontologyTerm,
+      canonicalMarkers: arr(input.canonicalMarkers) ?? prev.canonicalMarkers,
+      rationale: input.rationale ?? prev.rationale,
+      suggested: true,
+    };
+    this.fullRender();   // refresh the open record card so the suggestion shows
+    return { ok: `proposed “${label}”${newName && newName !== input.label ? ` (renamed from “${input.label}”)` : ""}` };
+  }
+
+  // UI → agent: ask the agent to propose a CAP record for ONE working label, marker-grounded. Scopes the
+  // request to that label's cells and seeds the prompt with its top DE markers, so the agent reasons from
+  // THIS dataset, not priors alone. Its propose_label call populates the record card.
+  async proposeRecord(label: string, layerName = "annotation"): Promise<void> {
+    const layer = this.annoLayers.get(layerName); if (!layer) return;
+    const idx = layer.categories.indexOf(label); if (idx < 0) return;
+    let n = 0; for (const c of layer.codes) if (c === idx) n++;
+    let markers: string[] = [];
+    try { const mm = await this.ctx.markers(layerName); markers = (mm.get(label) || []).slice(0, 14).map((m: any) => m.symbol); } catch {}
+    const ids = this.ctx.cellsOfCategory(layerName, label);
+    const scope = { type: "selection", ids: Array.from(ids), summary: `${label} (${n} cells)` } as any;
+    this.agent.ask(`Propose a CAP cell-type record for the working-draft label "${label}" (${n} cells). Top differentially-expressed markers for these cells in THIS dataset: ${markers.join(", ") || "(none computed — compute markers if useful)"}. Suggest a clean cell-type NAME (rename if "${label}" is a cluster id or vague), a fullName, a parent CATEGORY, the best Cell-Ontology term (ontologyTermId CL:xxxx + ontologyTerm), canonicalMarkers, and a 1–2 sentence RATIONALE grounded in those markers. Call propose_label once with the fields. Be concise.`, scope);
+  }
+
+  // UI → agent: batch — propose names + short rationales for every populated working-draft cluster at once,
+  // grounded in each cluster's markers. The fast "name my clusters" pass after adopt_source.
+  async proposeAllNames(layerName = "annotation"): Promise<void> {
+    const layer = this.annoLayers.get(layerName); if (!layer) { this.toast("No working annotation draft yet", "Adopt a source or label some cells first."); return; }
+    const counts = new Int32Array(layer.categories.length); for (const c of layer.codes) if (c >= 0) counts[c]++;
+    const targets = layer.categories.filter((_, i) => counts[i] > 0);
+    if (!targets.length) return;
+    let mm: any; try { mm = await this.ctx.markers(layerName); } catch {}
+    const lines = targets.map((c) => `- "${c}": ${mm ? (mm.get(c) || []).slice(0, 10).map((m: any) => m.symbol).join(", ") : ""}`);
+    this.agent.ask(`Propose clean cell-type names with 1-line marker-grounded rationales for the working annotation draft's clusters. For EACH, call propose_label({label, name, rationale, category?, ontologyTermId?}). Rename cluster-id or vague labels to proper cell types; keep good names as-is (still add a rationale). Clusters and their top markers:\n${lines.join("\n")}`);
   }
 
   // Label a cell set in a layer (default the working draft). Last-write-wins; re-renders.
