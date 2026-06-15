@@ -316,7 +316,7 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
   const w = mk("div"); w.style.cssText = "position:absolute;inset:0;display:flex;flex-direction:column;overflow:hidden;font-size:12px";
   const hdr = mk("div"); hdr.style.cssText = "flex:0 0 auto;display:flex;align-items:center;gap:7px;padding:6px 10px;border-bottom:1px solid var(--line2);flex-wrap:wrap";
   const nResolved = workRows ? workRows.filter((r) => r.sources[0].label != null).length : 0;
-  hdr.innerHTML = `<span style="color:var(--faint)">base</span> <b>${esc(base)}</b> · <span style="color:var(--faint)">${rows.length} clusters, ${nResolved} labeled</span> <span style="color:var(--faint)">·</span> ${sources.length ? sources.map((s) => `<span style="border:1px solid var(--line2);border-radius:5px;padding:1px 6px;color:var(--dim)">${esc(s.name)}</span>`).join(" ") : '<span style="color:var(--amber,#e0a458)">no sources — run scType or add one</span>'}`;
+  hdr.innerHTML = `<span style="color:var(--faint)">base</span> <b>${esc(base)}</b> · <span style="color:var(--faint)">${rows.length} clusters, ${nResolved} labeled</span> <span style="color:var(--faint)">·</span> ${sources.length ? sources.map((s) => `<span style="border:1px solid var(--line2);border-radius:5px;padding:1px 6px;color:var(--dim)">${esc(s.name)}</span>`).join(" ") + ' <span style="color:var(--faint);font-size:11px">— click a source label to accept it into the working draft</span>' : '<span style="color:var(--amber,#e0a458)">no sources — run scType or add one</span>'}`;
   // table ↔ matrix toggle (the matrix is the vocabulary-agnostic confusion view between two labelings)
   const layers = [...(workMeta ? [{ name: "working", codes: workMeta.codes, categories: workMeta.categories }] : []), ...sources];
   const seg = mk("div", "segtog"); seg.style.marginLeft = "auto";
@@ -448,7 +448,17 @@ async function annoRecordBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bu
     };
   };
   await draw();
-  return { el: w, afterAttach: () => { const pb = w.parentElement as HTMLElement | null; if (pb) { pb.style.position = "relative"; if (pb.clientHeight < 80) pb.style.height = "300px"; } } };
+  return { el: w, afterAttach: () => {
+    const pb = w.parentElement as HTMLElement | null; if (pb) { pb.style.position = "relative"; if (pb.clientHeight < 80) pb.style.height = "300px"; }
+    // follow the selection: clicking a cluster anywhere shows ITS working-draft label's record (dominant label
+    // of the selected cells). The picker still works for manual jumps; the chosen label persists across rebuilds.
+    hooks.registerComposition({ grouping: layerName, setSelect: (labels) => {
+      if (!labels || !labels.size) return; const lab = [...labels][0];
+      if (lab === current || !layer.categories.includes(lab)) return;
+      (document.activeElement as HTMLElement | null)?.blur?.();   // commit any in-progress edit first
+      current = lab; (p as any).recordLabel = lab; draw();
+    }, setHover: () => {} });
+  } };
 }
 
 async function overdispBody(ctx: Ctx, hooks: PanelHooks): Promise<BuiltBody> {
