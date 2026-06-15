@@ -320,8 +320,9 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
   // selected cluster's context and note when one label spans several clusters — why two rows show the same card).
   const grpN = new Map<string, number>(rows.map((r) => [r.group, r.n]));
   const grpToRow = new Map<string, ReconRow>(rows.map((r) => [r.group, r]));
-  const labelClusters = new Map<string, string[]>();
-  if (workRows) workRows.forEach((wr, gi) => { const wl = wr.sources[0].label; if (wl) { const a = labelClusters.get(wl) || []; a.push(rows[gi].group); labelClusters.set(wl, a); } });
+  const labelClusters = new Map<string, string[]>();   // working label → the base clusters carrying it
+  const grpWork = new Map<string, string>();           // base cluster → its working label
+  if (workRows) workRows.forEach((wr, gi) => { const wl = wr.sources[0].label; if (wl) { grpWork.set(rows[gi].group, wl); const a = labelClusters.get(wl) || []; a.push(rows[gi].group); labelClusters.set(wl, a); } });
 
   const w = mk("div"); w.style.cssText = "position:absolute;inset:0;display:flex;flex-direction:column;overflow:hidden;font-size:12px";
   const hdr = mk("div"); hdr.style.cssText = "flex:0 0 auto;display:flex;align-items:center;gap:7px;padding:6px 10px;border-bottom:1px solid var(--line2);flex-wrap:wrap";
@@ -444,7 +445,18 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
 
   // coordination: row hover/click selects the cluster everywhere (every cell — accept lives in the card now)
   let selRows: Set<string> | null = null;
-  const paint = () => host.querySelectorAll<HTMLElement>("tr.rcrow").forEach((tr) => { tr.style.background = selRows?.has(tr.dataset.grp!) ? "rgba(92,200,255,0.12)" : ""; });
+  // Highlight: the directly-selected row(s) PROMINENTLY; sibling clusters that share the selected cluster's
+  // working label get a fainter tint (so "this annotation also covers these clusters" is visible immediately,
+  // not only after a Suggest re-selects by label). When the selection IS a label (selRows already spans all its
+  // clusters), there are no extra siblings.
+  const paint = () => {
+    let siblings: Set<string> | null = null;
+    if (selCluster != null) { const wl = grpWork.get(selCluster); if (wl) siblings = new Set((labelClusters.get(wl) || []).filter((g) => !selRows?.has(g))); }
+    host.querySelectorAll<HTMLElement>("tr.rcrow").forEach((tr) => {
+      const g = tr.dataset.grp!;
+      tr.style.background = selRows?.has(g) ? "rgba(92,200,255,0.14)" : (siblings?.has(g) ? "rgba(92,200,255,0.045)" : "");
+    });
+  };
   host.querySelectorAll<HTMLElement>("tr.rcrow").forEach((tr) => {
     const grp = tr.dataset.grp!;
     tr.addEventListener("pointerenter", () => ctx.coord.setHint({ kind: "category", grouping: base, value: grp }));
