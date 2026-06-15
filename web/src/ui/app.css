@@ -112,9 +112,19 @@ button{font-family:inherit}
 .facetv .vsw{width:9px;height:9px;border-radius:2px;flex:0 0 auto;box-shadow:inset 0 0 0 1px rgba(128,128,128,.35)}
 .facetv .vname{font-size:11.5px;color:var(--dim);flex:0 0 38%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .facetv.on .vname{color:var(--text)}
-.facetv .vbar{flex:1 1 auto;height:8px;background:var(--inset);border-radius:2px;overflow:hidden;min-width:20px}
-.facetv .vbar>span{display:block;height:100%;border-radius:2px}
+.facetv .vbar{flex:1 1 auto;height:9px;background:var(--inset);border-radius:2px;overflow:hidden;min-width:20px}
+.facetv .vbarfill{display:flex;height:100%;border-radius:2px;overflow:hidden}
+.facetv .vbarfill>i{display:block;height:100%}
+.facetv.dim{opacity:.38}
 .facetv .vcount{font-size:10.5px;color:var(--faint);font-family:var(--mono);flex:0 0 auto;min-width:42px;text-align:right}
+.facetfilter{display:flex;align-items:center;gap:8px;padding:5px 10px;margin:0;font-size:11px;color:var(--dim);background:var(--sel);border-bottom:1px solid var(--line2);position:sticky;top:0;z-index:2}
+.facetfilter b{color:var(--text);font-weight:500} .facetfilter .ffclear{margin-left:auto;cursor:pointer;color:var(--faint);font-size:13px} .facetfilter .ffclear:hover{color:var(--cyan)}
+.facethist{padding:3px 10px 8px 22px}
+.facethist .hbars{display:flex;align-items:flex-end;gap:1px;height:42px;cursor:crosshair;touch-action:none}
+.facethist .hbin{flex:1;min-height:1px;background:var(--dim);opacity:.5;border-radius:1px 1px 0 0}
+.facethist .hbin.sel{background:var(--cyan);opacity:1}
+.facethist .hmeta{display:flex;justify-content:space-between;font-size:10px;color:var(--faint);font-family:var(--mono);margin-top:3px}
+.facethist .hrange{color:var(--dim)}
 .pbody{padding:11px;min-height:0}
 .panelerr{font-size:11.5px;color:var(--amber,#e0a458);line-height:1.5;padding:6px 2px}   /* a panel whose body failed to build */
 .workbench .pbody{flex:1 1 auto;overflow:auto}      /* canvas panel bodies fill their (stretched) cell */

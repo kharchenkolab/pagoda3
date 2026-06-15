@@ -278,14 +278,19 @@ async function compositionBody(panel: Panel, ctx: Ctx, hooks: PanelHooks): Promi
 
 // METADATA FACETS — a fast browser over every per-cell metadata field (experimental design · technical covariates ·
 // annotation/clusters), the general analogue of cellxgene's left sidebar. A FIELD row expands to its values; the
-// droplet colours the embedding by that field; clicking a VALUE emits a selection event (the embedding + other
-// panels react in their own vocabulary); hovering a value locates it on the map. Phase 1: occupancy bars are
-// self-coloured (cells per value). [Phase 2 makes them an active-colour-by crosstab + cross-filter under selection.]
+// droplet colours the embedding by that field; clicking a VALUE emits a selection event (the embedding + other panels
+// react in their own vocabulary); hovering locates it. Occupancy bars are a live crosstab vs the ACTIVE colour-by
+// (so e.g. "donor" bars show the cell-type mix per donor), and recompute to the current SELECTION (cross-filter).
+// Numeric covariates render a histogram you can drag-brush to select a value range.
+const fmtNum = (v: number) => Math.abs(v) >= 100 ? Math.round(v).toLocaleString() : String(+v.toFixed(2));
 async function facetsBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltBody> {
   const fields = ctx.metadataFields();
-  const meta = new Map<string, any>();
-  for (const f of fields) if (f.kind === "categorical") { try { meta.set(f.name, await ctx.metaOf(f.name)); } catch { /* unreadable field — skip */ } }
+  const meta = new Map<string, any>();        // warmed categorical metadata (codes/categories/colors)
+  const numMeta = new Map<string, any>();     // warmed numeric metadata (values/min/max)
+  for (const f of fields) { try { const m = await ctx.metaOf(f.name); if (m.kind === "categorical") meta.set(f.name, m); else numMeta.set(f.name, m); } catch { /* unreadable — skip */ } }
   const countCache = new Map<string, { value: string; count: number; ci: number }[]>();
+  // per-value cell counts over ALL cells, sorted desc — the STABLE row order (kept under a cross-filter so rows
+  // don't jump around when you select).
   const valueStats = (field: string) => {
     if (countCache.has(field)) return countCache.get(field)!;
     const m = meta.get(field); if (!m) return [];
@@ -294,6 +299,15 @@ async function facetsBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltB
     const rows = m.categories.map((value: string, i: number) => ({ value, count: counts[i], ci: m.colors?.[i] ?? i }))
       .filter((r: any) => r.count > 0).sort((a: any, b: any) => b.count - a.count);
     countCache.set(field, rows); return rows;
+  };
+  // counts (+ optional per-active-colour segments) for field G over a cell universe (selection subset, or all).
+  const tally = (G: any, F: any | null, subset: Int32Array | null) => {
+    const R = G.categories.length, C = F ? F.categories.length : 0;
+    const counts = new Int32Array(R);
+    const seg = F ? Array.from({ length: R }, () => new Int32Array(C)) : null;
+    const N = subset ? subset.length : G.codes.length;
+    for (let k = 0; k < N; k++) { const i = subset ? subset[k] : k; const a = G.codes[i]; if (a < 0 || a >= R) continue; counts[a]++; if (seg) { const b = F.codes[i]; if (b >= 0 && b < C) seg[a][b]++; } }
+    return { counts, seg };
   };
 
   const w = mk("div"); w.style.cssText = "position:absolute;inset:0;display:flex;flex-direction:column;overflow:hidden;font-size:12px";
@@ -309,17 +323,25 @@ async function facetsBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltB
   const activeField = () => { const cb = ctx.coord.state.colorBy; return cb.startsWith("meta:") ? cb.slice(5) : cb.startsWith("qc:") ? cb.slice(3) : ""; };
   const GROUPS: [string, string][] = [["annotation", "annotation & clusters"], ["design", "experimental design"], ["covariate", "technical covariates"]];
 
-  const valuesEl = (f: any, sel: any) => {
-    const rows = valueStats(f.name);
-    const maxC = rows.reduce((mx: number, r: any) => Math.max(mx, r.count), 1);
-    const selVals = sel ? new Set(ctx.refToCategories(sel, f.name).filter((t: any) => t.frac >= 0.08).map((t: any) => t.value)) : null;
+  const valuesEl = (f: any, sel: any, selCells: Int32Array | null) => {
+    const G = meta.get(f.name); if (!G) return mk("div");
+    const order = valueStats(f.name);                            // stable full-data order
+    const act = activeField();
+    const F = (act && act !== f.name && meta.has(act)) ? meta.get(act) : null;   // crosstab vs the active colour-by (categorical only)
+    const t = tally(G, F, selCells);                            // counts (+ segments) over the current universe
+    const Fcol = F ? F.categories.map((_: any, i: number) => `rgb(${catColor(F.colors?.[i] ?? i).join(",")})`) : null;
+    const idx = new Map<string, number>(G.categories.map((c: string, i: number) => [c, i]));
+    const maxC = order.reduce((mx: number, r: any) => Math.max(mx, t.counts[idx.get(r.value)!]), 1);
     const wrap = mk("div", "facetvals");
-    wrap.innerHTML = rows.map((r: any) => {
-      const col = `rgb(${catColor(r.ci).join(",")})`;
-      return `<div class="facetv${selVals?.has(r.value) ? " on" : ""}" data-v="${esc(r.value)}" title="${esc(r.value)} · ${r.count.toLocaleString()} cells">
-        <span class="vsw" style="background:${col}"></span><span class="vname">${esc(r.value)}</span>
-        <span class="vbar"><span style="width:${(r.count / maxC * 100).toFixed(1)}%;background:${col}"></span></span>
-        <span class="vcount">${r.count.toLocaleString()}</span></div>`;
+    wrap.innerHTML = order.map((r: any) => {
+      const gi = idx.get(r.value)!; const cnt = t.counts[gi]; const self = `rgb(${catColor(r.ci).join(",")})`;
+      const seg = (F && cnt > 0) ? F.categories.map((_: any, fi: number) => { const s = t.seg![gi][fi]; return s ? `<i style="width:${(s / cnt * 100).toFixed(2)}%;background:${Fcol![fi]}"></i>` : ""; }).join("")
+                                 : (cnt > 0 ? `<i style="width:100%;background:${self}"></i>` : "");
+      const selfOn = sel && sel.kind === "category" && sel.grouping === f.name && sel.value === r.value;
+      return `<div class="facetv${selfOn ? " on" : ""}${selCells && !cnt ? " dim" : ""}" data-v="${esc(r.value)}" title="${esc(r.value)} · ${cnt.toLocaleString()} cells">
+        <span class="vsw" style="background:${self}"></span><span class="vname">${esc(r.value)}</span>
+        <span class="vbar"><span class="vbarfill" style="width:${(cnt / maxC * 100).toFixed(1)}%">${seg}</span></span>
+        <span class="vcount">${cnt.toLocaleString()}</span></div>`;
     }).join("");
     wrap.querySelectorAll<HTMLElement>(".facetv").forEach((el) => {
       const value = el.dataset.v!;
@@ -330,32 +352,65 @@ async function facetsBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltB
     return wrap;
   };
 
-  const fieldEl = (f: any, act: string, sel: any, q: string) => {
-    const isOpen = open.has(f.name) || (!!q && f.kind === "categorical");   // an active search auto-expands matching categorical fields
+  // a numeric covariate's distribution — drag across the bars to brush a value range → selects those cells.
+  const numericEl = (f: any, selCells: Int32Array | null) => {
+    const nm = numMeta.get(f.name); if (!nm) return mk("div", "facetvals");
+    const vals: Float32Array = nm.values, lo = nm.min, hi = nm.max, BINS = 28, wbin = (hi - lo) / BINS || 1;
+    const hist = new Int32Array(BINS), N = selCells ? selCells.length : vals.length;
+    for (let k = 0; k < N; k++) { const v = vals[selCells ? selCells[k] : k]; let bi = Math.floor((v - lo) / wbin); if (bi < 0) bi = 0; else if (bi >= BINS) bi = BINS - 1; hist[bi]++; }
+    const maxH = hist.reduce((m, x) => Math.max(m, x), 1);
+    const wrap = mk("div", "facethist");
+    wrap.innerHTML = `<div class="hbars">${Array.from(hist, (h, i) => `<span class="hbin" data-i="${i}" style="height:${(h / maxH * 100).toFixed(1)}%"></span>`).join("")}</div>
+      <div class="hmeta"><span>${fmtNum(lo)}</span><span class="hrange">drag to brush a range</span><span>${fmtNum(hi)}</span></div>`;
+    const bars = wrap.querySelector(".hbars") as HTMLElement, rangeEl = wrap.querySelector(".hrange") as HTMLElement;
+    let down = -1;
+    const binAt = (e: PointerEvent) => { const r = bars.getBoundingClientRect(); return Math.max(0, Math.min(BINS - 1, Math.floor((e.clientX - r.left) / r.width * BINS))); };
+    const paint = (a: number, b: number) => { const mn = Math.min(a, b), mx = Math.max(a, b); bars.querySelectorAll<HTMLElement>(".hbin").forEach((el, i) => el.classList.toggle("sel", i >= mn && i <= mx)); };
+    bars.addEventListener("pointerdown", (e) => { down = binAt(e); paint(down, down); try { bars.setPointerCapture(e.pointerId); } catch { /* */ } });
+    bars.addEventListener("pointermove", (e) => { if (down >= 0) paint(down, binAt(e)); });
+    bars.addEventListener("pointerup", (e) => {
+      if (down < 0) return; const b = binAt(e), mn = Math.min(down, b), mx = Math.max(down, b); down = -1;
+      const vlo = lo + mn * wbin, vhi = lo + (mx + 1) * wbin, ids: number[] = [];
+      for (let i = 0; i < vals.length; i++) if (vals[i] >= vlo && vals[i] <= vhi) ids.push(i);
+      rangeEl.textContent = `${fmtNum(vlo)}–${fmtNum(vhi)} · ${ids.length.toLocaleString()} cells`;
+      ctx.coord.setSelection(ids.length ? { kind: "cells", ids: Int32Array.from(ids) } : null);
+    });
+    return wrap;
+  };
+
+  const fieldEl = (f: any, act: string, sel: any, selCells: Int32Array | null, q: string) => {
+    const isOpen = open.has(f.name) || !!q;   // an active search auto-expands matching fields
     const box = mk("div"); box.dataset.field = f.name;
     const row = mk("div", "facetf");
     const count = f.kind === "categorical" ? `<span class="fcount">${meta.get(f.name)?.categories.length ?? 0}</span>` : `<span class="fnum" title="numeric covariate">#</span>`;
-    row.innerHTML = `<span class="fchev">${f.kind === "categorical" ? (isOpen ? "▾" : "▸") : "·"}</span><span class="fname">${esc(f.name)}</span>${count}<span style="flex:1"></span>`;
+    row.innerHTML = `<span class="fchev">${isOpen ? "▾" : "▸"}</span><span class="fname">${esc(f.name)}</span>${count}<span style="flex:1"></span>`;
     const drop = mk("button", "fdrop mini" + (act === f.name ? " on" : ""), "◉"); drop.title = `colour the embedding by ${f.name}`;
     drop.onclick = (e) => { e.stopPropagation(); ctx.coord.setColor("meta:" + f.name); };
     row.appendChild(drop);
-    if (f.kind === "categorical") row.onclick = (e) => { if ((e.target as HTMLElement).closest(".fdrop")) return; if (open.has(f.name)) open.delete(f.name); else open.add(f.name); render(); };
+    row.onclick = (e) => { if ((e.target as HTMLElement).closest(".fdrop")) return; if (open.has(f.name)) open.delete(f.name); else open.add(f.name); render(); };
     box.appendChild(row);
-    if (isOpen && f.kind === "categorical") box.appendChild(valuesEl(f, sel));
+    if (isOpen) box.appendChild(f.kind === "categorical" ? valuesEl(f, sel, selCells) : numericEl(f, selCells));
     return box;
   };
 
   const render = () => {
     const q = search.value.trim().toLowerCase();
     const top = host.scrollTop; host.innerHTML = "";
-    const act = activeField(); const sel = ctx.coord.state.selection;
+    const act = activeField(); const sel = ctx.coord.state.selection; const selCells = sel ? ctx.refToCells(sel) : null;
+    if (sel && selCells) {   // cross-filter banner: every bar + count below reflects this subset
+      const lbl = sel.kind === "category" ? (sel as any).value : `${selCells.length.toLocaleString()} cells`;
+      const banner = mk("div", "facetfilter");
+      banner.innerHTML = `<span>within <b>${esc(lbl)}</b> · ${selCells.length.toLocaleString()} cells</span><span class="ffclear" title="clear the filter">✕</span>`;
+      (banner.querySelector(".ffclear") as HTMLElement).onclick = () => ctx.coord.setSelection(null);
+      host.appendChild(banner);
+    }
     for (const [g, label] of GROUPS) {
       const fs = fields.filter((f) => f.group === g && (!q || f.name.toLowerCase().includes(q)));
       if (!fs.length) continue;
       host.appendChild(mk("div", "facetsub", label));
-      for (const f of fs) host.appendChild(fieldEl(f, act, sel, q));
+      for (const f of fs) host.appendChild(fieldEl(f, act, sel, selCells, q));
     }
-    if (!host.children.length) host.innerHTML = `<div style="color:var(--faint);padding:12px;font-size:11px">no fields match “${esc(q)}”</div>`;
+    if (!host.querySelector(".facetf")) host.innerHTML = `<div style="color:var(--faint);padding:12px;font-size:11px">no fields match “${esc(q)}”</div>`;
     host.scrollTop = top;
   };
 
@@ -364,7 +419,7 @@ async function facetsBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltB
 
   return { el: w, afterAttach: () => {
     const pb = w.parentElement as HTMLElement | null; if (pb) { pb.style.position = "relative"; if (pb.clientHeight < 80) pb.style.height = "320px"; }
-    // recolour-active droplet + selection cross-highlight; ignore hover spam (hint/geneHint) to avoid re-render churn
+    // re-render on colour-by (crosstab basis), selection (cross-filter), or focus; ignore hover spam (hint/geneHint)
     hooks.onCoord((_s, changed) => { if (changed.some((k) => k === "colorBy" || k === "selection" || k === "focus")) render(); });
   } };
 }
