@@ -10,7 +10,7 @@ import { runLive } from "./live.ts";
 
 export interface Scope { type: "selection" | "panel"; summary: string; ids?: number[]; }
 
-export const REGISTRY: Record<string, number> = { Embedding: 1, CompositionBars: 1, DeTable: 1, Volcano: 1, Overdispersion: 1, Heatmap: 1, BoxBySample: 1, Note: 1, Reconcile: 1 };
+export const REGISTRY: Record<string, number> = { Embedding: 1, CompositionBars: 1, DeTable: 1, Volcano: 1, Overdispersion: 1, Heatmap: 1, BoxBySample: 1, Note: 1, Reconcile: 1, AnnoRecord: 1 };
 
 export class Agent {
   app: App;

@@ -58,7 +58,8 @@ export class App {
         { type: "Heatmap", title: "Marker genes", cap: "top genes per group", group: defGrp }] },
       "Annotate": { colorBy: defGroup, panels: [
         { type: "Embedding", title: "Embedding", bind: "embedding:main", view: { colorBy: "meta:annotation" } },
-        { type: "Reconcile", title: "Reconcile labels", group: "leiden" }] },
+        { type: "Reconcile", title: "Reconcile labels", group: "leiden" },
+        { type: "AnnoRecord", title: "Label record", full: true }] },
       "QC triage": { colorBy: "qc:mito", panels: [
         { type: "Embedding", title: "Embedding", cap: "mito fraction", bind: "embedding:main" },
         { type: "CompositionBars", title: "Composition", cap: "by sample", bind: "composition:bySample" }] },
@@ -127,6 +128,8 @@ export class App {
       onConfigurePanel: (id, patch) => this.configurePanel(id, patch),
       registerGeneHover: (fn) => this.geneHoverSinks.push(fn),
       annotate: (ids, label, layer) => this.labelCells(ids, label, layer),
+      annoLayer: (name) => this.annoLayers.get(name),
+      saveRecord: (layerName, record) => { const L = this.annoLayers.get(layerName); if (L) { L.records = L.records || {}; L.records[record.label] = record; } },
     };
   }
 
