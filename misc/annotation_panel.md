@@ -241,6 +241,30 @@ on a draft seeded from raw leiden (28 cluster-ids) → one propose_labels call n
 types, each with ontology + marker-grounded rationale → export = 21 valid CAP records; colours stable, no
 phantom/numeric labels. 45 node --test pass.
 
+## Polish passes (2026-06-15, from "try it out" feedback)
+
+Each item below was a real bug/UX gap Peter hit while using it; fixes committed:
+- **Record card UX (D1):** card appeared in ~3.9s (ensureAnnotation awaited scType; renderCapRecord blocked on
+  a DE call) → now ~170ms (seed + render immediately, scType in the background, marker evidence fills async with
+  a staleness guard). And clicking leiden rows that share a working label looked frozen → the card now shows a
+  per-cluster context line ("selected: leiden 4 · 2,295 cells · 'CD14 mono' also covers leiden 1, 19") + flash,
+  so every click visibly responds and the N:1 cluster→label relation is explicit.
+- **Table interaction (D2):** source columns used to be invisible click-to-accept buttons (silent mutate, cyan
+  flash, no card) — inconsistent with the cluster/working columns that selected. Now EVERY cell click selects +
+  inspects; accept moved to an explicit "set from source:" button strip in the card.
+- **Suggest aftermath (D3):** the agent's rename left a stale `ctx.xlateCache` (cross-grouping translations not
+  invalidated on edit) → refToCategories returned the OLD label → the card flew to an unrelated stale label
+  with no fields. Fix: setAnnotationLayer clears xlateCache; proposeLabel selects the resulting label (card
+  follows in all paths); the reconcile view (table/matrix/labels) persists across the Suggest re-render.
+- **Working-annotation column (E1):** header renamed 'working' → 'working annotation' + a subtle tint marks it
+  as the canonical output vs the informational source columns.
+- **Clickable gene chips (E2):** genes in marker-evidence + canonical-markers are chips → click colours the
+  embedding by that gene's expression (hooks.onGeneClick).
+- **Render-race guard (E2, found by deep stage test):** clicking a row mid-rebuild could act on stale DOM →
+  wrong cluster → an edit/merge on the wrong label. fullRender now freezes workbench input during the off-DOM
+  build. (Deep researcher-workflow stage tests — examine→express→merge/split→rename→next, checking UI at each
+  step — are now the standard; single-function checks missed all of the above. See memory stage-test.)
+
 ## 11. Test approach
 
 Pure cores get `node --test` cases (zero deps, Node strips TS), consistent with viewpatch/cellset/codeapi:
