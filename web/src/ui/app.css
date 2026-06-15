@@ -1,5 +1,5 @@
 :root{
-  --ink:#0d1117; --panel:#161b22; --inset:#1b2230; --line:#2a3340; --line2:#222a35;
+  --ink:#0d1117; --panel:#161b22; --inset:#1b2230; --card:#1b2230; --line:#2a3340; --line2:#222a35;
   --text:#d7dee8; --dim:#8a97a8; --faint:#5b6675;
   --teal:#3fb6b2; --cyan:#5cc8ff; --amber:#e0a458; --ok:#5bbf8f; --good:#5bbf8f; --bad:#e07a7a;
   --on-accent:#04222e;   /* text on a filled accent (cyan/amber) — accents are BRIGHT on dark, so dark text reads */
@@ -13,7 +13,9 @@
    selection). The DOM re-themes via these vars; the embedding canvas is transparent and its non-focus dot colour
    is JS-set (theme.ts). */
 html.light{
-  --ink:#ffffff; --panel:#ffffff; --inset:#f3ecd9; --line:#e0ddd2; --line2:#eeece3;
+  --ink:#ecebe4; --panel:#ffffff; --inset:#f3ecd9; --card:#f4f0e5; --line:#e0ddd2; --line2:#eeece3;
+  /* --ink (desktop behind panels) is a subtle warm-grey, NOT white, so the white panels lift off it (the mockup's
+     ink<panel depth). --card is a faint off-white raised surface (record card) so it stands out from the white table. */
   --text:#33444b; --dim:#5a6970; --faint:#7c8789;
   --teal:#2a9d96; --cyan:#1f7faf; --amber:#a9750a; --ok:#5f8500; --good:#5f8500; --bad:#cb2f2f;
   --on-accent:#ffffff;   /* light-theme accents are DARKER → white text on them reads */
@@ -81,7 +83,7 @@ button{font-family:inherit}
 .focuschip .fn{color:var(--faint);font-size:11px}
 .focuschip .fdot{width:7px;height:7px;border-radius:50%;background:var(--amber,#e0a458);flex:0 0 auto}
 .focuschip .x{cursor:pointer;border:1px solid var(--amber,#e0a458);border-radius:6px;padding:0 7px;font-size:11px;margin-left:2px}
-.focuschip .x:hover{background:var(--amber,#e0a458);color:var(--ink)}
+.focuschip .x:hover{background:var(--amber,#e0a458);color:var(--on-accent)}
 /* graceful control overflow → a standardized ⋯ menu when a header row can't fit all its controls */
 .ovf-more{padding:3px 7px;font-weight:700;line-height:1}
 .ovf-menu{position:fixed;z-index:60;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:6px;box-shadow:0 8px 24px rgba(0,0,0,.35);display:flex;flex-direction:column;gap:5px;min-width:120px;align-items:stretch}
