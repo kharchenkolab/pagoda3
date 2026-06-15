@@ -56,7 +56,7 @@ button{font-family:inherit}
 .ph{display:flex;align-items:center;gap:8px;padding:8px 11px;border-bottom:1px solid var(--line2)}
 .ph .grip{color:var(--faint);cursor:grab;font-size:12px;line-height:1;user-select:none;margin:0 2px 0 -2px;flex:0 0 auto}
 /* never wrap; in a tight header the caption ellipsizes first, then the title — so the CONTROLS always stay visible */
-.ph .pt{font-weight:600;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:0 1 auto}
+.ph .pt{font-weight:600;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:3.2em;flex:0 1 auto}   /* keep the title readable; controls fold into ⋯ before it shrinks past this */
 .ph .pc{font-size:10.5px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:0 3 auto}
 .ph .sp{margin-left:auto;display:flex;align-items:center;gap:6px;flex:0 0 auto}
 /* faceted-panel scope badge — protected (never shrinks) so the facet value stays legible in a tight header */
@@ -75,6 +75,11 @@ button{font-family:inherit}
 .focuschip .fdot{width:7px;height:7px;border-radius:50%;background:var(--amber,#e0a458);flex:0 0 auto}
 .focuschip .x{cursor:pointer;border:1px solid var(--amber,#e0a458);border-radius:6px;padding:0 7px;font-size:11px;margin-left:2px}
 .focuschip .x:hover{background:var(--amber,#e0a458);color:var(--ink)}
+/* graceful control overflow → a standardized ⋯ menu when a header row can't fit all its controls */
+.ovf-more{padding:3px 7px;font-weight:700;line-height:1}
+.ovf-menu{position:fixed;z-index:60;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:6px;box-shadow:0 8px 24px rgba(0,0,0,.35);display:flex;flex-direction:column;gap:5px;min-width:120px;align-items:stretch}
+.ovf-menu>*{margin:0!important;width:100%}
+.ovf-menu select,.ovf-menu button{width:100%}
 .mini.on{color:var(--cyan);border-color:var(--cyan)}   /* an engaged view-option toggle (labels / legend) */
 .segtog{display:inline-flex;gap:0;margin-right:2px}     /* heatmap/dotplot segmented toggle */
 .segtog .mini{border-radius:0} .segtog .mini:first-child{border-radius:6px 0 0 6px} .segtog .mini:last-child{border-radius:0 6px 6px 0;border-left:0}

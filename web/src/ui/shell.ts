@@ -10,6 +10,7 @@ import { validateCellSet, resolveCellSet, describeCellSet, CellSet, CellWorld, C
 import { validateComputeResult, runInWorker } from "../agent/codeapi.ts";
 import { setCodeValues, setConfValues, invalidateColor } from "../render/colors.ts";
 import { setThemeColors } from "../render/theme.ts";
+import { installOverflow } from "./overflow.ts";
 import { paletteNames, normalizePalette } from "../render/palettes.ts";
 import { AnnotationLayer, seedLayer, setLabel, reconcile, compact, hierarchyDepth, rollupToLevel } from "../anno/model.ts";
 import { PBMC_MARKERS, MarkerDB } from "../anno/markerdb.ts";
@@ -266,7 +267,7 @@ export class App {
       const col = d.dataset.col === "1" ? 1 : d.dataset.col === "0" ? 0 : undefined;                          // join the target's column
       this.reorderTo((this as any)._drag, p.id, after, col); });
     d.oncontextmenu = (e) => { e.preventDefault(); this.openCtx(e.clientX, e.clientY, p); };
-    return { dom: d, afterAttach: built.afterAttach };
+    return { dom: d, afterAttach: () => { built.afterAttach?.(); installOverflow(h, sp); } };   // fold header controls into a ⋯ menu when the panel is too narrow
   }
 
   // Place the canvas into a two-column grid. Default is row-major (panel i → column i%2); a panel's `col` pins it
