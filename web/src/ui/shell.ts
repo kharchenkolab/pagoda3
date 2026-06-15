@@ -10,7 +10,7 @@ import { validateCellSet, resolveCellSet, describeCellSet, CellSet, CellWorld, C
 import { validateComputeResult, runInWorker } from "../agent/codeapi.ts";
 import { setCodeValues } from "../render/colors.ts";
 import { paletteNames, normalizePalette } from "../render/palettes.ts";
-import { AnnotationLayer, seedLayer, setLabel } from "../anno/model.ts";
+import { AnnotationLayer, seedLayer, setLabel, reconcile } from "../anno/model.ts";
 import { PBMC_MARKERS, MarkerDB } from "../anno/markerdb.ts";
 import { zscoreByGroup, scoreClusters, assignClusters, MarkerIdx } from "../anno/sctype.ts";
 
@@ -467,6 +467,31 @@ export class App {
     }
     if (!this.annoLayers.has("scType")) { await this.runScType(); changed = false; }   // runScType already re-rendered
     else if (changed) this.fullRender();
+  }
+
+  // Resolve a cell-set expression (the same algebra as compute) to indices — used by the annotate tool.
+  resolveCells(spec: CellSet): { ids: Int32Array; error?: string } {
+    const ctx = this.ctx;
+    const world: CellWorld = { categoricals: ctx.categoricalFields(), valuesOf: (f) => ctx.categoricalValues(f), hasSelection: ctx.selectedCells().length > 0, hasFocus: !!ctx.coord.state.focus };
+    const e = validateCellSet(spec, world, "cells"); if (e) return { ids: new Int32Array(0), error: e };
+    const env: CellEnv = { n: ctx.n, category: (g, v) => ctx.cellsOfCategory(g, v), selection: () => ctx.selectedCells(), focus: () => { const f = ctx.coord.state.focus; return f ? ctx.cellsOfCategory(f.dim, f.value) : []; } };
+    return { ids: Int32Array.from(resolveCellSet(spec, env)) };
+  }
+
+  // A compact reconciliation read-out for the agent: per base cluster, every source's dominant label, plus
+  // which clusters the sources DISAGREE on (string-wise — vocabulary differences included; the agent judges).
+  async reconciliationSummary(input?: { base?: string }): Promise<string> {
+    const ctx = this.ctx;
+    const base = input?.base && ctx.groupings().includes(input.base) ? input.base : (ctx.groupings().includes("leiden") ? "leiden" : ctx.defaultGrouping());
+    const baseMeta: any = await ctx.view.metadata(base);
+    const srcNames = [...new Set([...ctx.annotationLayers(), ...(ctx.categoricalFields().includes("cell_type") ? ["cell_type"] : [])])].filter((n) => n !== "annotation");
+    if (!srcNames.length) return "no annotation sources yet — run_annotation (e.g. scType) or add a labeling first.";
+    const sources: { name: string; codes: ArrayLike<number>; categories: string[] }[] = [];
+    for (const n of srcNames) { const m: any = await ctx.view.metadata(n); if (m.kind === "categorical") sources.push({ name: n, codes: m.codes, categories: m.categories }); }
+    const rows = reconcile({ codes: baseMeta.codes, categories: baseMeta.categories }, sources);
+    const lines = rows.map((r) => `${base} ${r.group} (${r.n}): ${r.sources.map((s) => `${s.name}=${s.label ?? "—"}`).join(", ")}`);
+    const diff = rows.filter((r) => { const o = r.sources.map((s) => s.label).filter(Boolean); return o.length > 1 && !o.every((l) => l === o[0]); });
+    return `base=${base}, sources=${srcNames.join("/")}.\n${lines.join("\n")}\n\n${diff.length} clusters where sources differ (may be vocabulary OR real): ${diff.map((r) => r.group).join(", ") || "none"}. Differences are often just vocabulary — weigh the confusion matrix + markers before calling a real conflict.`;
   }
 
   // Label a cell set in a layer (default the working draft). Last-write-wins; re-renders.

@@ -49,6 +49,10 @@ const TOOLS: Tool[] = [
   { name: "concordance_panel", description: "Per-donor MARKER concordance for one cell type — the companion to a within-type compute(stat:de). Takes that cell type's top markers and shows their mean expression split by donor (a gene × donor heat). Markers reading the SAME across donors confirm a genuinely merged population; divergent ones are suspect. scopeGrouping/scopeValue = the cell type (e.g. cell_type, \"CD8+ T cells\"); splitField = the donor/batch field (sample). Adds the panel to the workbench.", input_schema: { type: "object", properties: { scopeGrouping: { type: "string" }, scopeValue: { type: "string" }, splitField: { type: "string" } }, required: ["scopeGrouping", "scopeValue", "splitField"] } },
   // ---- escape hatch: sandboxed ad-hoc computation when the primitives above can't express it ----
   { name: "compute_code", description: "ESCAPE HATCH — run a short SANDBOXED JS computation when neither update_view (config) nor compute (de/overdispersion over cell sets) can express what you need: custom signature scores, ad-hoc per-cell metrics, bespoke filters, simple correlations. Prefer the dedicated tools when they fit; reach here only for the long tail. " + CODE_API_DOC + " Declare every gene your code reads in `genes`. The result lands in the disposable rail (or set toCanvas); it carries an 'unvalidated custom code' caveat.", input_schema: { type: "object", properties: { code: { type: "string", description: "async function BODY that returns a typed result (see above)" }, genes: { type: "array", items: { type: "string" }, description: "exact HGNC symbols the code reads via api.expr" }, grouping: { type: "string", description: "optional: expose api.stats (mean/frac) for this grouping" }, title: { type: "string" }, toCanvas: { type: "boolean" } }, required: ["code"] } },
+  // ---- annotation: build a clean cell-type labeling by reconciling sources (see the Annotate workspace) ----
+  { name: "run_annotation", description: "Compute an annotation SOURCE by running a cell-typing method in-browser, added as a layer to reconcile against others. method='sctype' scores each cluster against a bundled marker DB (no server). Then read get_reconciliation and compare in the Annotate workspace's Reconcile panel.", input_schema: { type: "object", properties: { method: { type: "string", enum: ["sctype"] }, base: { type: "string", description: "clustering to label (default leiden)" } }, required: ["method"] } },
+  { name: "annotate", description: "Write a cell-type LABEL onto a cell set in the WORKING annotation draft (last-write-wins; the draft auto-creates and is non-destructive — clusters stay intact). A is a CELL-SET expression, same algebra as compute ({category:{grouping,value}}, {selection:true}, {intersect:[…]}, {union:[…]}, …). Use this to resolve the reconciliation — e.g. accept a cell type for a cluster, or merge/split by labeling the exact cells. The working draft becomes the default grouping and colours every panel.", input_schema: { type: "object", properties: { label: { type: "string" }, A: { type: "object", description: "the cells to label (cell-set expression)" } }, required: ["label", "A"] } },
+  { name: "get_reconciliation", description: "Read how the annotation sources compare per base cluster (working draft + each source's dominant label) and which clusters they DIFFER on — so you can advise, explain, and resolve. Differences are often just vocabulary across sources (CD14 mono vs CD14+ monocyte); weigh markers + the confusion matrix before calling a real conflict.", input_schema: { type: "object", properties: { base: { type: "string", description: "clustering as the reconciliation unit (default leiden)" } } } },
 ];
 
 async function systemPrompt(app: App): Promise<string> {
@@ -61,6 +65,7 @@ PRINCIPLE OF RESTRAINT — always prefer the SMALLEST change that answers the qu
 - a disposable answer in the rail (compute for DE/overdispersion over any cell set, get_markers, get_composition, get_overdispersion, add_note), or add a Heatmap panel via update_view, when a new view is needed;
 - a workspace proposal (propose_workspace) only for a deliberate layout change — and it is a PROPOSAL the human confirms.
 - compute_code is the ESCAPE HATCH — sandboxed ad-hoc JS (declare the genes it reads) for the long tail only (custom signature scores, bespoke per-cell metrics/filters). Try update_view and compute FIRST; its results carry an "unvalidated" caveat.
+ANNOTATION (the Annotate workspace): reconcile candidate labelings into one clean cell-type annotation. run_annotation adds a SOURCE (e.g. sctype); get_reconciliation reads how sources compare per cluster + where they differ; annotate writes a label onto a cell set in the WORKING draft (last-write-wins, non-destructive). When asked to annotate/resolve, advise and explain (markers + the confusion matrix), then annotate to commit — cross-source string differences are often just vocabulary, not real conflicts.
 The change itself is visible, so keep your prose to ONE short sentence. Never narrate state the user can already see.
 
 METHODOLOGY (cacoa — encode these, don't forget them):
@@ -99,6 +104,13 @@ async function execTool(app: App, name: string, input: any): Promise<string> {
     }
     case "compute": { const { ok, error } = await app.runCompute(input); return error ? `error: ${error}` : ok!; }
     case "compute_code": { const { ok, error } = await app.runComputeCode(input); return error ? `error: ${error}` : ok!; }
+    case "run_annotation": { const method = String(input.method || "sctype").toLowerCase(); if (method !== "sctype") return `unknown method "${method}" — available: sctype`; const { ok, error } = await app.runScType({ base: input.base }); return error ? `error: ${error}` : ok!; }
+    case "annotate": {
+      if (!input.label) return "annotate: 'label' is required"; if (!input.A) return "annotate: 'A' (a cell set) is required";
+      const { ids, error } = app.resolveCells(input.A); if (error) return `error: ${error}`; if (!ids.length) return "annotate: that cell set resolved to 0 cells";
+      app.labelCells(ids, String(input.label)); return `labeled ${ids.length} cells "${input.label}" in the working annotation draft`;
+    }
+    case "get_reconciliation": return await app.reconciliationSummary(input);
     case "get_composition": {
       const comp = await app.ctx.composition("leiden"); ag.addRail({ type: "CompositionBars", title: "Composition by sample", cap: "compositional", bind: "composition:bySample" });
       const c0dis = comp.props.filter((_, i) => comp.conds[i] === "disease").map((p) => p[comp.groups.indexOf("c0")]);
@@ -203,6 +215,9 @@ function toolLabel(tu: any): string {
   if (tu.name === "get_markers") return `markers · ${i.cluster}`;
   if (tu.name === "compute") return i.stat === "overdispersion" ? "overdispersion" : "DE (compute)";
   if (tu.name === "compute_code") return "custom code";
+  if (tu.name === "run_annotation") return `annotate · ${i.method || "sctype"}`;
+  if (tu.name === "annotate") return `label · ${i.label}`;
+  if (tu.name === "get_reconciliation") return "reconciliation";
   if (tu.name === "concordance_panel") return `concordance · ${i.scopeValue}`;
   if (tu.name === "propose_workspace") return `propose workspace · ${i.name}`;
   return tu.name.replace(/_/g, " ");
