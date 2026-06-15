@@ -413,7 +413,8 @@ export class App {
   // Register/refresh a rich layer: mirror its codes into ctx (so it's a first-class categorical everywhere)
   // and keep the rich object (records/provenance) app-side. Re-renders so panels keyed to it update.
   commitLayer(layer: AnnotationLayer, render = true): void {
-    this.annoLayers.set(layer.name, layer);
+    compact(layer);   // any edit can empty a category (relabel its last cells, merge) — drop empties so no
+    this.annoLayers.set(layer.name, layer);   // phantom 0-cell label lingers anywhere it's listed
     this.ctx.setAnnotationLayer(layer.name, layer.codes, layer.categories);
     invalidateColor(layer.name);   // the overlay changed (often a new category) → drop the stale colour-cache snapshot
     if (render) this.fullRender();
@@ -583,8 +584,7 @@ export class App {
       for (let i = 0; i < layer.codes.length; i++) if (layer.codes[i] === fi) layer.codes[i] = ti;
       if (layer.records[from] && !layer.records[to]) layer.records[to] = { ...layer.records[from], label: to };
       delete layer.records[from];
-      compact(layer);   // the merged-away "from" slot is now empty — drop it so no phantom 0-cell label lingers
-      this.commitLayer(layer);
+      this.commitLayer(layer);   // commitLayer compacts → the emptied "from" slot is dropped
       return { ok: `merged "${from}" into "${to}"` };
     }
     layer.categories[fi] = to;   // RENAME in place
