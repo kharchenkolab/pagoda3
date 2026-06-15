@@ -35,6 +35,8 @@ export class App {
   annoLayers = new Map<string, AnnotationLayer>();   // rich annotation layers (records/provenance); codes also mirrored into ctx as categoricals
   embeddings: EmbeddingView[] = [];
   compReactors: CompReactor[] = [];   // vocabulary-bound panels that highlight a category on a coord hint
+  private lastSel: any;               // last selection dispatched to reactors — skip re-dispatch on colour-only repaints
+  private reactorsStale = true;       // set when reactors are rebuilt (fullRender) → force one dispatch
   geneHoverSinks: ((sym: string | null) => void)[] = [];   // panels that highlight a gene's row on a coord geneHint
   colorChoices: [string, string][] = [...COLOR_OPTS];   // colour-by dropdown options, capped per class (see noteColor)
   caveatsCollapsed = new Set<string>();   // caveat handles the user clicked to collapse (stay collapsed across renders)
@@ -162,7 +164,7 @@ export class App {
     const built: { dom: HTMLElement; afterAttach?: () => void }[] = [];
     for (const p of this.canvas) built.push(await this.panelEl(p));   // build off-DOM first; old panels stay visible meanwhile
     if (token !== this.renderToken) return;   // superseded by a newer fullRender → it owns pointerEvents; discard this build
-    this.embeddings = []; this.compReactors = []; this.geneHoverSinks = [];
+    this.embeddings = []; this.compReactors = []; this.geneHoverSinks = []; this.reactorsStale = true;   // new reactors → repaint must dispatch the selection to them once
     wb.innerHTML = "";
     const afters: (() => void)[] = [];
     for (const b of built) { wb.appendChild(b.dom); if (b.afterAttach) afters.push(b.afterAttach); }
@@ -301,8 +303,14 @@ export class App {
     for (const ev of this.embeddings) await paintEmbedding(ev, this.ctx);
     // committed selection → each vocabulary-bound panel reads the ref in ITS grouping (direct when the
     // selection is a category of that grouping — no scan; else translated via cells). Committed: ungated.
+    // re-dispatch the selection to reactors only when it actually CHANGED (or reactors were just rebuilt). A
+    // colour-only repaint (e.g. clicking a gene chip) leaves the selection untouched — re-firing reactors would
+    // pointlessly re-render the record card (and flash it, and re-add listeners). Embeddings recolour above regardless.
     const sel = this.coord.state.selection;
-    for (const r of this.compReactors) r.setSelect(sel ? new Set(this.ctx.refToCategories(sel, r.grouping).filter((t) => t.frac >= 0.08).map((t) => t.value)) : null);
+    if (this.reactorsStale || sel !== this.lastSel) {
+      for (const r of this.compReactors) r.setSelect(sel ? new Set(this.ctx.refToCategories(sel, r.grouping).filter((t) => t.frac >= 0.08).map((t) => t.value)) : null);
+      this.lastSel = sel; this.reactorsStale = false;
+    }
     this.$("railBtn").innerHTML = "Answers" + (this.rail.length ? ` <span class="badge">${this.rail.length}</span>` : "");
   }
 

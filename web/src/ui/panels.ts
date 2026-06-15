@@ -545,8 +545,10 @@ async function renderCapRecord(host: HTMLElement, layer: AnnotationLayer, label:
   const flash = () => { const s = host.querySelector("#arsaved") as HTMLElement | null; if (s) { s.style.opacity = "1"; setTimeout(() => { s.style.opacity = "0"; }, 1200); } };
   const save = () => { hooks.saveRecord(layerName, { label, fullName: val("ar_full"), category: val("ar_cat"), ontologyTermId: val("ar_oid"), ontologyTerm: val("ar_oterm"), canonicalMarkers: val("ar_canon").split(",").map((s) => s.trim()).filter(Boolean), rationale: val("ar_rat"), markerEvidence: rec.markerEvidence }); flash(); };
   host.querySelectorAll("input:not(#arname),textarea").forEach((i) => i.addEventListener("change", save));
-  // click any gene chip (marker evidence / canonical) → colour the embedding by that gene's expression
-  host.addEventListener("click", (e) => { const c = (e.target as HTMLElement).closest(".genechip") as HTMLElement | null; if (c?.dataset.gene) hooks.onGeneClick(c.dataset.gene); });
+  // click any gene chip (marker evidence / canonical) → colour the embedding by that gene's expression.
+  // onclick (NOT addEventListener): renderCapRecord re-runs on the SAME persistent host every card re-render —
+  // addEventListener would stack a new listener each time, firing N times per click (N duplicate toasts).
+  host.onclick = (e) => { const c = (e.target as HTMLElement).closest(".genechip") as HTMLElement | null; if (c?.dataset.gene) hooks.onGeneClick(c.dataset.gene); };
   // edited canonical markers → refresh the clickable chips to match
   (host.querySelector("#ar_canon") as HTMLInputElement | null)?.addEventListener("input", () => { const box = host.querySelector("#ar_canonchips") as HTMLElement | null; if (box) box.innerHTML = geneChips(val("ar_canon").split(",").map((s) => s.trim()).filter(Boolean)); });
   if (opts?.picker) (host.querySelector("#arlabel") as HTMLSelectElement).onchange = (e) => { save(); opts.onPick?.((e.target as HTMLSelectElement).value); };
