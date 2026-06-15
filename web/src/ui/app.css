@@ -237,3 +237,4 @@ select.inline{background:var(--inset);color:var(--text);border:1px solid var(--l
 .embhost{position:absolute;inset:0}
 .emblegend{position:absolute;left:10px;bottom:10px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:rgba(13,17,23,.72);border:1px solid var(--line);border-radius:8px;padding:5px 9px;font-size:10.5px;color:var(--dim);max-width:90%}
 .emblegend .lt{font-family:var(--mono);color:var(--text)}
+.emblegend .lbadge{font-family:var(--mono);font-size:9.5px;color:var(--amber,#e0a458);border:1px solid var(--amber,#e0a458);border-radius:4px;padding:0 4px;opacity:.85;cursor:help}   /* unvalidated custom-code colouring */

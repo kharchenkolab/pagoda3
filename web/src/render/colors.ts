@@ -3,7 +3,7 @@ import type { LstarView, Metadata } from "../data/view.ts";
 import { codesToRGBA } from "../data/view.ts";
 import { PALETTES, normalizePalette, Palette } from "./palettes.ts";
 
-export interface Legend { kind: "categorical" | "numeric"; items: { label: string; rgb: [number, number, number] }[]; title: string; }
+export interface Legend { kind: "categorical" | "numeric"; items: { label: string; rgb: [number, number, number] }[]; title: string; unvalidated?: boolean; }
 
 const DIM_RGB = [62, 68, 80], DIM_A = 150;   // non-focus cells under a focus (matches view.ts scalarToRGBA)
 // Per-cell RGBA for a NUMERIC field through a chosen palette. Replaces the old fixed-ramp scalarToRGBA so the
@@ -70,7 +70,9 @@ export async function colorsFor(view: LstarView, colorBy: string, focusMask?: Ui
   if (kind === "code") {
     const e = codeStore.get(rest);
     const vals = e ? e.values : new Float32Array(view.nCells);
-    return { rgba: numericRGBA(vals, e ? e.max : 1, pal, focusMask), legend: numericLegend(rest, pal) };
+    // mark the legend unvalidated → the panel shows a persistent "custom" badge (this colouring came from
+    // sandboxed agent code, not a validated metric), so it's never mistaken for a real gene/QC colouring.
+    return { rgba: numericRGBA(vals, e ? e.max : 1, pal, focusMask), legend: { ...numericLegend(rest, pal), unvalidated: true } };
   }
   if (kind === "geneset") {
     const m = await md(view, "aspect_scores"); // dense (cells, aspects)

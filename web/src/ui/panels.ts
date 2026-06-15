@@ -105,7 +105,7 @@ export async function paintEmbedding(ev: EmbeddingView, ctx: Ctx) {
   const showLegend = c.display.legend ?? !isCat;   // auto: key for numeric colourings; hidden when on-plot labels carry identity
   const lg = (ev as any)._legend as HTMLElement | undefined;
   if (lg) lg.innerHTML = showLegend
-    ? `<span class="lt">${legend.title}</span>` + legend.items.map((it) => `<span><span class="sw" style="background:rgb(${it.rgb.join(",")})"></span>${it.label}</span>`).join("")
+    ? `<span class="lt">${legend.title}</span>` + (legend.unvalidated ? `<span class="lbadge" title="custom agent code — unvalidated; sanity-check before trusting">~ custom</span>` : "") + legend.items.map((it) => `<span><span class="sw" style="background:rgb(${it.rgb.join(",")})"></span>${it.label}</span>`).join("")
     : "";
 }
 
