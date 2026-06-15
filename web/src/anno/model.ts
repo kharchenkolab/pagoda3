@@ -94,3 +94,16 @@ export function reconcile(base: { codes: ArrayLike<number>; categories: string[]
   }
   return rows;
 }
+
+// Confusion matrix between two labelings — the vocabulary-agnostic reconciliation primitive. counts[a][b] =
+// #cells labeled A-category a AND B-category b. A consistent off-diagonal (e.g. "CD14 mono" always ↔ "CD14+
+// monocyte") reveals the mapping between vocabularies that a string compare would miss.
+export interface CrossTab { rows: string[]; cols: string[]; counts: number[][]; rowTotals: number[] }
+export function crosstab(A: { codes: ArrayLike<number>; categories: string[] }, B: { codes: ArrayLike<number>; categories: string[] }): CrossTab {
+  const R = A.categories.length, C = B.categories.length;
+  const counts = Array.from({ length: R }, () => new Array(C).fill(0));
+  const rowTotals = new Array(R).fill(0);
+  const n = Math.min(A.codes.length, B.codes.length);
+  for (let i = 0; i < n; i++) { const a = A.codes[i], b = B.codes[i]; if (a >= 0 && a < R && b >= 0 && b < C) { counts[a][b]++; rowTotals[a]++; } }
+  return { rows: A.categories, cols: B.categories, counts, rowTotals };
+}

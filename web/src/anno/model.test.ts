@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { seedLayer, emptyLayer, setLabel, clearLabel, compact, reconcile } from "./model.ts";
+import { seedLayer, emptyLayer, setLabel, clearLabel, compact, reconcile, crosstab } from "./model.ts";
 
 test("seedLayer copies the source (independent arrays)", () => {
   const src = { codes: Int32Array.from([0, 1, 0, 2]), categories: ["a", "b", "c"] };
@@ -55,6 +55,17 @@ test("reconcile: per-group dominant label, fraction, and agreement status", () =
   assert.equal(rows[0].status, "agree");
   // cluster 1: markers→B (1.0), CellTypist→B (1.0) → agree
   assert.equal(rows[1].status, "agree");
+});
+
+test("crosstab counts co-occurrence and reveals a cross-vocabulary mapping", () => {
+  // A says "mono"/"T"; B uses different words "CD14+ monocyte"/"T cell" for the same cells
+  const A = { codes: Int32Array.from([0, 0, 0, 1, 1]), categories: ["mono", "T"] };
+  const B = { codes: Int32Array.from([0, 0, 0, 1, 1]), categories: ["CD14+ monocyte", "T cell"] };
+  const ct = crosstab(A, B);
+  assert.deepEqual(ct.rows, ["mono", "T"]);
+  assert.deepEqual(ct.cols, ["CD14+ monocyte", "T cell"]);
+  assert.deepEqual(ct.counts, [[3, 0], [0, 2]]);   // clean diagonal → mono↔CD14+ monocyte, T↔T cell
+  assert.deepEqual(ct.rowTotals, [3, 2]);
 });
 
 test("reconcile: conflict and single-source statuses", () => {

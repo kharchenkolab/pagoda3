@@ -4,7 +4,7 @@ import { EmbeddingView } from "../render/embedding.ts";
 import { colorsFor, focusMaskFor } from "../render/colors.ts";
 import { catColor } from "../data/view.ts";
 import type { EntityRef } from "../data/coord.ts";
-import { reconcile, ReconRow } from "../anno/model.ts";
+import { reconcile, crosstab, ReconRow } from "../anno/model.ts";
 
 // Per-panel view spec — the agent's deep-control surface (configure_panel). Each property overrides the
 // GLOBAL coord default for THIS panel only; the shared bus (selection/hint) stays global. See docs/deep-view-control.md.
@@ -314,8 +314,15 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
   const hdr = mk("div"); hdr.style.cssText = "flex:0 0 auto;display:flex;align-items:center;gap:7px;padding:6px 10px;border-bottom:1px solid var(--line2);flex-wrap:wrap";
   const nResolved = workRows ? workRows.filter((r) => r.sources[0].label != null).length : 0;
   hdr.innerHTML = `<span style="color:var(--faint)">base</span> <b>${esc(base)}</b> · <span style="color:var(--faint)">${rows.length} clusters, ${nResolved} labeled</span> <span style="color:var(--faint)">·</span> ${sources.length ? sources.map((s) => `<span style="border:1px solid var(--line2);border-radius:5px;padding:1px 6px;color:var(--dim)">${esc(s.name)}</span>`).join(" ") : '<span style="color:var(--amber,#e0a458)">no sources — run scType or add one</span>'}`;
+  // table ↔ matrix toggle (the matrix is the vocabulary-agnostic confusion view between two labelings)
+  const layers = [...(workMeta ? [{ name: "working", codes: workMeta.codes, categories: workMeta.categories }] : []), ...sources];
+  const seg = mk("div", "segtog"); seg.style.marginLeft = "auto";
+  let mode: "table" | "matrix" = "table";
+  for (const [m, lbl] of [["table", "table"], ["matrix", "matrix"]] as const) { const b = mk("button", "mini" + (m === "table" ? " on" : ""), lbl) as HTMLButtonElement; b.dataset.m = m; seg.appendChild(b); }
+  if (layers.length >= 2) hdr.appendChild(seg);
   w.appendChild(hdr);
   const host = mk("div"); host.style.cssText = "flex:1 1 auto;min-height:0;overflow:auto"; w.appendChild(host);
+  const mhost = mk("div"); mhost.style.cssText = "flex:1 1 auto;min-height:0;overflow:auto;display:none;padding:8px 10px"; w.appendChild(mhost);
 
   const colorOf = (cats: string[], label: string | null) => label == null ? "var(--faint)" : `rgb(${catColor(cats.indexOf(label)).join(",")})`;
   const cell = (label: string | null, frac: number, accept?: string) => {
@@ -355,6 +362,30 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
     tr.addEventListener("pointerleave", () => ctx.coord.clearHint());
     tr.addEventListener("click", () => ctx.coord.setSelection({ kind: "category", grouping: base, value: grp }));
   });
+  // matrix view: a confusion grid between two chosen layers (row-normalized intensity). A/B default to the
+  // first two layers; dropdowns re-render locally. Reveals the cross-vocabulary mapping the table can't.
+  let mA = layers[0]?.name, mB = layers[1]?.name;
+  const renderMatrix = () => {
+    const A = layers.find((l) => l.name === mA), B = layers.find((l) => l.name === mB);
+    if (!A || !B) { mhost.innerHTML = '<span style="color:var(--faint)">need two layers</span>'; return; }
+    const ct = crosstab({ codes: A.codes, categories: A.categories }, { codes: B.codes, categories: B.categories });
+    const sel = (val: string, id: string) => `<select data-ax="${id}" class="inline" style="font-size:11px">${layers.map((l) => `<option${l.name === val ? " selected" : ""}>${esc(l.name)}</option>`).join("")}</select>`;
+    let h = `<div style="margin-bottom:6px;font-size:11px;color:var(--faint)">rows ${sel(mA!, "a")} × cols ${sel(mB!, "b")} <span style="margin-left:4px">cell = #cells; shade = row %</span></div>`;
+    h += `<table style="border-collapse:collapse;font-size:10px"><thead><tr><th></th>${ct.cols.map((c) => `<th style="padding:2px 3px;font-weight:400;color:var(--faint);writing-mode:vertical-rl;transform:rotate(180deg);max-height:90px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(c)}">${esc(c.length > 16 ? c.slice(0, 15) + "…" : c)}</th>`).join("")}</tr></thead><tbody>`;
+    ct.counts.forEach((row, ri) => {
+      const tot = ct.rowTotals[ri] || 1;
+      h += `<tr><td style="padding:2px 6px 2px 0;color:var(--dim);white-space:nowrap;text-align:right;max-width:140px;overflow:hidden;text-overflow:ellipsis" title="${esc(ct.rows[ri])}">${esc(ct.rows[ri])} <span style="color:var(--faint)">${tot}</span></td>${row.map((c) => { const f = c / tot; return `<td style="text-align:center;padding:2px 4px;color:${f > 0.5 ? "#0d1117" : "var(--dim)"};background:${c ? `rgba(92,200,255,${(0.1 + f * 0.85).toFixed(2)})` : ""}" title="${c} cells">${c || ""}</td>`; }).join("")}</tr>`;
+    });
+    h += `</tbody></table>`;
+    mhost.innerHTML = h;
+    mhost.querySelectorAll<HTMLSelectElement>("select[data-ax]").forEach((s) => s.onchange = () => { if (s.dataset.ax === "a") mA = s.value; else mB = s.value; renderMatrix(); });
+  };
+  seg.querySelectorAll<HTMLButtonElement>("button").forEach((b) => b.onclick = () => {
+    mode = b.dataset.m as any; seg.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b));
+    host.style.display = mode === "table" ? "" : "none"; mhost.style.display = mode === "matrix" ? "" : "none";
+    if (mode === "matrix") renderMatrix();
+  });
+
   return { el: w, afterAttach: () => {
     const pb = w.parentElement as HTMLElement | null; if (pb) { pb.style.position = "relative"; if (pb.clientHeight < 80) pb.style.height = "320px"; }
     hooks.registerComposition({ grouping: base, setSelect: (v) => { selRows = v; paint(); }, setHover: (v) => { if (!selRows?.size) { selRows = v; paint(); } } });
