@@ -822,11 +822,24 @@ export class App {
       sp.innerHTML = `<div class="head">${ids.length} cells · mostly ${top?.[0] || "?"}</div>` +
         `<div class="it" data-a="ask"><span class="ic">⌘K</span>Ask about these…</div>` +
         `<div class="it" data-a="de"><span class="ic">≢</span>Run DE on selection</div>` +
+        `<div class="it" data-a="label"><span class="ic">✎</span>Label as…</div>` +
         `<div class="it" data-a="clear"><span class="ic">✕</span>Clear selection</div>`;
       sp.style.left = Math.min(this.lastSelAnchor.left + 8, innerWidth - 210) + "px"; sp.style.top = this.lastSelAnchor.top + "px"; sp.classList.add("show");
-      sp.querySelectorAll<HTMLElement>(".it").forEach((it) => it.onclick = () => { const a = it.dataset.a; this.hideSelpop();
+      sp.querySelectorAll<HTMLElement>(".it").forEach((it) => it.onclick = () => { const a = it.dataset.a;
+        if (a === "label") { this.selpopLabelInput(Array.from(ids)); return; }   // sub-state — keep the popover open
+        this.hideSelpop();
         if (a === "ask") this.openPalette(this.scope!); else if (a === "de") this.agent.ask("run de", this.scope); else { this.coord.setSelection(null); this.scope = null; } });
     });
+  }
+  // brush → "Label as…": type a label, applied to the selected cells in the working annotation draft
+  // (auto-creates it, non-destructive). The free-form manual entry point that complements the agent + reconcile.
+  selpopLabelInput(ids: number[]) {
+    const sp = this.$("selpop");
+    sp.innerHTML = `<div class="head">label ${ids.length} cells</div><input id="splabel" placeholder="cell-type label…" style="width:90%;margin:5px 6px;font-size:12px"><div class="it" data-a="apply"><span class="ic">✓</span>add to working annotation</div>`;
+    const inp = sp.querySelector<HTMLInputElement>("#splabel")!; inp.focus();
+    const apply = () => { const v = inp.value.trim(); this.hideSelpop(); if (v) { this.labelCells(Int32Array.from(ids), v); this.coord.setSelection(null); this.scope = null; this.toast(`labeled ${ids.length} cells “${v}”`, "Added to the working annotation draft — see the Annotate workspace."); } };
+    inp.onkeydown = (e) => { if (e.key === "Enter") apply(); else if (e.key === "Escape") this.hideSelpop(); };
+    sp.querySelector<HTMLElement>('[data-a="apply"]')!.onclick = apply;
   }
   hideSelpop() { this.$("selpop").classList.remove("show"); }
 
