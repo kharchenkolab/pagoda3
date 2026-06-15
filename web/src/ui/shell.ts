@@ -131,6 +131,7 @@ export class App {
       annotate: (ids, label, layer) => this.labelCells(ids, label, layer),
       annoLayer: (name) => this.annoLayers.get(name),
       saveRecord: (layerName, record) => { const L = this.annoLayers.get(layerName); if (L) { L.records = L.records || {}; L.records[record.label] = record; } },
+      adoptSource: (name) => { this.adoptSource(name); },
     };
   }
 
@@ -489,6 +490,24 @@ export class App {
     }
     if (!this.annoLayers.has("scType")) { await this.runScType(); changed = false; }   // runScType already re-rendered
     else if (changed) this.fullRender();
+  }
+
+  // Adopt a source as the WORKING draft: set every base cluster to that source's dominant label, in ONE
+  // commit (no orphan labels, no per-cluster render churn). The fast "start from scType / from cell_type".
+  async adoptSource(sourceName: string, base?: string): Promise<{ ok?: string; error?: string }> {
+    const ctx = this.ctx;
+    const b = base || (ctx.groupings().includes("leiden") ? "leiden" : ctx.defaultGrouping());
+    let baseMeta: any, srcMeta: any;
+    try { baseMeta = await ctx.view.metadata(b); srcMeta = await ctx.view.metadata(sourceName); } catch { return { error: `unknown field "${sourceName}"` }; }
+    if (baseMeta.kind !== "categorical" || srcMeta.kind !== "categorical") return { error: "base/source not categorical" };
+    const rows = reconcile({ codes: baseMeta.codes, categories: baseMeta.categories }, [{ name: sourceName, codes: srcMeta.codes, categories: srcMeta.categories }]);
+    const cats: string[] = []; const idx = new Map<string, number>();
+    const groupToCat = rows.map((r) => { const l = r.sources[0].label; if (l == null) return -1; let i = idx.get(l); if (i == null) { i = cats.length; cats.push(l); idx.set(l, i); } return i; });
+    const codes = new Int32Array(baseMeta.codes.length);
+    for (let i = 0; i < codes.length; i++) { const g = baseMeta.codes[i]; codes[i] = (g >= 0 && g < groupToCat.length) ? groupToCat[g] : -1; }
+    const layer: AnnotationLayer = { name: "annotation", source: "derived", codes, categories: cats, records: this.annoLayers.get("annotation")?.records || {}, provenance: { method: "adopt", params: { from: sourceName, base: b } } };
+    this.commitLayer(layer);
+    return { ok: `adopted ${sourceName} → working draft (${cats.length} labels over ${rows.length} ${b} clusters)` };
   }
 
   // Resolve a cell-set expression (the same algebra as compute) to indices — used by the annotate tool.

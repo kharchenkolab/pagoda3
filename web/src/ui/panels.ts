@@ -41,6 +41,7 @@ export interface PanelHooks {
   annotate: (cellIds: ArrayLike<number>, label: string, layer?: string) => void;   // write a label onto a cell set in an annotation layer (default the working draft)
   annoLayer: (name: string) => AnnotationLayer | undefined;   // the rich annotation layer (with CAP records)
   saveRecord: (layerName: string, record: CapRecord) => void; // persist a per-label CAP record
+  adoptSource: (name: string) => void;                        // set the working draft to a source's per-cluster labeling
 }
 
 // A vocabulary-bound panel that reacts to the two tiers, distinctly: `setSelect` is the committed selection
@@ -316,7 +317,8 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
   const w = mk("div"); w.style.cssText = "position:absolute;inset:0;display:flex;flex-direction:column;overflow:hidden;font-size:12px";
   const hdr = mk("div"); hdr.style.cssText = "flex:0 0 auto;display:flex;align-items:center;gap:7px;padding:6px 10px;border-bottom:1px solid var(--line2);flex-wrap:wrap";
   const nResolved = workRows ? workRows.filter((r) => r.sources[0].label != null).length : 0;
-  hdr.innerHTML = `<span style="color:var(--faint)">base</span> <b>${esc(base)}</b> · <span style="color:var(--faint)">${rows.length} clusters, ${nResolved} labeled</span> <span style="color:var(--faint)">·</span> ${sources.length ? sources.map((s) => `<span style="border:1px solid var(--line2);border-radius:5px;padding:1px 6px;color:var(--dim)">${esc(s.name)}</span>`).join(" ") + ' <span style="color:var(--faint);font-size:11px">— click a source label to accept it into the working draft</span>' : '<span style="color:var(--amber,#e0a458)">no sources — run scType or add one</span>'}`;
+  hdr.innerHTML = `<span style="color:var(--faint)">base</span> <b>${esc(base)}</b> · <span style="color:var(--faint)">${rows.length} clusters, ${nResolved} labeled</span> <span style="color:var(--faint)">·</span> ${sources.length ? sources.map((s) => `<span style="border:1px solid var(--line2);border-radius:5px;padding:1px 6px;color:var(--dim)">${esc(s.name)} <span class="rcadopt" data-adopt="${esc(s.name)}" title="adopt this source as the working draft" style="cursor:pointer;color:var(--cyan)">⤵</span></span>`).join(" ") + ' <span style="color:var(--faint);font-size:11px">— click a cell to accept one label, ⤵ to adopt a whole source</span>' : '<span style="color:var(--amber,#e0a458)">no sources — run scType or add one</span>'}`;
+  hdr.querySelectorAll<HTMLElement>(".rcadopt").forEach((el) => el.addEventListener("click", (e) => { e.stopPropagation(); hooks.adoptSource(el.dataset.adopt!); }));
   // table ↔ matrix toggle (the matrix is the vocabulary-agnostic confusion view between two labelings)
   const layers = [...(workMeta ? [{ name: "working", codes: workMeta.codes, categories: workMeta.categories }] : []), ...sources];
   const seg = mk("div", "segtog"); seg.style.marginLeft = "auto";
@@ -410,10 +412,13 @@ async function annoRecordBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bu
     const saved = layer.records![current] || {};
     const rec: CapRecord = { ...saved, label: current };
     if (!rec.markerEvidence || !rec.markerEvidence.length) { const mm = await ctx.markers(layerName); rec.markerEvidence = (mm.get(current) || []).slice(0, 8).map((m: any) => m.symbol); }
-    const idx = layer.categories.indexOf(current); let n = 0; for (const c of layer.codes) if (c === idx) n++;
+    // per-label cell counts → only offer labels that some cell actually carries (relabeling leaves orphans)
+    const counts = new Int32Array(layer.categories.length); for (const c of layer.codes) if (c >= 0) counts[c]++;
+    const idx = layer.categories.indexOf(current); const n = idx >= 0 ? counts[idx] : 0;
+    const liveLabels = layer.categories.filter((c, i) => counts[i] > 0 || c === current);
     w.innerHTML = `
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-        <select id="arlabel" class="inline" style="font-size:13px;font-weight:600;max-width:200px">${layer.categories.map((c) => `<option${c === current ? " selected" : ""}>${esc(c)}</option>`).join("")}</select>
+        <select id="arlabel" class="inline" style="font-size:13px;font-weight:600;max-width:200px">${liveLabels.map((c) => `<option${c === current ? " selected" : ""}>${esc(c)}</option>`).join("")}</select>
         <span style="color:var(--faint)">${n} cells</span>
         <button id="arexport" class="mini" style="margin-left:auto">export CAP</button>
       </div>
