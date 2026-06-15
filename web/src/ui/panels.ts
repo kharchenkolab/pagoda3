@@ -426,6 +426,14 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
     const W = x0 + G * cw + 6, H = y0 + R * ch + axisH;
     let g = "";
     const maxR = Math.max(1.4, Math.min(cw, ch) / 2 - 1.2);   // dot radius at 100% expressing
+    // Adaptive label density (both axes): shrink the font to the available pitch first; when even the floor
+    // font would collide, THIN (render every Nth label). Hover still reads any hidden label. FLOOR = legibility.
+    const FLOOR = 5;
+    const geneFs = Math.max(FLOOR, Math.min(9, ch * 0.92));                                   // gene rows: fit the row height
+    const grpPitch = rotX ? cw * 0.707 : cw;                                                  // (rotated) column labels: perpendicular spacing
+    const grpFs = rotX ? Math.max(FLOOR, Math.min(9, grpPitch)) : Math.max(FLOOR, Math.min(9, (cw - 2) / Math.max(1, xLabMax) / 0.6));
+    const grpStride = grpPitch >= FLOOR ? 1 : Math.max(1, Math.ceil(FLOOR / grpPitch));       // groups: hide every Nth when too dense
+    const geneStride = ch >= FLOOR ? 1 : Math.max(1, Math.ceil(FLOOR / ch));                  // genes: same (rare — rows are ≥7px, then scroll)
     rows.forEach((r, ri) => {
       if (r.pinned) g += `<rect x="${x0.toFixed(1)}" y="${(y0 + ri * ch).toFixed(2)}" width="${(G * cw).toFixed(1)}" height="${(ch - 0.5).toFixed(2)}" fill="rgba(92,200,255,.12)" pointer-events="none"/>`;
       let mx = 1e-6; for (let c = 0; c < G; c++) mx = Math.max(mx, gs.mean[c * gs.nGenes + r.gene]);
@@ -435,17 +443,18 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
           g += `<circle cx="${(x0 + c * cw + cw / 2).toFixed(2)}" cy="${(y0 + ri * ch + ch / 2).toFixed(2)}" r="${rad.toFixed(2)}" fill="${ramp(t)}" pointer-events="none"/>`;
           g += `<rect class="hcell" data-ri="${ri}" data-c="${c}" x="${(x0 + c * cw).toFixed(2)}" y="${(y0 + ri * ch).toFixed(2)}" width="${(cw - 0.5).toFixed(2)}" height="${(ch - 0.5).toFixed(2)}" fill="transparent" pointer-events="all"/>`; }
         else g += `<rect class="hcell" data-ri="${ri}" data-c="${c}" x="${(x0 + c * cw).toFixed(2)}" y="${(y0 + ri * ch).toFixed(2)}" width="${(cw - 0.5).toFixed(2)}" height="${(ch - 0.5).toFixed(2)}" fill="${ramp(t)}"/>`; }
-      g += `<text class="axis hgene" data-ri="${ri}" x="${x0 - 4}" y="${(y0 + ri * ch + ch * 0.72).toFixed(1)}" text-anchor="end"${r.pinned ? ' style="fill:var(--cyan);font-weight:600"' : ""}>${r.pinned ? "● " : ""}${esc(r.symbol)}</text>`;
+      if (ri % geneStride === 0 || r.pinned) g += `<text class="axis hgene" data-ri="${ri}" x="${x0 - 4}" y="${(y0 + ri * ch + ch * 0.72).toFixed(1)}" text-anchor="end" style="font-size:${geneFs.toFixed(1)}px${r.pinned ? ";fill:var(--cyan);font-weight:600" : ""}">${r.pinned ? "● " : ""}${esc(r.symbol)}</text>`;
     });
     if (nPinned > 0 && nPinned < R) g += `<line x1="${x0.toFixed(1)}" y1="${(y0 + nPinned * ch).toFixed(1)}" x2="${(x0 + G * cw).toFixed(1)}" y2="${(y0 + nPinned * ch).toFixed(1)}" stroke="var(--cyan)" stroke-opacity="0.4" stroke-width="0.6"/>`;
     const bottomY = y0 + R * ch;
-    const xFit = rotX ? Math.max(3, Math.floor((axisH - 8) / 0.72 / 5.4)) : 99;   // chars that fit the rotated band (rest ellipsised; hover gives full)
+    const xFit = rotX ? Math.max(3, Math.floor((axisH - 8) / 0.72 / (grpFs * 0.6))) : 99;   // chars that fit the rotated band at the live font (rest ellipsised; hover gives full)
     gs.groups.forEach((grp, c) => {
+      if (c % grpStride !== 0) return;   // thinned when very dense — the column + dots still render; hover reads the name
       const cx = x0 + c * cw + cw / 2;
       const lab = grp.length > xFit ? grp.slice(0, xFit - 1) + "…" : grp;
       g += rotX
-        ? `<text class="axis hgrp" data-c="${c}" x="${cx.toFixed(1)}" y="${(bottomY + 4).toFixed(1)}" text-anchor="end" transform="rotate(-45 ${cx.toFixed(1)} ${(bottomY + 4).toFixed(1)})">${esc(lab)}</text>`
-        : `<text class="axis hgrp" data-c="${c}" x="${cx.toFixed(1)}" y="${(bottomY + 11).toFixed(1)}" text-anchor="middle">${esc(lab)}</text>`;
+        ? `<text class="axis hgrp" data-c="${c}" x="${cx.toFixed(1)}" y="${(bottomY + 4).toFixed(1)}" text-anchor="end" transform="rotate(-45 ${cx.toFixed(1)} ${(bottomY + 4).toFixed(1)})" style="font-size:${grpFs.toFixed(1)}px">${esc(lab)}</text>`
+        : `<text class="axis hgrp" data-c="${c}" x="${cx.toFixed(1)}" y="${(bottomY + 11).toFixed(1)}" text-anchor="middle" style="font-size:${grpFs.toFixed(1)}px">${esc(lab)}</text>`;
     });
     g += `<g class="hrowhl"></g><g class="hcolhl"></g>`;   // cross-panel hovered gene-row band + selected/hovered column bands
     g += `<rect class="hrowg" x="${x0}" width="${(G * cw).toFixed(1)}" height="${ch.toFixed(1)}" fill="rgba(150,225,255,.14)" pointer-events="none" style="display:none"/>`;

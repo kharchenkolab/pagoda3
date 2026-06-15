@@ -297,7 +297,7 @@ export class App {
   // Mutate ONE panel's model from a patch (no render). colorBy/scope/embedding live on .view; heatMode/genes/title
   // are top-level. Returns whether the change needs a body REBUILD (vs a cheap repaint). Shared by the per-panel
   // dropdown and the declarative patcher, so both treat a panel identically.
-  applyPanelModel(p: Panel, patch: { title?: string; col?: 0 | 1; full?: boolean; colorBy?: string; scope?: EntityRef | null; embedding?: string; colormap?: string; heatMode?: "heat" | "dot"; genes?: string[] }): boolean {
+  applyPanelModel(p: Panel, patch: { title?: string; col?: 0 | 1; full?: boolean; colorBy?: string; scope?: EntityRef | null; embedding?: string; colormap?: string; heatMode?: "heat" | "dot"; genes?: string[]; group?: string }): boolean {
     let rebuild = false;
     if (patch.title != null && patch.title !== p.title) { p.title = patch.title; rebuild = true; }   // title shows in the header (panelEl) → rebuild
     if (patch.col === 0 || patch.col === 1) { if (patch.col !== p.col) rebuild = true; p.col = patch.col;
@@ -306,6 +306,7 @@ export class App {
     if (patch.colorBy != null) { this.noteColor(patch.colorBy); if (p.type !== "Embedding") rebuild = true; }   // recolouring a non-embedding (e.g. composition restack) needs a rebuild
     if (patch.embedding != null && patch.embedding !== p.view?.embedding) rebuild = true;
     if (patch.heatMode != null && patch.heatMode !== p.heatMode) { p.heatMode = patch.heatMode; rebuild = true; }
+    if (patch.group != null && patch.group !== p.group) { p.group = patch.group; p.bind = "markers:" + patch.group; rebuild = true; }   // re-group a Heatmap (markers + columns recomputed)
     if (patch.genes != null) { p.genes = patch.genes; rebuild = true; }
     if (patch.scope !== undefined) rebuild = true;   // scope reframes the embedding AND drives its header caption → rebuild so both update
     const v: PanelView = { ...p.view };
@@ -405,7 +406,7 @@ export class App {
   addPanelModel(spec: PanelSpec): number { const p = this.newPanel(this.specToPanel(spec)); this.canvas.push(p); return p.id; }
   removePanel(id: number): boolean { const n = this.canvas.length + this.rail.length; this.canvas = this.canvas.filter((z) => z.id !== id); this.rail = this.rail.filter((z) => z.id !== id); return this.canvas.length + this.rail.length < n; }
   private patchToModel(patch: PanelPatch) {
-    return { title: patch.title, col: patch.col, full: patch.full, colorBy: patch.colorBy, embedding: patch.embedding, colormap: patch.colormap, heatMode: patch.heatMode, genes: patch.genes,
+    return { title: patch.title, col: patch.col, full: patch.full, colorBy: patch.colorBy, embedding: patch.embedding, colormap: patch.colormap, heatMode: patch.heatMode, genes: patch.genes, group: patch.group,
       scope: patch.scope === undefined ? undefined : (patch.scope === null ? null : { kind: "category", grouping: patch.scope.grouping, value: patch.scope.value } as EntityRef) };
   }
 

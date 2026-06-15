@@ -41,7 +41,7 @@ export interface RawViewPatch {
 
 export interface Scope { grouping: string; value: string; }
 export interface PanelSpec { type: string; title?: string; col?: 0 | 1; full?: boolean; colorBy?: string; scope?: Scope; embedding?: string; colormap?: string; group?: string; heatMode?: HeatMode; genes?: string[]; }
-export interface PanelPatch { title?: string; col?: 0 | 1; full?: boolean; colorBy?: string; scope?: Scope | null; embedding?: string; colormap?: string; heatMode?: HeatMode; genes?: string[]; }
+export interface PanelPatch { title?: string; col?: 0 | 1; full?: boolean; colorBy?: string; scope?: Scope | null; embedding?: string; colormap?: string; heatMode?: HeatMode; genes?: string[]; group?: string; }
 
 export type NormOp =
   | { kind: "color"; handle: string }
@@ -176,10 +176,11 @@ export function normalizeViewPatch(patch: RawViewPatch, w: World): NormResult {
     if (typeof op.embedding === "string" && op.embedding) { if (w.embeddings.includes(op.embedding)) pp.embedding = op.embedding; else rejected.push(`${where}: unknown embedding "${op.embedding}"`); }
     if (typeof op.colormap === "string" && op.colormap) { const cm = w.normalizeColormap(op.colormap); if (cm) pp.colormap = cm; else rejected.push(`${where}: unknown colormap "${op.colormap}" (have: ${w.colormaps.join(", ")})`); }
     if (isHeat) {
+      if (op.group) { if (w.groupings.includes(op.group)) pp.group = op.group; else rejected.push(`${where}: unknown grouping "${op.group}"`); }
       const hm = normHeatMode(op.heatMode); if (hm) pp.heatMode = hm; else if (op.heatMode != null) notes.push(`${where}: heatMode "${op.heatMode}" ignored`);
       if (op.clearGenes || op.genes) { const base = op.clearGenes ? [] : w.panelGenes(op.id); pp.genes = resolveGenes(base, op.genes, w, where, notes); }
-    } else if (op.heatMode != null || op.genes != null) {
-      notes.push(`${where}: heatMode/genes apply only to Heatmap panels`);
+    } else if (op.heatMode != null || op.genes != null || op.group != null) {
+      notes.push(`${where}: group/heatMode/genes apply only to Heatmap panels`);
     }
     if (Object.keys(pp).length) ops.push({ kind: "configPanel", id: op.id, patch: pp });
     else rejected.push(`panel #${op.id}: nothing to change`);
