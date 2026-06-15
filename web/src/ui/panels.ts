@@ -316,6 +316,11 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
   const rows = reconcile({ codes: baseMeta.codes, categories: baseMeta.categories }, sources);
   const workMeta: any = ctx.annotationLayers().includes("annotation") ? await ctx.view.metadata("annotation") : null;
   const workRows = workMeta ? reconcile({ codes: baseMeta.codes, categories: baseMeta.categories }, [{ name: "annotation", codes: workMeta.codes, categories: workMeta.categories }]) : null;
+  // base cluster → cell count, and working label → the base clusters carrying it (so the card can show the
+  // selected cluster's context and note when one label spans several clusters — why two rows show the same card).
+  const grpN = new Map<string, number>(rows.map((r) => [r.group, r.n]));
+  const labelClusters = new Map<string, string[]>();
+  if (workRows) workRows.forEach((wr, gi) => { const wl = wr.sources[0].label; if (wl) { const a = labelClusters.get(wl) || []; a.push(rows[gi].group); labelClusters.set(wl, a); } });
 
   const w = mk("div"); w.style.cssText = "position:absolute;inset:0;display:flex;flex-direction:column;overflow:hidden;font-size:12px";
   const hdr = mk("div"); hdr.style.cssText = "flex:0 0 auto;display:flex;align-items:center;gap:7px;padding:6px 10px;border-bottom:1px solid var(--line2);flex-wrap:wrap";
@@ -340,11 +345,19 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
   const recDetail = mk("div"); recDetail.style.cssText = "flex:0 0 auto;max-height:46%;overflow:auto;border-top:1px solid var(--line2);padding:8px 10px"; w.appendChild(recDetail);
   const workLayer = hooks.annoLayer("annotation");
   let recLabel: string | null = (p as any).recordLabel || null;
+  let selCluster: string | null = null;   // the base cluster the user last clicked (drives the card's context line)
+  const flashCard = () => { recDetail.style.transition = "none"; recDetail.style.background = "rgba(92,200,255,0.10)"; requestAnimationFrame(() => { recDetail.style.transition = "background .5s"; recDetail.style.background = ""; }); };
   const showRecord = (lbl: string | null) => {
     if (!workLayer || !workLayer.categories.length) { recDetail.innerHTML = '<span style="color:var(--faint);font-size:11.5px">accept or label clusters to build a working draft — each label\'s record appears here</span>'; return; }
     const l = (lbl && workLayer.categories.includes(lbl)) ? lbl : (recLabel && workLayer.categories.includes(recLabel) ? recLabel : workLayer.categories.find((_, i) => workLayer.codes.includes(i)) || null);
     if (!l) { recDetail.innerHTML = '<span style="color:var(--faint);font-size:11.5px">select a cluster to edit its label record</span>'; return; }
-    recLabel = l; (p as any).recordLabel = l; renderCapRecord(recDetail, workLayer, l, ctx, hooks, { onRename: (to) => { (p as any).recordLabel = to; hooks.renameLabel("annotation", l, to); } });
+    recLabel = l; (p as any).recordLabel = l;
+    // context line: which base cluster you clicked + a note when this label spans several clusters (so two rows
+    // mapping to the same label visibly differ — the "why doesn't the card change?" fix).
+    let context: string | undefined;
+    if (selCluster != null) { const others = (labelClusters.get(l) || []).filter((g) => g !== selCluster); context = `selected: ${esc(base)} ${esc(selCluster)} · ${(grpN.get(selCluster) || 0).toLocaleString()} cells` + (others.length ? ` <span style="color:var(--amber,#e0a458)">· “${esc(l)}” also covers ${esc(base)} ${others.map(esc).join(", ")}</span>` : ""); }
+    renderCapRecord(recDetail, workLayer, l, ctx, hooks, { context, onRename: (to) => { (p as any).recordLabel = to; hooks.renameLabel("annotation", l, to); } });
+    flashCard();
   };
   // "labels" view: review the whole working annotation before export — each label's colour, cell count, and
   // CAP completeness (ontology term set? rationale?). Click a label to load its record below.
@@ -369,7 +382,7 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
     }
     h += `</tbody></table>`;
     lhost.innerHTML = h;
-    lhost.querySelectorAll<HTMLElement>("tr.lrow").forEach((tr) => tr.addEventListener("click", () => showRecord(tr.dataset.l!)));
+    lhost.querySelectorAll<HTMLElement>("tr.lrow").forEach((tr) => tr.addEventListener("click", () => { selCluster = null; showRecord(tr.dataset.l!); }));
     const sb = lhost.querySelector("#lsuggest") as HTMLButtonElement | null; if (sb) sb.onclick = () => { sb.disabled = true; sb.textContent = "✨ thinking…"; hooks.proposeAllNames(workLayer!.name); };
     const eb = lhost.querySelector("#lexport") as HTMLButtonElement | null; if (eb) eb.onclick = () => exportCap(workLayer!, ctx);
   };
@@ -453,8 +466,9 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
 
   return { el: w, afterAttach: () => {
     const pb = w.parentElement as HTMLElement | null; if (pb) { pb.style.position = "relative"; if (pb.clientHeight < 80) pb.style.height = "320px"; }
-    hooks.registerComposition({ grouping: base, setSelect: (v) => { selRows = v; paint(); }, setHover: (v) => { if (!selRows?.size) { selRows = v; paint(); } } });
-    // a selected cluster's WORKING label drives the folded record detail (translate the selection into the draft)
+    hooks.registerComposition({ grouping: base, setSelect: (v) => { selRows = v; selCluster = v && v.size === 1 ? [...v][0] : null; paint(); }, setHover: (v) => { if (!selRows?.size) { selRows = v; paint(); } } });
+    // a selected cluster's WORKING label drives the folded record detail (translate the selection into the draft).
+    // The base reactor above runs first (registration order), so selCluster is set before showRecord reads it.
     hooks.registerComposition({ grouping: "annotation", setSelect: (labels) => { if (labels && labels.size) { (document.activeElement as HTMLElement | null)?.blur?.(); showRecord([...labels][0]); } }, setHover: () => {} });
     showRecord(null);   // initial: last-picked or the first labeled cluster
   } };
@@ -464,10 +478,13 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
 // reconcile panel's detail section and the standalone record panel. CAP schema (celltype.info): name/full
 // name, Cell-Ontology term (live OLS lookup), parent category, marker evidence (auto from derived markers),
 // canonical markers, rationale. Edits persist to the layer; export → JSON. opts.picker adds a label dropdown.
-async function renderCapRecord(host: HTMLElement, layer: AnnotationLayer, label: string, ctx: Ctx, hooks: PanelHooks, opts?: { picker?: boolean; onPick?: (l: string) => void; onRename?: (to: string) => void }): Promise<void> {
+async function renderCapRecord(host: HTMLElement, layer: AnnotationLayer, label: string, ctx: Ctx, hooks: PanelHooks, opts?: { picker?: boolean; onPick?: (l: string) => void; onRename?: (to: string) => void; context?: string }): Promise<void> {
   const layerName = layer.name; layer.records = layer.records || {};
   const rec: CapRecord = { ...(layer.records[label] || {}), label };
-  if (!rec.markerEvidence || !rec.markerEvidence.length) { const mm = await ctx.markers(layerName); rec.markerEvidence = (mm.get(label) || []).slice(0, 8).map((m: any) => m.symbol); }
+  host.dataset.recLabel = label;   // staleness tag: a slow async fill must not overwrite a card the user has since switched away from
+  // NOTE: do NOT await markers here — that DE call blocks the whole card (the "took a while to pop up" lag).
+  // Render the form now with whatever evidence we have; fill it asynchronously below.
+  const haveEvidence = !!(rec.markerEvidence && rec.markerEvidence.length);
   const counts = new Int32Array(layer.categories.length); for (const c of layer.codes) if (c >= 0) counts[c]++;
   const idx = layer.categories.indexOf(label); const n = idx >= 0 ? counts[idx] : 0;
   const live = layer.categories.filter((c, i) => counts[i] > 0 || c === label);
@@ -485,6 +502,7 @@ async function renderCapRecord(host: HTMLElement, layer: AnnotationLayer, label:
       ${suggestedBadge}
       <span id="arsaved" style="color:var(--good,#6bbf73);font-size:11px;opacity:0;transition:opacity .2s">saved ✓</span>
       <button id="arsuggest" class="mini" title="ask the agent to propose a name, category, ontology term, markers + rationale from this cluster's genes" style="margin-left:auto;border-color:var(--amber,#e0a458);color:var(--amber,#e0a458)">✨ Suggest</button></div>
+    ${opts?.context ? `<div style="font-size:10.5px;color:var(--faint);margin:-4px 0 8px">${opts.context}</div>` : ""}
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 14px;font-size:12px">
       <label>full name<input id="ar_full" value="${esc(rec.fullName || "")}"></label>
       <label>category · parent<input id="ar_cat" value="${esc(rec.category || "")}"></label>
@@ -492,7 +510,7 @@ async function renderCapRecord(host: HTMLElement, layer: AnnotationLayer, label:
         <span style="display:flex;gap:6px"><input id="ar_oid" value="${esc(rec.ontologyTermId || "")}" placeholder="CL:…" style="flex:0 0 110px"><input id="ar_oterm" value="${esc(rec.ontologyTerm || "")}" placeholder="term name" style="flex:1;min-width:0"><button id="ar_ols" class="mini">lookup</button></span>
         <div id="ar_olshits"></div></label>
       <label style="grid-column:1/-1">marker evidence · this dataset <span style="color:var(--faint)">(auto)</span>
-        <div>${(rec.markerEvidence || []).map((g) => `<span style="font-family:var(--mono);font-size:11px;border:1px solid var(--line2);border-radius:5px;padding:1px 6px;margin:0 4px 4px 0;display:inline-block">${esc(g)}</span>`).join("")}</div></label>
+        <div id="ar_mev">${haveEvidence ? (rec.markerEvidence || []).map((g) => `<span style="font-family:var(--mono);font-size:11px;border:1px solid var(--line2);border-radius:5px;padding:1px 6px;margin:0 4px 4px 0;display:inline-block">${esc(g)}</span>`).join("") : '<span style="color:var(--faint);font-size:11px">computing…</span>'}</div></label>
       <label style="grid-column:1/-1">canonical markers<input id="ar_canon" value="${esc((rec.canonicalMarkers || []).join(", "))}" placeholder="comma-separated"></label>
       <label style="grid-column:1/-1">rationale<textarea id="ar_rat" rows="2" style="resize:vertical">${esc(rec.rationale || "")}</textarea></label>
     </div></div>`;
@@ -511,6 +529,17 @@ async function renderCapRecord(host: HTMLElement, layer: AnnotationLayer, label:
   };
   const sug = host.querySelector("#arsuggest") as HTMLButtonElement;
   sug.onclick = () => { sug.disabled = true; sug.textContent = "✨ thinking…"; save(); hooks.proposeRecord(layerName, label); };   // save current edits, then let the agent propose (re-renders on propose_label)
+  // fill marker evidence asynchronously (the DE call is slow — don't block the card). Staleness-guarded: if the
+  // user has switched the card to another label by the time markers resolve, drop this update.
+  if (!haveEvidence) {
+    ctx.markers(layerName).then((mm: any) => {
+      if (host.dataset.recLabel !== label) return;   // user moved on — stale
+      const ev = (mm.get(label) || []).slice(0, 8).map((m: any) => m.symbol);
+      rec.markerEvidence = ev;
+      const box = host.querySelector("#ar_mev") as HTMLElement | null;
+      if (box) box.innerHTML = ev.length ? ev.map((g: string) => `<span style="font-family:var(--mono);font-size:11px;border:1px solid var(--line2);border-radius:5px;padding:1px 6px;margin:0 4px 4px 0;display:inline-block">${esc(g)}</span>`).join("") : '<span style="color:var(--faint);font-size:11px">no markers</span>';
+    }).catch(() => {});
+  }
 }
 
 // Export every working-draft label as CAP-schema JSON. Rare (full annotations only) — lives in the labels

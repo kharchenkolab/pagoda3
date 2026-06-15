@@ -488,14 +488,13 @@ export class App {
   // Ensure the Annotate workspace has something to work with: a working draft (seeded from cell_type/clusters,
   // non-destructive, no colour change) + at least one computed source (scType). Re-renders when ready.
   async ensureAnnotation(): Promise<void> {
-    let changed = false;
     if (!this.annoLayers.has("annotation")) {
       const src = this.ctx.groupings().includes("cell_type") ? "cell_type" : "leiden";
       const m: any = await this.ctx.view.metadata(src);
-      if (m.kind === "categorical") { const layer = seedLayer("annotation", "derived", { codes: m.codes, categories: m.categories }); layer.provenance = { method: "seed", params: { from: src } }; this.commitLayer(layer, false); changed = true; }
+      if (m.kind === "categorical") { const layer = seedLayer("annotation", "derived", { codes: m.codes, categories: m.categories }); layer.provenance = { method: "seed", params: { from: src } }; this.commitLayer(layer, true); }   // render NOW — the table + card appear immediately
     }
-    if (!this.annoLayers.has("scType")) { await this.runScType(); changed = false; }   // runScType already re-rendered
-    else if (changed) this.fullRender();
+    // compute scType in the BACKGROUND (it re-renders to add its column when ready) — don't block the first paint
+    if (!this.annoLayers.has("scType")) this.runScType();
   }
 
   // Adopt a source as the WORKING draft: set every base cluster to that source's dominant label, in ONE
