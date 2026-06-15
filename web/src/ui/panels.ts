@@ -473,11 +473,18 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
     tr.addEventListener("pointerleave", () => ctx.coord.clearHint());
     tr.addEventListener("click", () => { ctx.coord.setSelection({ kind: "category", grouping: base, value: grp }); host.focus({ preventScroll: true }); });
   });
-  // ↑/↓ move the SELECTED cluster (not scroll the div). Focus the table on click so arrows take over; the
-  // selection drives the card + embedding, and we scroll just the selected row into view.
+  // ↑/↓ move the SELECTED cluster (not scroll the div); Enter = a click (open/expand the card for that row).
+  // Focus the table on click so the keys take over; the selection drives the card + embedding, and we scroll
+  // just the selected row into view.
   const grpOrder = rows.map((r) => r.group);
   host.tabIndex = 0; host.style.outline = "none";
   host.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {   // open/expand the record card for the selected row (esp. after minimizing it)
+      e.preventDefault(); if (selCluster == null) return;
+      recCollapsed = false; (p as any).recCollapsed = false;
+      const wl = grpWork.get(selCluster); if (wl) showRecord(wl);
+      return;
+    }
     if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
     e.preventDefault();   // override the default scroll-the-whole-div behaviour
     const cur = selCluster != null ? grpOrder.indexOf(selCluster) : -1;
