@@ -53,6 +53,7 @@ const TOOLS: Tool[] = [
   { name: "run_annotation", description: "Compute an annotation SOURCE by running a cell-typing method in-browser, added as a layer to reconcile against others. method='sctype' scores each cluster against a bundled marker DB (no server). Then read get_reconciliation and compare in the Annotate workspace's Reconcile panel.", input_schema: { type: "object", properties: { method: { type: "string", enum: ["sctype"] }, base: { type: "string", description: "clustering to label (default leiden)" } }, required: ["method"] } },
   { name: "annotate", description: "Write a cell-type LABEL onto a cell set in the WORKING annotation draft (last-write-wins; the draft auto-creates and is non-destructive — clusters stay intact). A is a CELL-SET expression, same algebra as compute ({category:{grouping,value}}, {selection:true}, {intersect:[…]}, {union:[…]}, …). Use this to resolve the reconciliation — e.g. accept a cell type for a cluster, or merge/split by labeling the exact cells. The working draft becomes the default grouping and colours every panel.", input_schema: { type: "object", properties: { label: { type: "string" }, A: { type: "object", description: "the cells to label (cell-set expression)" } }, required: ["label", "A"] } },
   { name: "get_reconciliation", description: "Read how the annotation sources compare per base cluster (working draft + each source's dominant label) and which clusters they DIFFER on — so you can advise, explain, and resolve. Differences are often just vocabulary across sources (CD14 mono vs CD14+ monocyte); weigh markers + the confusion matrix before calling a real conflict.", input_schema: { type: "object", properties: { base: { type: "string", description: "clustering as the reconciliation unit (default leiden)" } } } },
+  { name: "adopt_source", description: "Set the WORKING annotation draft to a source's per-cluster labeling in ONE step (the fast 'start from scType / cell_type'), then fix the few wrong clusters with annotate. source = an annotation source name (see get_reconciliation); base = clustering (default leiden).", input_schema: { type: "object", properties: { source: { type: "string" }, base: { type: "string" } }, required: ["source"] } },
   { name: "set_field_roles", description: "Classify obs/metadata fields so the annotation panel knows which are SOURCES. L* can't read roles from the store, so YOU decide from the category values: 'annotation' = a cell-type labeling (a reconciliation source), 'partition' = a clustering (the reconciliation unit, e.g. leiden), 'covariate' = sample/donor/condition/batch, 'qc' = metrics/calls. Read FIELDS in the dataset brief. Only annotation-role fields become sources.", input_schema: { type: "object", properties: { annotation: { type: "array", items: { type: "string" } }, partition: { type: "array", items: { type: "string" } }, covariate: { type: "array", items: { type: "string" } }, qc: { type: "array", items: { type: "string" } } } } },
 ];
 
@@ -66,7 +67,7 @@ PRINCIPLE OF RESTRAINT — always prefer the SMALLEST change that answers the qu
 - a disposable answer in the rail (compute for DE/overdispersion over any cell set, get_markers, get_composition, get_overdispersion, add_note), or add a Heatmap panel via update_view, when a new view is needed;
 - a workspace proposal (propose_workspace) only for a deliberate layout change — and it is a PROPOSAL the human confirms.
 - compute_code is the ESCAPE HATCH — sandboxed ad-hoc JS (declare the genes it reads) for the long tail only (custom signature scores, bespoke per-cell metrics/filters). Try update_view and compute FIRST; its results carry an "unvalidated" caveat.
-ANNOTATION (the Annotate workspace): reconcile candidate labelings into one clean cell-type annotation. run_annotation adds a SOURCE (e.g. sctype); get_reconciliation reads how sources compare per cluster + where they differ; annotate writes a label onto a cell set in the WORKING draft (last-write-wins, non-destructive). When asked to annotate/resolve, advise and explain (markers + the confusion matrix), then annotate to commit — cross-source string differences are often just vocabulary, not real conflicts.
+ANNOTATION (the Annotate workspace): reconcile candidate labelings into one clean cell-type annotation. run_annotation adds a SOURCE (e.g. sctype); get_reconciliation reads how sources compare per cluster + where they differ; adopt_source sets the whole working draft to a source's labeling in one step; annotate writes a label onto a cell set in the WORKING draft (last-write-wins, non-destructive). Typical flow: run_annotation → adopt_source the best one → fix the few wrong clusters with annotate. Advise and explain (markers + the confusion matrix) — cross-source string differences are often just vocabulary, not real conflicts.
 The change itself is visible, so keep your prose to ONE short sentence. Never narrate state the user can already see.
 
 METHODOLOGY (cacoa — encode these, don't forget them):
@@ -112,6 +113,7 @@ async function execTool(app: App, name: string, input: any): Promise<string> {
       app.labelCells(ids, String(input.label)); return `labeled ${ids.length} cells "${input.label}" in the working annotation draft`;
     }
     case "get_reconciliation": return await app.reconciliationSummary(input);
+    case "adopt_source": { if (!input.source) return "adopt_source: 'source' is required"; const { ok, error } = await app.adoptSource(input.source, input.base); return error ? `error: ${error}` : ok!; }
     case "set_field_roles": return app.setFieldRoles(input);
     case "get_composition": {
       const comp = await app.ctx.composition("leiden"); ag.addRail({ type: "CompositionBars", title: "Composition by sample", cap: "compositional", bind: "composition:bySample" });
@@ -219,6 +221,7 @@ function toolLabel(tu: any): string {
   if (tu.name === "compute_code") return "custom code";
   if (tu.name === "run_annotation") return `annotate · ${i.method || "sctype"}`;
   if (tu.name === "annotate") return `label · ${i.label}`;
+  if (tu.name === "adopt_source") return `adopt · ${i.source}`;
   if (tu.name === "get_reconciliation") return "reconciliation";
   if (tu.name === "concordance_panel") return `concordance · ${i.scopeValue}`;
   if (tu.name === "propose_workspace") return `propose workspace · ${i.name}`;
