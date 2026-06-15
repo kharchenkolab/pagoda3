@@ -420,11 +420,14 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
   // the working-annotation column is the canonical OUTPUT (what you're building); the source columns are
   // informational reads. A subtle tint sets the working column apart from the sources.
   const WORKBG = "rgba(110,168,254,0.07)";
+  // header row sits on a distinct shade (--inset) so it reads apart from the body rows (on --panel)
+  const HEADBG = "var(--inset)";
+  const th = (label: string, extra = "") => `<th style="padding:4px 8px;position:sticky;top:0;background:${HEADBG};border-bottom:1px solid var(--line)${extra}">${label}</th>`;
   let html = `<table class="rctab" style="width:100%;border-collapse:collapse"><thead><tr style="color:var(--faint);text-align:left">
-    <th style="padding:4px 8px;position:sticky;top:0;background:var(--panel)">cluster</th>
-    <th style="padding:4px 8px;position:sticky;top:0;background:var(--panel);box-shadow:inset 0 0 0 999px ${WORKBG};color:var(--dim)">working annotation</th>
-    ${sources.map((s) => `<th style="padding:4px 8px;position:sticky;top:0;background:var(--panel)">${esc(s.name)}</th>`).join("")}
-    <th style="padding:4px 8px;position:sticky;top:0;background:var(--panel)"></th></tr></thead><tbody>`;
+    ${th("cluster")}
+    ${th("working annotation", `;box-shadow:inset 0 0 0 999px ${WORKBG};color:var(--dim)`)}
+    ${sources.map((s) => th(esc(s.name))).join("")}
+    ${th("")}</tr></thead><tbody>`;
   rows.forEach((r: ReconRow, gi) => {
     const wl = workRows ? workRows[gi].sources[0].label : null;
     const opinions = r.sources.map((s) => s.label).filter((l): l is string => l != null);
@@ -446,7 +449,20 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
     const grp = tr.dataset.grp!;
     tr.addEventListener("pointerenter", () => ctx.coord.setHint({ kind: "category", grouping: base, value: grp }));
     tr.addEventListener("pointerleave", () => ctx.coord.clearHint());
-    tr.addEventListener("click", () => ctx.coord.setSelection({ kind: "category", grouping: base, value: grp }));
+    tr.addEventListener("click", () => { ctx.coord.setSelection({ kind: "category", grouping: base, value: grp }); host.focus({ preventScroll: true }); });
+  });
+  // ↑/↓ move the SELECTED cluster (not scroll the div). Focus the table on click so arrows take over; the
+  // selection drives the card + embedding, and we scroll just the selected row into view.
+  const grpOrder = rows.map((r) => r.group);
+  host.tabIndex = 0; host.style.outline = "none";
+  host.addEventListener("keydown", (e) => {
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+    e.preventDefault();   // override the default scroll-the-whole-div behaviour
+    const cur = selCluster != null ? grpOrder.indexOf(selCluster) : -1;
+    const next = Math.max(0, Math.min(grpOrder.length - 1, cur + (e.key === "ArrowDown" ? 1 : -1)));
+    const grp = grpOrder[next]; if (grp == null) return;
+    ctx.coord.setSelection({ kind: "category", grouping: base, value: grp });
+    host.querySelector<HTMLElement>(`tr.rcrow[data-grp="${CSS.escape(grp)}"]`)?.scrollIntoView({ block: "nearest" });
   });
   // matrix view: a confusion grid between two chosen layers (row-normalized intensity). A/B default to the
   // first two layers; dropdowns re-render locally. Reveals the cross-vocabulary mapping the table can't.
