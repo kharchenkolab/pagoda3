@@ -4,7 +4,7 @@ import type { LstarDataset } from "./store.ts";
 import { kernels } from "./kernels.ts";
 
 export type Metadata =
-  | { kind: "categorical"; codes: Int32Array; categories: string[] }
+  | { kind: "categorical"; codes: Int32Array; categories: string[]; colors?: number[] }   // colors = per-category palette INDEX (annotation layers use a stable name→colour map)
   | { kind: "numeric"; values: Float32Array; min: number; max: number };
 
 export interface DEResult { gene: number; symbol: string; meanA: number; meanB: number; lfc: number; }
@@ -491,11 +491,11 @@ function hslToRgb(h: number, s: number, l: number): [number, number, number] {
   const f = (t: number) => { if (t < 0) t += 1; if (t > 1) t -= 1; if (t < 1 / 6) return p + (q - p) * 6 * t; if (t < 1 / 2) return q; if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6; return p; };
   return [Math.round(f(h + 1 / 3) * 255), Math.round(f(h) * 255), Math.round(f(h - 1 / 3) * 255)];
 }
-export function codesToRGBA(codes: Int32Array, focusMask?: Uint8Array): Uint8Array {
+export function codesToRGBA(codes: Int32Array, focusMask?: Uint8Array, colorMap?: ArrayLike<number>): Uint8Array {
   const n = codes.length, out = new Uint8Array(n * 4);
   for (let i = 0; i < n; i++) {
     if (focusMask && !focusMask[i]) { out[i * 4] = DIM_RGB[0]; out[i * 4 + 1] = DIM_RGB[1]; out[i * 4 + 2] = DIM_RGB[2]; out[i * 4 + 3] = DIM_A; continue; }
-    const c = catColor(codes[i]);
+    const code = codes[i]; const c = catColor(colorMap && code >= 0 ? colorMap[code] : code);
     out[i * 4] = c[0]; out[i * 4 + 1] = c[1]; out[i * 4 + 2] = c[2]; out[i * 4 + 3] = 230;
   }
   return out;

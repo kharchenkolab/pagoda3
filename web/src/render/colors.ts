@@ -51,8 +51,8 @@ export async function colorsFor(view: LstarView, colorBy: string, focusMask?: Ui
     const m = await md(view, rest);
     if (m.kind === "categorical") {
       return {
-        rgba: codesToRGBA(m.codes, focusMask),
-        legend: { kind: "categorical", title: rest, items: m.categories.map((c, i) => ({ label: c, rgb: catColor(i) })) },
+        rgba: codesToRGBA(m.codes, focusMask, m.colors),
+        legend: { kind: "categorical", title: rest, items: m.categories.map((c, i) => ({ label: c, rgb: catColor(m.colors ? m.colors[i] : i) })) },
       };
     }
     return { rgba: numericRGBA(m.values, m.max, pal, focusMask), legend: numericLegend(rest, pal) };

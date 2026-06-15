@@ -356,7 +356,7 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
     let h = `<div style="font-size:11px;color:var(--faint);margin-bottom:7px">${live.length} labels · <span style="color:${withOnt === live.length ? "var(--good,#6bbf73)" : "var(--amber,#e0a458)"}">${withOnt} with ontology</span> · ${withRat} with rationale${unlabeled ? ` · <span style="color:var(--amber,#e0a458)">${unlabeled} cells unlabeled</span>` : ""}</div><table style="width:100%;border-collapse:collapse;font-size:12px"><tbody>`;
     for (const { c, i, n } of live) { const r = recs[c] || {};
       h += `<tr class="lrow" data-l="${esc(c)}" style="border-top:1px solid var(--line);cursor:pointer">
-        <td style="padding:3px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px"><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:rgb(${catColor(i).join(",")});margin-right:6px"></span>${esc(c)}</td>
+        <td style="padding:3px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px"><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:rgb(${catColor(ctx.labelColorIndex(c)).join(",")});margin-right:6px"></span>${esc(c)}</td>
         <td style="padding:3px 6px;color:var(--faint);text-align:right">${n}</td>
         <td style="padding:3px 6px;font-size:10.5px;white-space:nowrap">${r.ontologyTermId ? `<span style="color:var(--cyan)">${esc(r.ontologyTermId)}</span>` : '<span style="color:var(--amber,#e0a458)">⚠ no ontology</span>'}</td>
         <td style="padding:3px 6px;color:${r.rationale ? "var(--good,#6bbf73)" : "var(--faint)"};font-size:10.5px">${r.rationale ? "✓ rationale" : "—"}</td></tr>`;
@@ -366,7 +366,7 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
     lhost.querySelectorAll<HTMLElement>("tr.lrow").forEach((tr) => tr.addEventListener("click", () => showRecord(tr.dataset.l!)));
   };
 
-  const colorOf = (cats: string[], label: string | null) => label == null ? "var(--faint)" : `rgb(${catColor(cats.indexOf(label)).join(",")})`;
+  const colorOf = (_cats: string[], label: string | null) => label == null ? "var(--faint)" : `rgb(${catColor(ctx.labelColorIndex(label)).join(",")})`;   // stable label-name colour
   // a source's read of a cluster; when it SPLITS the cluster (dominant <70%) the runner-up is shown in amber,
   // so labelings that don't map 1:1 to clusters are visible (the matrix view + brush/agent resolve the split).
   const cell = (s: ReconRow["sources"][number]) => {
@@ -461,7 +461,7 @@ async function renderCapRecord(host: HTMLElement, layer: AnnotationLayer, label:
   const counts = new Int32Array(layer.categories.length); for (const c of layer.codes) if (c >= 0) counts[c]++;
   const idx = layer.categories.indexOf(label); const n = idx >= 0 ? counts[idx] : 0;
   const live = layer.categories.filter((c, i) => counts[i] > 0 || c === label);
-  const dot = `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${idx >= 0 ? `rgb(${catColor(idx).join(",")})` : "var(--faint)"}"></span>`;
+  const dot = `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:rgb(${catColor(ctx.labelColorIndex(label)).join(",")})"></span>`;
   const head = opts?.picker
     ? `<select id="arlabel" class="inline" style="font-size:13px;font-weight:600;max-width:220px">${live.map((c) => `<option${c === label ? " selected" : ""}>${esc(c)}</option>`).join("")}</select>`
     : dot + (opts?.onRename
