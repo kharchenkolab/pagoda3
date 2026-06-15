@@ -22,25 +22,25 @@ arrange)**, all committed; S3–S7 verified working (no fixes needed). Tests: 30
 - **For you:** annotation design (proposal below); + 6 parked judgment calls (review section).
 
 ## For review (questionable — decide later)
-- **Markers dotplot default grouping = leiden (28 clusters), embedding colours by cell_type.** The two
-  panels in the Markers workspace describe different partitions. Grouping the dotplot by `cell_type`
-  would be more coherent with the embedding and far fewer columns, but coarser than cluster-level. Left
-  as leiden for now (the agent/user can switch grouping). Decide the default. (shell.ts:52)
-- **Dotplot x-axis: rotate vs thin.** Chose −45° rotation (scanpy/Seurat style) so every group label
-  stays present — no thinning/hiding, consistent with the density+honesty principles. If you'd rather a
-  cleaner look with fewer labels, say so and I'll switch to thinning. (panels.ts draw)
-- **compute_code coloring caveat is chat-only.** A `code:` signature coloring looks identical to a
-  validated gene coloring; the "unvalidated custom code" caveat is in the agent's chat reply but there's
-  no persistent visual badge on the panel/legend. Given the honesty emphasis, a small "custom"/"~" badge
-  on code-derived legends might be warranted. Prominence is a design call — left for you.
-- **Display state (labels/legend/alpha) is global, not per-workspace.** Toggling labels off in one
-  workspace leaves them off after switching. Could be intentional (consistent viewing prefs) or should
-  be saved per-workspace like colorBy/panels. Decide. (coord.state.display vs switchWS save)
+_Resolved 2026-06-15 per Peter's calls (see "Resolved" below): default grouping coherence, label
+rotate→shrink→hide, code-coloring badge, per-panel display. Remaining parked item:_
 - **Narrow/mobile responsiveness.** At ~560px the workbench stays 2 columns (panels ~260px, cramped) and
   the top bar overflows ("Answers" clipped). A naive `@media{grid-template-columns:1fr}` broke worse
-  (embedding collapsed to 2px — likely deck.gl canvas width feedback), so I reverted it. Desktop is the
-  target and works well; proper responsive (1-col stack + collapsible top bar + deck re-fit) needs real
-  design. Parked. (app.css .workbench / topbar)
+  (embedding collapsed to 2px — likely deck.gl canvas width feedback), so I reverted it. Peter: "not
+  working on mobile now" — parked. (app.css .workbench / topbar)
+
+## Resolved (Peter's calls, 2026-06-15)
+- **#1 default grouping coherence.** Panels now default to the SAME grouping with precedence
+  annotation > cell_type > clusters (`ctx.defaultGrouping()`). Markers dotplot + composition + embedding
+  all open on it. (commit "panels default to a coherent grouping")
+- **#2 label density.** Keep −45° rotation; when dense, shrink the font first, then THIN (every Nth) once
+  the floor would collide — applied to both group (x) and gene (y) labels. Verified cell_type 7.6px /
+  leiden 6.7px (all shown), narrow → 5px + every-other. Also fixed: re-grouping an EXISTING Heatmap.
+- **#3 code-coloring badge.** A persistent amber "~ custom" badge (with sanity-check tooltip) on the
+  legend of any `code:` colouring — the caveat is now on the panel, not just the chat.
+- **#4 per-panel display.** labels/legend/alpha moved to per-panel `view.display`; toggle one embedding
+  without touching another; a top-level agent display patch fans out to all; saved with the workspace.
+  (Peter: panels coordinate via events and may show different configs — no global needed.)
 
 ## Proposal — Annotation (new functionality, for your approval)
 You flagged annotation as a direction beyond inspection/comparison. Here's a concrete design that fits
