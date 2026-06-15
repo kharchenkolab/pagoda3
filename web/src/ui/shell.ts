@@ -510,6 +510,26 @@ export class App {
     return { ok: `adopted ${sourceName} → working draft (${cats.length} labels over ${rows.length} ${b} clusters)` };
   }
 
+  // Import an EXTERNAL cluster-level labeling as a new source layer (CellTypist/Azimuth output, a colleague's
+  // annotation pasted in chat) — so sources aren't limited to what's pre-baked in the store. labels maps base
+  // cluster values → cell-type labels; broadcast to cells.
+  async importLabeling(opts: { name?: string; base?: string; labels: Record<string, string> }): Promise<{ ok?: string; error?: string }> {
+    if (!opts.labels || typeof opts.labels !== "object") return { error: "labels (a {cluster: label} map) is required" };
+    const base = opts.base && this.ctx.groupings().includes(opts.base) ? opts.base : (this.ctx.groupings().includes("leiden") ? "leiden" : this.ctx.defaultGrouping());
+    let baseMeta: any; try { baseMeta = await this.ctx.view.metadata(base); } catch { return { error: `unknown base "${base}"` }; }
+    if (baseMeta.kind !== "categorical") return { error: `base "${base}" is not categorical` };
+    const cats: string[] = []; const idx = new Map<string, number>();
+    const groupToCat = baseMeta.categories.map((cl: string) => { const lab = opts.labels[cl]; if (lab == null) return -1; let i = idx.get(lab); if (i == null) { i = cats.length; cats.push(lab); idx.set(lab, i); } return i; });
+    const matched = groupToCat.filter((x: number) => x >= 0).length;
+    if (!matched) return { error: `no ${base} clusters matched the provided keys (base has: ${baseMeta.categories.slice(0, 10).join(", ")}…)` };
+    const codes = new Int32Array(baseMeta.codes.length);
+    for (let i = 0; i < codes.length; i++) { const g = baseMeta.codes[i]; codes[i] = (g >= 0 && g < groupToCat.length) ? groupToCat[g] : -1; }
+    const name = (opts.name || "imported").replace(/[^\w .+-]/g, "").slice(0, 24) || "imported";
+    const layer: AnnotationLayer = { name, source: "imported", codes, categories: cats, records: {}, provenance: { method: "import", params: { base } } };
+    this.commitLayer(layer);
+    return { ok: `imported "${name}": ${matched}/${baseMeta.categories.length} ${base} clusters → ${cats.length} labels (${cats.slice(0, 5).join(", ")}${cats.length > 5 ? "…" : ""})` };
+  }
+
   // Resolve a cell-set expression (the same algebra as compute) to indices — used by the annotate tool.
   resolveCells(spec: CellSet): { ids: Int32Array; error?: string } {
     const ctx = this.ctx;
