@@ -578,21 +578,30 @@ export class App {
   renameLabel(layerName: string, from: string, to: string): { ok?: string; error?: string } {
     const layer = this.annoLayers.get(layerName); if (!layer) return { error: `no layer "${layerName}"` };
     to = (to || "").trim(); if (!to) return { error: "empty label" };
-    const fi = layer.categories.indexOf(from); if (fi < 0) return { error: `no label "${from}"` };
+    if (layer.categories.indexOf(from) < 0) return { error: `no label "${from}"` };
     if (from === to) return { ok: "unchanged" };
+    const merged = layer.categories.indexOf(to) >= 0;
+    this.applyRename(layer, from, to);
+    this.commitLayer(layer);   // commitLayer compacts → a merge's emptied "from" slot is dropped
+    return { ok: merged ? `merged "${from}" into "${to}"` : `renamed "${from}" → "${to}"` };
+  }
+  // Rename/merge on the layer object WITHOUT committing (so batch ops can apply many, then render once).
+  // Returns the resulting label name, or null if `from` is missing. Renaming to an existing label MERGES.
+  private applyRename(layer: AnnotationLayer, from: string, to: string): string | null {
+    to = (to || "").trim(); if (!to) return from;
+    const fi = layer.categories.indexOf(from); if (fi < 0) return null;
+    if (from === to) return to;
     layer.records = layer.records || {};
     const ti = layer.categories.indexOf(to);
-    if (ti >= 0) {   // MERGE from → to
+    if (ti >= 0) {   // MERGE from → to (codes reassigned; emptied slot compacted at commit)
       for (let i = 0; i < layer.codes.length; i++) if (layer.codes[i] === fi) layer.codes[i] = ti;
       if (layer.records[from] && !layer.records[to]) layer.records[to] = { ...layer.records[from], label: to };
       delete layer.records[from];
-      this.commitLayer(layer);   // commitLayer compacts → the emptied "from" slot is dropped
-      return { ok: `merged "${from}" into "${to}"` };
+      return to;
     }
-    layer.categories[fi] = to;   // RENAME in place
+    layer.categories[fi] = to;   // RENAME in place (keeps colour index stable)
     if (layer.records[from]) { layer.records[to] = { ...layer.records[from], label: to }; delete layer.records[from]; }
-    this.commitLayer(layer);
-    return { ok: `renamed "${from}" → "${to}"` };
+    return to;
   }
 
   // AGENT-ASSIST: write an agent's proposed CAP record onto a working-draft label (merge over any existing
@@ -622,6 +631,32 @@ export class App {
     return { ok: `proposed “${label}”${newName && newName !== input.label ? ` (renamed from “${input.label}”)` : ""}` };
   }
 
+  // BATCH agent-assist — apply MANY proposed records in ONE call (the reliable path for "name all my clusters":
+  // a single tool call beats hoping the model fans out N separate propose_label calls). Renames are applied
+  // without per-item render; one commit at the end compacts + re-renders.
+  proposeLabels(proposals: any[]): { ok?: string; error?: string } {
+    const layer = this.annoLayers.get("annotation"); if (!layer) return { error: "no working annotation draft — adopt a source or label some cells first" };
+    layer.records = layer.records || {};
+    const arr = (v: any) => Array.isArray(v) ? v.map((x) => String(x).trim()).filter(Boolean) : undefined;
+    let applied = 0; const skipped: string[] = [];
+    for (const p of proposals || []) {
+      let label = String(p?.label || "").trim();
+      if (!label || !layer.categories.includes(label)) { if (label) skipped.push(label); continue; }
+      const newName = p?.name && String(p.name).trim();
+      if (newName && newName !== label) { const r = this.applyRename(layer, label, newName); if (r) label = r; }
+      const prev = layer.records[label] || { label };
+      layer.records[label] = { ...prev, label,
+        fullName: p.fullName ?? prev.fullName, synonyms: arr(p.synonyms) ?? prev.synonyms,
+        category: p.category ?? prev.category, ontologyTermId: p.ontologyTermId ?? prev.ontologyTermId,
+        ontologyTerm: p.ontologyTerm ?? prev.ontologyTerm, canonicalMarkers: arr(p.canonicalMarkers) ?? prev.canonicalMarkers,
+        rationale: p.rationale ?? prev.rationale, suggested: true };
+      applied++;
+    }
+    if (!applied) return { error: `no proposals applied${skipped.length ? ` (unknown labels: ${skipped.slice(0, 6).join(", ")})` : ""}` };
+    this.commitLayer(layer);   // one render + compact + colour-cache invalidate
+    return { ok: `proposed ${applied} label${applied > 1 ? "s" : ""}${skipped.length ? ` (skipped ${skipped.length} unknown)` : ""}` };
+  }
+
   // UI → agent: ask the agent to propose a CAP record for ONE working label, marker-grounded. Scopes the
   // request to that label's cells and seeds the prompt with its top DE markers, so the agent reasons from
   // THIS dataset, not priors alone. Its propose_label call populates the record card.
@@ -645,7 +680,7 @@ export class App {
     if (!targets.length) return;
     let mm: any; try { mm = await this.ctx.markers(layerName); } catch {}
     const lines = targets.map((c) => `- "${c}": ${mm ? (mm.get(c) || []).slice(0, 10).map((m: any) => m.symbol).join(", ") : ""}`);
-    this.agent.ask(`Propose clean cell-type names with 1-line marker-grounded rationales for the working annotation draft's clusters. For EACH, call propose_label({label, name, rationale, category?, ontologyTermId?}). Rename cluster-id or vague labels to proper cell types; keep good names as-is (still add a rationale). Clusters and their top markers:\n${lines.join("\n")}`);
+    this.agent.ask(`Propose clean cell-type names with 1-line marker-grounded rationales for the working annotation draft's clusters. Call propose_labels ONCE with a proposals array — one entry per cluster: {label (the current name, verbatim), name (clean cell type — rename cluster-ids/vague labels; keep good ones), rationale, category, ontologyTermId (CL:xxxx if confident)}. Do NOT make separate calls or write prose first — emit the single propose_labels call. Clusters and their top markers:\n${lines.join("\n")}`);
   }
 
   // Label a cell set in a layer (default the working draft). Last-write-wins; re-renders.
