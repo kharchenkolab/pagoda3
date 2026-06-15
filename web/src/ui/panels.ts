@@ -471,7 +471,16 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
     const grp = tr.dataset.grp!;
     tr.addEventListener("pointerenter", () => ctx.coord.setHint({ kind: "category", grouping: base, value: grp }));
     tr.addEventListener("pointerleave", () => ctx.coord.clearHint());
-    tr.addEventListener("click", () => { ctx.coord.setSelection({ kind: "category", grouping: base, value: grp }); host.focus({ preventScroll: true }); });
+    tr.addEventListener("click", () => {
+      // a row click always OPENS the record (un-collapse) — clicking a cluster means "show me this one"; no
+      // second click on a collapsed bar. (Minimize is for hiding the card in matrix/other views.)
+      const wasCollapsed = recCollapsed; recCollapsed = false; (p as any).recCollapsed = false;
+      const prev = ctx.coord.state.selection;
+      ctx.coord.setSelection({ kind: "category", grouping: base, value: grp });
+      // re-clicking the already-selected row while collapsed dedupes in coord (reactor won't fire) → open it here
+      if (wasCollapsed && prev && prev.kind === "category" && prev.value === grp) { selCluster = grp; const wl = grpWork.get(grp); if (wl) showRecord(wl); }
+      host.focus({ preventScroll: true });
+    });
   });
   // ↑/↓ move the SELECTED cluster (not scroll the div); Enter = a click (open/expand the card for that row).
   // Focus the table on click so the keys take over; the selection drives the card + embedding, and we scroll
