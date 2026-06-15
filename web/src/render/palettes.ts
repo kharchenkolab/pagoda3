@@ -15,7 +15,8 @@ function ramp(stops: number[][]): Palette {
 const RDBU = [[178, 24, 43], [239, 138, 98], [253, 219, 199], [247, 247, 247], [209, 229, 240], [103, 169, 207], [33, 102, 172]]; // low red → high blue
 
 export const PALETTES: Record<string, Palette> = {
-  amber: ramp([[27, 34, 48], [224, 164, 88]]),                                                  // the original fixed ramp (default)
+  amber: ramp([[27, 34, 48], [224, 164, 88]]),                                                  // the original fixed ramp (default, DARK theme): low fades into the dark canvas
+  amberLight: ramp([[244, 240, 228], [240, 200, 120], [217, 122, 36], [150, 70, 14]]),          // LIGHT-theme default: low ≈ paper-white (fades into white), high = deep orange (reads on white)
   viridis: ramp([[68, 1, 84], [59, 82, 139], [33, 145, 140], [94, 201, 98], [253, 231, 37]]),   // perceptually uniform
   magma: ramp([[0, 0, 4], [81, 18, 124], [183, 55, 121], [252, 137, 97], [252, 253, 191]]),
   rdbu: ramp(RDBU),                                                                              // diverging: red (low) → blue (high)

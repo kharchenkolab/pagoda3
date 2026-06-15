@@ -435,7 +435,7 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
   };
   // the working-annotation column is the canonical OUTPUT (what you're building); the source columns are
   // informational reads. A subtle tint sets the working column apart from the sources.
-  const WORKBG = "rgba(110,168,254,0.07)";
+  const WORKBG = "var(--warm)";   // the canonical "working annotation" column — a warm designation tint (theme-aware)
   // header row sits on a distinct shade (--inset) so it reads apart from the body rows (on --panel)
   const HEADBG = "var(--inset)";
   const th = (label: string, extra = "") => `<th style="padding:4px 8px;position:sticky;top:0;background:${HEADBG};border-bottom:1px solid var(--line)${extra}">${label}</th>`;
@@ -469,7 +469,7 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
     if (selCluster != null) { const wl = grpWork.get(selCluster); if (wl) siblings = new Set((labelClusters.get(wl) || []).filter((g) => !selRows?.has(g))); }
     host.querySelectorAll<HTMLElement>("tr.rcrow").forEach((tr) => {
       const g = tr.dataset.grp!;
-      tr.style.background = selRows?.has(g) ? "rgba(92,200,255,0.14)" : (siblings?.has(g) ? "rgba(92,200,255,0.045)" : "");
+      tr.style.background = selRows?.has(g) ? "var(--sel)" : (siblings?.has(g) ? "var(--sel2)" : "");
     });
   };
   host.querySelectorAll<HTMLElement>("tr.rcrow").forEach((tr) => {

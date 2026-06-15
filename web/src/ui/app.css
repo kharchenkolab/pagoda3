@@ -2,17 +2,22 @@
   --ink:#0d1117; --panel:#161b22; --inset:#1b2230; --line:#2a3340; --line2:#222a35;
   --text:#d7dee8; --dim:#8a97a8; --faint:#5b6675;
   --teal:#3fb6b2; --cyan:#5cc8ff; --amber:#e0a458; --ok:#5bbf8f; --good:#5bbf8f; --bad:#e07a7a;
+  --on-accent:#04222e;   /* text on a filled accent (cyan/amber) — accents are BRIGHT on dark, so dark text reads */
+  --sel:rgba(92,200,255,.16); --sel2:rgba(92,200,255,.06); --warm:rgba(224,164,88,.10);   /* selection (+ faint sibling) + warm "designation" tints */
   --ct0:#6ea8fe; --ct1:#e0a458; --ct2:#b48ead; --ct3:#88c0a0; --ct4:#d98c8c;
   --mono: ui-monospace,"SF Mono","Cascadia Code",Menlo,Consolas,monospace;
   --sans: -apple-system,"Segoe UI",system-ui,Roboto,sans-serif;
 }
-/* LIGHT theme — solarized-style. Overrides the same vars, so the whole DOM re-themes; the embedding canvas is
-   transparent (panel bg shows through) and its non-focus dot colour is set in JS (theme.ts). */
+/* LIGHT theme — WHITE base; the warm cream is reserved for highlights/designation (header shade, working column,
+   selection). The DOM re-themes via these vars; the embedding canvas is transparent and its non-focus dot colour
+   is JS-set (theme.ts). */
 html.light{
-  --ink:#eee8d5; --panel:#fdf6e3; --inset:#e9e1ca; --line:#d7cdb2; --line2:#e7dfc9;
-  --text:#586e75; --dim:#657b83; --faint:#93a1a1;
-  --teal:#2aa198; --cyan:#1f7faf; --amber:#b07d00; --ok:#6f8f00; --good:#6f8f00; --bad:#dc322f;
-  --ct0:#268bd2; --ct1:#cb4b16; --ct2:#6c71c4; --ct3:#859900; --ct4:#d33682;
+  --ink:#ffffff; --panel:#ffffff; --inset:#f3ecd9; --line:#e0ddd2; --line2:#eeece3;
+  --text:#3a4a51; --dim:#5f6e75; --faint:#9aa3a3;
+  --teal:#2a9d96; --cyan:#1f7faf; --amber:#a9750a; --ok:#5f8500; --good:#5f8500; --bad:#cb2f2f;
+  --on-accent:#ffffff;   /* light-theme accents are DARKER → white text on them reads */
+  --sel:rgba(38,139,210,.15); --sel2:rgba(38,139,210,.06); --warm:rgba(176,124,10,.14);
+  --ct0:#268bd2; --ct1:#cb4b16; --ct2:#6c71c4; --ct3:#6f8f00; --ct4:#c52f72;
 }
 *{box-sizing:border-box}
 html,body{margin:0;height:100%;background:var(--ink);color:var(--text);
@@ -38,8 +43,8 @@ button{font-family:inherit}
 .tb.pip.working{border-color:var(--teal);color:var(--teal)} .tb.pip.working .dot{background:var(--teal);animation:ppulse 1s infinite}
 .tb.pip.nudge{border-color:var(--cyan);color:var(--cyan)} .tb.pip.nudge .dot{background:var(--cyan);animation:ppulse 1.4s infinite}
 @keyframes ppulse{0%,100%{opacity:1}50%{opacity:.25}}
-.tb.pip .nbadge{position:absolute;top:-6px;right:-6px;min-width:15px;height:15px;border-radius:8px;background:var(--cyan);color:#04222e;font-size:9.5px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;padding:0 3px}
-.badge{min-width:16px;height:16px;border-radius:8px;background:var(--cyan);color:#04222e;font-size:10px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;padding:0 4px}
+.tb.pip .nbadge{position:absolute;top:-6px;right:-6px;min-width:15px;height:15px;border-radius:8px;background:var(--cyan);color:var(--on-accent);font-size:9.5px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;padding:0 3px}
+.badge{min-width:16px;height:16px;border-radius:8px;background:var(--cyan);color:var(--on-accent);font-size:10px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;padding:0 4px}
 
 /* ---------- stage: canvas + rail + docked convo ---------- */
 .stage{flex:1;display:flex;min-height:0}
@@ -65,7 +70,7 @@ button{font-family:inherit}
 .mini:hover{color:var(--text)}
 /* reconcile table: a source cell is clickable → accept it as the working label (make that obvious on hover) */
 .rctab td.rcaccept:hover{background:var(--inset);box-shadow:inset 0 0 0 1px var(--cyan);color:var(--text)}
-.rctab tr.rcrow:hover{background:rgba(255,255,255,.03)}
+.rctab tr.rcrow:hover{background:var(--inset)}
 .olshit:hover{background:var(--inset)}
 .genechip:hover{border-color:var(--cyan)!important;color:var(--cyan)}   /* gene chip → click to colour the embedding by its expression */
 /* global FOCUS chip in the top bar — the inter-panel "restricted to a subpopulation" indicator + release control */
@@ -96,7 +101,7 @@ button{font-family:inherit}
 .hgene,.hgrp{opacity:.55;transition:opacity .1s} .hgene:hover,.hgrp:hover{opacity:1;fill:var(--cyan)}
 .hcell:hover{stroke:var(--text);stroke-width:1px}
 .prov{font-family:var(--mono);font-size:10px;color:var(--faint);padding:6px 11px;border-top:1px solid var(--line2)}
-.caveat{display:flex;gap:8px;padding:9px 11px;background:rgba(224,164,88,.08);border-left:3px solid var(--amber);font-size:12px;color:#f0d9b6;cursor:pointer}
+.caveat{display:flex;gap:8px;padding:9px 11px;background:rgba(224,164,88,.08);border-left:3px solid var(--amber);font-size:12px;color:var(--dim);cursor:pointer}
 .caveat:hover{background:rgba(224,164,88,.14)}
 .caveat b{color:var(--amber);white-space:nowrap}
 .caveat.collapsed{padding:3px 10px;opacity:.6;font-size:11px}
@@ -122,7 +127,7 @@ button{font-family:inherit}
 .rch .rtitle{font-size:12px;color:var(--text);font-weight:500;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .rch .rtcap{font-size:10px;color:var(--dim);font-family:var(--mono);white-space:nowrap}
 .rch .sp{margin-left:auto;display:flex;gap:5px}
-.pin{background:var(--cyan);color:#04222e;border:0;border-radius:5px;font-size:11px;padding:2px 8px;font-weight:600;cursor:pointer}
+.pin{background:var(--cyan);color:var(--on-accent);border:0;border-radius:5px;font-size:11px;padding:2px 8px;font-weight:600;cursor:pointer}
 .dismiss{background:none;border:1px solid var(--line);color:var(--faint);border-radius:5px;font-size:11px;padding:2px 7px;cursor:pointer}
 .rq{padding:5px 9px;font-size:11px;color:var(--dim);font-style:italic;border-bottom:1px solid var(--line2)}
 .rcard .pbody{padding:9px} .rcard .embpanel .pbody{height:240px}
@@ -130,7 +135,7 @@ button{font-family:inherit}
 .proposal .body{padding:10px} .proposal h4{margin:0 0 5px;font-size:12.5px;color:var(--amber)}
 .diff{font-family:var(--mono);font-size:11px;color:var(--dim);margin-bottom:10px;line-height:1.6}
 .diff .add{color:var(--ok)} .diff .rm{color:var(--bad)}
-.acts{display:flex;gap:8px} .apply{background:var(--amber);color:#241a08;border:0;border-radius:6px;padding:4px 13px;font-weight:600;cursor:pointer;font-size:12px}
+.acts{display:flex;gap:8px} .apply{background:var(--amber);color:var(--on-accent);border:0;border-radius:6px;padding:4px 13px;font-weight:600;cursor:pointer;font-size:12px}
 
 /* docked conversation column */
 .convo{flex:0 0 0;width:0;background:var(--panel);border-right:1px solid var(--line);transition:width .25s ease,flex-basis .25s ease;overflow:hidden;display:flex;flex-direction:column}
@@ -193,7 +198,7 @@ button{font-family:inherit}
 .step.proposal{background:rgba(224,164,88,.07);border:1px solid var(--amber);border-radius:9px;padding:7px 9px;margin-left:28px;flex-direction:column;gap:7px}
 .step.proposal b{color:var(--amber)} .step.proposal .pacts{display:flex;gap:7px}
 .step.proposal .pacts button{border-radius:6px;font-size:11.5px;padding:3px 12px;cursor:pointer;border:1px solid var(--line);background:var(--inset);color:var(--dim);font-family:var(--sans)}
-.step.proposal .pacts .ok{background:var(--amber);color:#241a08;border:0;font-weight:600}
+.step.proposal .pacts .ok{background:var(--amber);color:var(--on-accent);border:0;font-weight:600}
 .tlhd{display:flex;align-items:center;height:26px;padding:0 12px;cursor:pointer;gap:8px}
 .tlhd .t{font-family:var(--mono);font-size:10px;letter-spacing:1.4px;color:var(--dim)}
 .tlhd .dockbtn{margin-left:auto;font-size:10px;color:var(--faint);cursor:pointer;font-family:var(--mono)} .tlhd .dockbtn:hover{color:var(--cyan)}
@@ -247,7 +252,7 @@ svg{display:block;width:100%;height:auto}
 .legend span{display:flex;align-items:center;gap:5px} .sw{width:9px;height:9px;border-radius:3px;display:inline-block}
 table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:11px}
 th{text-align:right;color:var(--dim);font-weight:500;padding:4px 7px;border-bottom:1px solid var(--line2)} th:first-child{text-align:left}
-td{text-align:right;padding:4px 7px;border-bottom:1px solid var(--line2);color:#cdd7e2} td:first-child{text-align:left;color:var(--text)}
+td{text-align:right;padding:4px 7px;border-bottom:1px solid var(--line2);color:var(--dim)} td:first-child{text-align:left;color:var(--text)}
 tr.gene{cursor:pointer} tr.gene:hover{background:var(--inset)} tr.gene.on{background:rgba(92,200,255,.12)}
 .up{color:var(--bad)} .dn{color:var(--cyan)}
 /* gene tables: pinned filter box + a scrollable, sortable table (DE / ranked gene lists) */
