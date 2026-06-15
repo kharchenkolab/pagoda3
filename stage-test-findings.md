@@ -211,3 +211,30 @@ executor + a small legend card + a couple of agent-prompt lines), with unit test
   test added (rows/columns/overflow/dupes). (shell.ts applyPanelModel + arrange executor, viewpatch.ts, live.ts)
 - Added catalog scenarios L6–L9 (2×2 rows, 2×2 columns, stack-all, preserve-on-rearrange) to
   pagoda3/stage-test.md.
+
+### Annotation stage-test + polish (2026-06-15, after the build)
+UX-audited the freshly-built Annotate workspace; fixed via OODA, all committed, 45 tests pass.
+- **A1/A2 — accept affordance + hint.** Source cells were clickable but gave no cue. Added hover highlight
+  (cyan inset) + row hover + header hint "click a cell to accept one label, ⤵ to adopt a whole source".
+- **A3 — record card now coordinates.** It registers on the `annotation` grouping, so clicking a cluster
+  (embedding/reconcile) shows THAT cluster's working-label CAP record; the pick persists across rebuilds.
+  Form width-capped (760px, was full-1250px with absurd inputs); transient "saved ✓" on every edit.
+- **A4 — adopt + orphans + perf.** Added `adoptSource` (⤵ per source) — set the working draft to a
+  source's per-cluster labeling in ONE commit, no orphans. Record dropdown filters 0-cell labels
+  (relabeling leaves orphans). Perf checked: labelCells ~4ms sync (deck redraw async) — fine.
+- **A5 — agent session + integration.** Live agent ran the full flow (run_annotation → adopt_source →
+  get_reconciliation → annotate) → clean 17-label draft, correctly fixing leiden 22/25 as doublets scType
+  can't represent and recognizing the rest as vocabulary. Verified: DE works on annotation labels (NK →
+  GNLY/NKG7/GZMB); CAP export = valid JSON (25 records w/ auto marker evidence). No regressions across
+  workspaces; no console errors.
+- **New capabilities added during polish:** `adopt_source` + `import_labeling` (bring an external
+  cluster-level labeling — CellTypist/Azimuth/colleague — in as a reconciliation source; addresses
+  "sources aren't limited to the zarr"). Both wired as agent tools.
+
+## For review (annotation)
+- **Color stability on compact.** Category colours are by INDEX, so compacting (dropping orphan labels)
+  would shift colours. Left compaction manual/none for now; a color-by-label-name scheme would fix it but
+  touches all categoricals. Decide if worth it.
+- **Agreement ✓ column** rarely fires across vocabularies (only on exact match). Kept (fires for
+  same-vocab sources); the matrix is the real agreement view. Drop it if you find it noise.
+- **Overlaps / rename defaults** still un-vetoed: single-label last-wins; non-destructive.
