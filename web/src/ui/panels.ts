@@ -319,6 +319,7 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
   // base cluster → cell count, and working label → the base clusters carrying it (so the card can show the
   // selected cluster's context and note when one label spans several clusters — why two rows show the same card).
   const grpN = new Map<string, number>(rows.map((r) => [r.group, r.n]));
+  const grpToRow = new Map<string, ReconRow>(rows.map((r) => [r.group, r]));
   const labelClusters = new Map<string, string[]>();
   if (workRows) workRows.forEach((wr, gi) => { const wl = wr.sources[0].label; if (wl) { const a = labelClusters.get(wl) || []; a.push(rows[gi].group); labelClusters.set(wl, a); } });
 
@@ -355,8 +356,20 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
     // context line: which base cluster you clicked + a note when this label spans several clusters (so two rows
     // mapping to the same label visibly differ — the "why doesn't the card change?" fix).
     let context: string | undefined;
-    if (selCluster != null) { const others = (labelClusters.get(l) || []).filter((g) => g !== selCluster); context = `selected: ${esc(base)} ${esc(selCluster)} · ${(grpN.get(selCluster) || 0).toLocaleString()} cells` + (others.length ? ` <span style="color:var(--amber,#e0a458)">· “${esc(l)}” also covers ${esc(base)} ${others.map(esc).join(", ")}</span>` : ""); }
-    renderCapRecord(recDetail, workLayer, l, ctx, hooks, { context, onRename: (to) => { (p as any).recordLabel = to; hooks.renameLabel("annotation", l, to); } });
+    let accept: { cluster: string; current: string; options: { label: string; sources: string[] }[]; onAccept: (lab: string) => void } | undefined;
+    if (selCluster != null) {
+      const others = (labelClusters.get(l) || []).filter((g) => g !== selCluster);
+      context = `selected: ${esc(base)} ${esc(selCluster)} · ${(grpN.get(selCluster) || 0).toLocaleString()} cells` + (others.length ? ` <span style="color:var(--amber,#e0a458)">· “${esc(l)}” also covers ${esc(base)} ${others.map(esc).join(", ")}</span>` : "");
+      // accept options for THIS cluster: each source's read (deduped by label), to set as the working label
+      const row = grpToRow.get(selCluster);
+      if (row) {
+        const byLabel = new Map<string, string[]>();
+        for (const s of row.sources) if (s.label) { const e = byLabel.get(s.label) || []; e.push(s.name); byLabel.set(s.label, e); }
+        const options = [...byLabel].map(([label, srcs]) => ({ label, sources: srcs }));
+        if (options.length) accept = { cluster: selCluster, current: l, options, onAccept: (lab) => { (p as any).recordLabel = lab; hooks.annotate(ctx.cellsOfCategory(base, selCluster!), lab); } };
+      }
+    }
+    renderCapRecord(recDetail, workLayer, l, ctx, hooks, { context, accept, onRename: (to) => { (p as any).recordLabel = to; hooks.renameLabel("annotation", l, to); } });
     flashCard();
   };
   // "labels" view: review the whole working annotation before export — each label's colour, cell count, and
@@ -390,13 +403,17 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
   const colorOf = (_cats: string[], label: string | null) => label == null ? "var(--faint)" : `rgb(${catColor(ctx.labelColorIndex(label)).join(",")})`;   // stable label-name colour
   // a source's read of a cluster; when it SPLITS the cluster (dominant <70%) the runner-up is shown in amber,
   // so labelings that don't map 1:1 to clusters are visible (the matrix view + brush/agent resolve the split).
-  const cell = (s: ReconRow["sources"][number]) => {
+  // a source column is INFORMATIONAL — it shows what that source called the cluster (for comparison). It is NOT a
+  // button: clicking anywhere in the row selects the cluster (→ card), where accepting a source's label is an
+  // explicit action. (Previously clicking a source cell silently overwrote the working label — confusing.)
+  const cell = (s: ReconRow["sources"][number], wl: string | null) => {
     if (s.label == null) return `<td style="color:var(--faint);padding:3px 8px">—</td>`;
     const mixed = s.frac < 0.7 && !!s.alt;
     const pct = s.frac < 0.999 ? `<span style="color:var(--faint);font-size:10.5px">${(s.frac * 100).toFixed(0)}%</span>` : "";
     const altTxt = mixed ? `<div style="font-size:10px;color:var(--amber,#e0a458)">+ ${esc(s.alt!)} ${((s.altFrac || 0) * 100).toFixed(0)}%</div>` : "";
-    const tip = mixed ? `splits this cluster: ${esc(s.label)} ${(s.frac * 100).toFixed(0)}% / ${esc(s.alt!)} ${((s.altFrac || 0) * 100).toFixed(0)}% — click to take the majority; brush or ask the agent to split it` : "click to set as the working label";
-    return `<td class="rcaccept" data-accept="${esc(s.label)}" style="padding:3px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px;cursor:pointer" title="${tip}">${esc(s.label)} ${pct}${altTxt}</td>`;
+    const isWork = wl != null && s.label === wl;   // this source matches the current working label → subtle tick
+    const tip = mixed ? `splits this cluster: ${esc(s.label)} ${(s.frac * 100).toFixed(0)}% / ${esc(s.alt!)} ${((s.altFrac || 0) * 100).toFixed(0)}%` : esc(s.label);
+    return `<td style="padding:3px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px${isWork ? ";color:var(--good,#6bbf73)" : ""}" title="${tip}">${esc(s.label)} ${pct}${altTxt}</td>`;
   };
   let html = `<table class="rctab" style="width:100%;border-collapse:collapse"><thead><tr style="color:var(--faint);text-align:left">
     <th style="padding:4px 8px;position:sticky;top:0;background:var(--panel)">cluster</th>
@@ -411,18 +428,13 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
     html += `<tr class="rcrow" data-g="${gi}" data-grp="${esc(r.group)}" style="border-top:1px solid var(--line);cursor:pointer">
       <td style="padding:3px 8px;color:var(--dim);white-space:nowrap">${esc(r.group)} <span style="color:var(--faint);font-size:10.5px">${r.n}</span></td>
       <td style="padding:3px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px">${wl ? `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${wcolor};margin-right:5px"></span>${esc(wl)}` : '<span style="color:var(--faint)">—</span>'}</td>
-      ${r.sources.map((s) => cell(s)).join("")}
+      ${r.sources.map((s) => cell(s, wl)).join("")}
       <td style="padding:3px 8px;color:var(--good,#6bbf73)">${allAgree ? "✓" : ""}</td></tr>`;
   });
   html += `</tbody></table>`;
   host.innerHTML = html;
 
-  // accept a source's label → write it onto the cluster's cells in the working draft
-  host.querySelectorAll<HTMLElement>("td.rcaccept").forEach((td) => {
-    td.addEventListener("click", (e) => { e.stopPropagation(); const tr = td.closest("tr") as HTMLElement; const grp = tr.dataset.grp!; const label = td.dataset.accept!;
-      hooks.annotate(ctx.cellsOfCategory(base, grp), label); });
-  });
-  // coordination: row hover/click selects the cluster everywhere
+  // coordination: row hover/click selects the cluster everywhere (every cell — accept lives in the card now)
   let selRows: Set<string> | null = null;
   const paint = () => host.querySelectorAll<HTMLElement>("tr.rcrow").forEach((tr) => { tr.style.background = selRows?.has(tr.dataset.grp!) ? "rgba(92,200,255,0.12)" : ""; });
   host.querySelectorAll<HTMLElement>("tr.rcrow").forEach((tr) => {
@@ -478,7 +490,7 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
 // reconcile panel's detail section and the standalone record panel. CAP schema (celltype.info): name/full
 // name, Cell-Ontology term (live OLS lookup), parent category, marker evidence (auto from derived markers),
 // canonical markers, rationale. Edits persist to the layer; export → JSON. opts.picker adds a label dropdown.
-async function renderCapRecord(host: HTMLElement, layer: AnnotationLayer, label: string, ctx: Ctx, hooks: PanelHooks, opts?: { picker?: boolean; onPick?: (l: string) => void; onRename?: (to: string) => void; context?: string }): Promise<void> {
+async function renderCapRecord(host: HTMLElement, layer: AnnotationLayer, label: string, ctx: Ctx, hooks: PanelHooks, opts?: { picker?: boolean; onPick?: (l: string) => void; onRename?: (to: string) => void; context?: string; accept?: { cluster: string; current: string; options: { label: string; sources: string[] }[]; onAccept: (lab: string) => void } }): Promise<void> {
   const layerName = layer.name; layer.records = layer.records || {};
   const rec: CapRecord = { ...(layer.records[label] || {}), label };
   host.dataset.recLabel = label;   // staleness tag: a slow async fill must not overwrite a card the user has since switched away from
@@ -503,6 +515,7 @@ async function renderCapRecord(host: HTMLElement, layer: AnnotationLayer, label:
       <span id="arsaved" style="color:var(--good,#6bbf73);font-size:11px;opacity:0;transition:opacity .2s">saved ✓</span>
       <button id="arsuggest" class="mini" title="ask the agent to propose a name, category, ontology term, markers + rationale from this cluster's genes" style="margin-left:auto;border-color:var(--amber,#e0a458);color:var(--amber,#e0a458)">✨ Suggest</button></div>
     ${opts?.context ? `<div style="font-size:10.5px;color:var(--faint);margin:-4px 0 8px">${opts.context}</div>` : ""}
+    ${opts?.accept ? `<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:0 0 9px;font-size:11px"><span style="color:var(--faint)">set from source:</span>${opts.accept.options.map((o, i) => { const on = o.label === opts.accept!.current; return `<button class="mini rcacc" data-acc="${i}" title="set ${esc(opts!.accept!.cluster)}'s working label to “${esc(o.label)}” (${esc(o.sources.join(", "))})"${on ? " disabled" : ""} style="${on ? "border-color:var(--good,#6bbf73);color:var(--good,#6bbf73)" : ""}">${esc(o.label)} ${on ? "✓" : `<span style="color:var(--faint)">· ${esc(o.sources.join(","))}</span>`}</button>`; }).join("")}</div>` : ""}
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 14px;font-size:12px">
       <label>full name<input id="ar_full" value="${esc(rec.fullName || "")}"></label>
       <label>category · parent<input id="ar_cat" value="${esc(rec.category || "")}"></label>
@@ -529,6 +542,7 @@ async function renderCapRecord(host: HTMLElement, layer: AnnotationLayer, label:
   };
   const sug = host.querySelector("#arsuggest") as HTMLButtonElement;
   sug.onclick = () => { sug.disabled = true; sug.textContent = "✨ thinking…"; save(); hooks.proposeRecord(layerName, label); };   // save current edits, then let the agent propose (re-renders on propose_label)
+  if (opts?.accept) host.querySelectorAll<HTMLButtonElement>(".rcacc").forEach((b) => b.onclick = () => { const o = opts.accept!.options[+b.dataset.acc!]; if (o) opts.accept!.onAccept(o.label); });
   // fill marker evidence asynchronously (the DE call is slow — don't block the card). Staleness-guarded: if the
   // user has switched the card to another label by the time markers resolve, drop this update.
   if (!haveEvidence) {
