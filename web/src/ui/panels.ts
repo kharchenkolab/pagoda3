@@ -2,6 +2,7 @@ import { mk, S } from "./dom.ts";
 import { Ctx } from "../data/ctx.ts";
 import { EmbeddingView } from "../render/embedding.ts";
 import { colorsFor, focusMaskFor } from "../render/colors.ts";
+import { themeIsDark } from "../render/theme.ts";
 import { catColor } from "../data/view.ts";
 import type { EntityRef } from "../data/coord.ts";
 import { reconcile, crosstab, ReconRow, AnnotationLayer, CapRecord, labelChain } from "../anno/model.ts";
@@ -727,8 +728,10 @@ function splitHeatBody(p: Panel): BuiltBody {
     const row = d.means[i], mx = Math.max(...row, 1e-9);
     g += `<text class="axis" x="${padL - 6}" y="${padT + i * rh + rh - 5}" text-anchor="end">${esc(gene)}</text>`;
     row.forEach((v, j) => { const t = v / mx;
-      g += `<rect x="${padL + j * cw}" y="${padT + i * rh}" width="${cw - 2}" height="${rh - 2}" rx="1" fill="rgb(${Math.round(22 + t * 202)},${Math.round(28 + t * 176)},${Math.round(38 + t * 52)})"/>`;
-      g += `<text x="${padL + j * cw + cw / 2}" y="${padT + i * rh + rh - 5}" text-anchor="middle" style="font-size:8px;font-family:var(--mono)" fill="${t > 0.55 ? "#0d1117" : "#7d8a9a"}">${v.toFixed(1)}</text>`;
+      g += `<rect x="${padL + j * cw}" y="${padT + i * rh}" width="${cw - 2}" height="${rh - 2}" rx="1" fill="${ramp(t)}"/>`;
+      // value label: dark on the bright (high-t) cells, faint grey on the pale low cells — both flipped per theme
+      const txt = t > 0.55 ? (themeIsDark() ? "#0d1117" : "#2a1c08") : (themeIsDark() ? "#7d8a9a" : "#8a8576");
+      g += `<text x="${padL + j * cw + cw / 2}" y="${padT + i * rh + rh - 5}" text-anchor="middle" style="font-size:8px;font-family:var(--mono)" fill="${txt}">${v.toFixed(1)}</text>`;
     });
   });
   const svg = S("svg", { viewBox: `0 0 ${W} ${H}` }); svg.innerHTML = g; (svg as any).style.cssText = "width:100%;height:auto;max-width:340px";
@@ -911,7 +914,10 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
   return { el: w, afterAttach, headerControls: toggle };
 }
 
+// dotplot/heatmap fill ramp — theme-aware: on dark, low fades into the dark canvas (slate→amber); on white, low
+// fades into white (paper→deep orange), so low expression stays faint and high reads, instead of inverting.
 function ramp(t: number): string {
-  const a = [27, 34, 48], b = [224, 164, 88];
+  const dark = themeIsDark();
+  const a = dark ? [27, 34, 48] : [244, 240, 228], b = dark ? [224, 164, 88] : [186, 96, 22];
   return `rgb(${a.map((x, i) => Math.round(x + (b[i] - x) * t)).join(",")})`;
 }

@@ -3,6 +3,7 @@
 import { Deck, OrthographicView } from "@deck.gl/core";
 import { ScatterplotLayer, TextLayer, LineLayer } from "@deck.gl/layers";
 import { CollisionFilterExtension } from "@deck.gl/extensions";
+import { themeIsDark, accentRGB } from "./theme.ts";
 
 export class EmbeddingView {
   private deck: Deck;
@@ -97,7 +98,7 @@ export class EmbeddingView {
             data: { length: this.n },
             getPosition: (_: any, { index }: any) => (this.selected[index] ? [this.positions[index * 2], this.positions[index * 2 + 1]] : [1e9, 1e9]),
             radiusUnits: "pixels", getRadius: this.radius + 2.2,
-            stroked: true, filled: false, getLineColor: [120, 224, 255, 255], lineWidthUnits: "pixels", getLineWidth: 1.6,
+            stroked: true, filled: false, getLineColor: [...accentRGB(), 255], lineWidthUnits: "pixels", getLineWidth: 1.6,
             updateTriggers: { getPosition: this.selVersion },
           }) as any
         : null,
@@ -106,7 +107,7 @@ export class EmbeddingView {
         ? new ScatterplotLayer({
             id: "hl", data: { length: this.highlightIds.length },
             getPosition: (_: any, { index }: any) => { const c = this.highlightIds![index]; return [this.positions[c * 2], this.positions[c * 2 + 1]]; },
-            radiusUnits: "pixels", getRadius: this.radius + 1.6, stroked: false, getFillColor: [150, 230, 255, 200],
+            radiusUnits: "pixels", getRadius: this.radius + 1.6, stroked: false, getFillColor: [...accentRGB(), 200],
             updateTriggers: { getPosition: this.hintVersion },
           }) as any
         : null,
@@ -116,7 +117,7 @@ export class EmbeddingView {
             id: "crosshair",
             data: [{ s: [this.crosshairXY[0], -1e5], t: [this.crosshairXY[0], 1e5] }, { s: [-1e5, this.crosshairXY[1]], t: [1e5, this.crosshairXY[1]] }],
             getSourcePosition: (d: any) => d.s, getTargetPosition: (d: any) => d.t,
-            getColor: [150, 230, 255, 150], widthUnits: "pixels", getWidth: 1,
+            getColor: [...accentRGB(), 150], widthUnits: "pixels", getWidth: 1,
             updateTriggers: { getSourcePosition: this.hintVersion, getTargetPosition: this.hintVersion },
           }) as any
         : null,
@@ -129,9 +130,9 @@ export class EmbeddingView {
             id: "labels", data: this.labels,
             getPosition: (d: any) => d.p, getText: (d: any) => d.text,
             getSize: 12.5, sizeUnits: "pixels", sizeMinPixels: 10, sizeMaxPixels: 15,
-            getColor: [240, 244, 250, 255], getTextAnchor: "middle", getAlignmentBaseline: "center",
+            getColor: themeIsDark() ? [240, 244, 250, 255] : [38, 50, 58, 255], getTextAnchor: "middle", getAlignmentBaseline: "center",   // theme-aware on-plot labels: light text+dark halo (dark) / dark text+light halo (white)
             fontFamily: "-apple-system, BlinkMacSystemFont, system-ui, sans-serif", fontWeight: 700,
-            fontSettings: { sdf: true, radius: 14, buffer: 6 }, outlineWidth: 2.4, outlineColor: [9, 13, 20, 255],
+            fontSettings: { sdf: true, radius: 14, buffer: 6 }, outlineWidth: 2.4, outlineColor: themeIsDark() ? [9, 13, 20, 255] : [255, 255, 255, 235],
             billboard: true, pickable: false, characterSet: "auto",
             extensions: [new CollisionFilterExtension()],
             collisionEnabled: true, collisionGroup: "labels",
@@ -192,7 +193,7 @@ export class EmbeddingView {
   // Shift-drag rectangle select via deck.pickObjects.
   private installBrush(canvas: HTMLCanvasElement) {
     const overlay = document.createElement("div");
-    overlay.style.cssText = "position:absolute;border:1px dashed #5cc8ff;background:rgba(92,200,255,.12);pointer-events:none;display:none;z-index:5";
+    overlay.style.cssText = "position:absolute;border:1px dashed var(--cyan);background:var(--sel);pointer-events:none;display:none;z-index:5";
     canvas.parentElement!.appendChild(overlay); // #emb is already position:absolute (a positioning context)
     let sx = 0, sy = 0, active = false;
     const rectOf = (e: PointerEvent) => { const r = canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };

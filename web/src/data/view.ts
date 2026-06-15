@@ -2,7 +2,7 @@
 // the real libstar WASM kernels when available (numbers match R/Python), with a pure-TS fallback.
 import type { LstarDataset } from "./store.ts";
 import { kernels } from "./kernels.ts";
-import { DIM_RGB, DIM_A } from "../render/theme.ts";   // theme-aware non-focus dot colour (live binding)
+import { DIM_RGB, DIM_A, themeIsDark } from "../render/theme.ts";   // theme-aware non-focus dot colour (live binding)
 
 export type Metadata =
   | { kind: "categorical"; codes: Int32Array; categories: string[]; colors?: number[] }   // colors = per-category palette INDEX (annotation layers use a stable name→colour map)
@@ -487,11 +487,23 @@ export const CAT_PALETTE: [number, number, number][] = [
   [232, 126, 160], [160, 205, 95], [245, 175, 120], [110, 150, 235], [205, 205, 130], [100, 205, 185],
   [205, 150, 235], [235, 140, 150], [150, 195, 235], [190, 165, 140], [140, 205, 120], [240, 190, 100],
 ];
+// LIGHT-theme variant: the dark palette's mid/light tones (yellows, pale greens, sky blues) wash out on white.
+// Same hue ORDER (a label keeps its hue across themes) but darker + more saturated so each reads on white.
+export const CAT_PALETTE_LIGHT: [number, number, number][] = [
+  [37, 110, 200], [188, 110, 18], [44, 138, 90], [196, 64, 64], [138, 88, 152], [26, 150, 146],
+  [176, 134, 18], [86, 86, 198], [200, 92, 40], [50, 150, 86], [168, 58, 168], [22, 138, 198],
+  [200, 60, 120], [110, 150, 30], [200, 112, 40], [60, 88, 188], [150, 138, 36], [28, 150, 130],
+  [150, 80, 192], [200, 70, 92], [70, 128, 190], [150, 110, 70], [80, 150, 48], [190, 130, 18],
+];
 export function catColor(code: number): [number, number, number] {
-  if (code < CAT_PALETTE.length) return CAT_PALETTE[code];
-  const k = code - CAT_PALETTE.length;            // overflow: golden-angle hue walk, never collides
+  const dark = themeIsDark();
+  const pal = dark ? CAT_PALETTE : CAT_PALETTE_LIGHT;
+  if (code < pal.length) return pal[code];
+  const k = code - pal.length;                    // overflow: golden-angle hue walk, never collides
   const hue = (k * 137.508 + 25) % 360;
-  return hslToRgb(hue / 360, (60 + (k % 2) * 16) / 100, (60 + ((k % 3) - 1) * 9) / 100);
+  // dark canvas → lighter colours; white canvas → darker, more saturated colours that read on white
+  return dark ? hslToRgb(hue / 360, (60 + (k % 2) * 16) / 100, (60 + ((k % 3) - 1) * 9) / 100)
+              : hslToRgb(hue / 360, (62 + (k % 2) * 16) / 100, (42 + ((k % 3) - 1) * 7) / 100);
 }
 function hslToRgb(h: number, s: number, l: number): [number, number, number] {
   if (s === 0) { const v = Math.round(l * 255); return [v, v, v]; }

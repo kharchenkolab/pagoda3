@@ -15,3 +15,8 @@ export function setThemeColors(dark: boolean): void {
 // low values into the dark canvas; on the light theme that inverts (low would be darkest), so default to a
 // light ramp where low ≈ paper-white. Explicitly-chosen colormaps are respected as-is.
 export function defaultNumericPalette(): string { return isDark ? "amber" : "amberLight"; }
+export function themeIsDark(): boolean { return isDark; }
+// Interaction accent (selection ring / category-hint lift / crosshair) painted on the CSS-transparent deck.gl
+// canvas, so it must be set by hand. Mirrors the --cyan CSS var: a bright cyan reads over the dark map, but on
+// white it washes out — so use a deeper teal-blue that holds contrast over paper.
+export function accentRGB(): [number, number, number] { return isDark ? [120, 224, 255] : [31, 127, 175]; }

@@ -4,6 +4,7 @@
   --teal:#3fb6b2; --cyan:#5cc8ff; --amber:#e0a458; --ok:#5bbf8f; --good:#5bbf8f; --bad:#e07a7a;
   --on-accent:#04222e;   /* text on a filled accent (cyan/amber) — accents are BRIGHT on dark, so dark text reads */
   --sel:rgba(92,200,255,.16); --sel2:rgba(92,200,255,.06); --warm:rgba(224,164,88,.10);   /* selection (+ faint sibling) + warm "designation" tints */
+  --chip:rgba(13,17,23,.72);   /* translucent floating overlay (embedding legend) — sits over the canvas */
   --ct0:#6ea8fe; --ct1:#e0a458; --ct2:#b48ead; --ct3:#88c0a0; --ct4:#d98c8c;
   --mono: ui-monospace,"SF Mono","Cascadia Code",Menlo,Consolas,monospace;
   --sans: -apple-system,"Segoe UI",system-ui,Roboto,sans-serif;
@@ -13,10 +14,11 @@
    is JS-set (theme.ts). */
 html.light{
   --ink:#ffffff; --panel:#ffffff; --inset:#f3ecd9; --line:#e0ddd2; --line2:#eeece3;
-  --text:#3a4a51; --dim:#5f6e75; --faint:#9aa3a3;
+  --text:#33444b; --dim:#5a6970; --faint:#7c8789;
   --teal:#2a9d96; --cyan:#1f7faf; --amber:#a9750a; --ok:#5f8500; --good:#5f8500; --bad:#cb2f2f;
   --on-accent:#ffffff;   /* light-theme accents are DARKER → white text on them reads */
   --sel:rgba(38,139,210,.15); --sel2:rgba(38,139,210,.06); --warm:rgba(176,124,10,.14);
+  --chip:rgba(255,255,255,.85);   /* light theme: translucent white overlay on the white canvas, hairline-bordered */
   --ct0:#268bd2; --ct1:#cb4b16; --ct2:#6c71c4; --ct3:#6f8f00; --ct4:#c52f72;
 }
 *{box-sizing:border-box}
@@ -98,7 +100,7 @@ button{font-family:inherit}
 .workbench:has(.embpanel.full:not(:only-child)){grid-auto-rows:minmax(280px,auto)}
 .embpanel.full:not(:only-child) .pbody{height:calc(100vh - 200px)}
 /* coordinated heatmap: dense axis labels go faint (read them on hover), bright + cyan on hover */
-.hgene,.hgrp{opacity:.55;transition:opacity .1s} .hgene:hover,.hgrp:hover{opacity:1;fill:var(--cyan)}
+.hgene,.hgrp{opacity:.72;transition:opacity .1s} .hgene:hover,.hgrp:hover{opacity:1;fill:var(--cyan)}   /* dotplot axis labels — readable by default (esp. on the light theme), full on hover */
 .hcell:hover{stroke:var(--text);stroke-width:1px}
 .prov{font-family:var(--mono);font-size:10px;color:var(--faint);padding:6px 11px;border-top:1px solid var(--line2)}
 .caveat{display:flex;gap:8px;padding:9px 11px;background:rgba(224,164,88,.08);border-left:3px solid var(--amber);font-size:12px;color:var(--dim);cursor:pointer}
@@ -249,7 +251,7 @@ svg{display:block;width:100%;height:auto}
 .comphost .cribbons{pointer-events:none}
 .legend .lgi{cursor:pointer} .legend .lgi.hov{color:var(--dim)} .legend .lgi.sel{color:var(--text)} .legend .lgi.sel .sw{box-shadow:0 0 0 1.5px var(--text)}
 .legend{display:flex;flex-wrap:wrap;gap:9px;margin-top:8px;font-size:11px;color:var(--dim)}
-.legend span{display:flex;align-items:center;gap:5px} .sw{width:9px;height:9px;border-radius:3px;display:inline-block}
+.legend span{display:flex;align-items:center;gap:5px} .sw{width:9px;height:9px;border-radius:3px;display:inline-block;box-shadow:inset 0 0 0 1px rgba(128,128,128,.4)}
 table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:11px}
 th{text-align:right;color:var(--dim);font-weight:500;padding:4px 7px;border-bottom:1px solid var(--line2)} th:first-child{text-align:left}
 td{text-align:right;padding:4px 7px;border-bottom:1px solid var(--line2);color:var(--dim)} td:first-child{text-align:left;color:var(--text)}
@@ -269,6 +271,7 @@ select.inline{background:var(--inset);color:var(--text);border:1px solid var(--l
 .pbody input:not(.inline)::placeholder,.pbody textarea::placeholder{color:var(--faint)}
 .pbody input:not(.inline):focus,.pbody textarea:focus{border-color:var(--cyan)}
 .embhost{position:absolute;inset:0}
-.emblegend{position:absolute;left:10px;bottom:10px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:rgba(13,17,23,.72);border:1px solid var(--line);border-radius:8px;padding:5px 9px;font-size:10.5px;color:var(--dim);max-width:90%}
+.emblegend{position:absolute;left:10px;bottom:10px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:var(--chip);border:1px solid var(--line);border-radius:8px;padding:5px 9px;font-size:10.5px;color:var(--dim);max-width:90%;backdrop-filter:blur(3px)}
+.emblegend:empty{display:none}
 .emblegend .lt{font-family:var(--mono);color:var(--text)}
 .emblegend .lbadge{font-family:var(--mono);font-size:9.5px;color:var(--amber,#e0a458);border:1px solid var(--amber,#e0a458);border-radius:4px;padding:0 4px;opacity:.85;cursor:help}   /* unvalidated custom-code colouring */
