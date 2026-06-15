@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { seedLayer, emptyLayer, setLabel, clearLabel, compact, reconcile, crosstab } from "./model.ts";
+import { seedLayer, emptyLayer, setLabel, clearLabel, compact, reconcile, crosstab, parseLineage, labelChain, hierarchyDepth, rollupToLevel } from "./model.ts";
 
 test("seedLayer copies the source (independent arrays)", () => {
   const src = { codes: Int32Array.from([0, 1, 0, 2]), categories: ["a", "b", "c"] };
@@ -77,4 +77,27 @@ test("reconcile: conflict and single-source statuses", () => {
   assert.equal(rows[0].status, "conflict");
   // cluster 1: a→CD8 T, b silent → single
   assert.equal(rows[1].status, "single");
+});
+
+test("parseLineage / labelChain split a coarse>fine path", () => {
+  assert.deepEqual(parseLineage("Myeloid > Monocyte"), ["Myeloid", "Monocyte"]);
+  assert.deepEqual(parseLineage(""), []);
+  assert.deepEqual(parseLineage(undefined), []);
+  assert.deepEqual(labelChain("CD14 monocyte", "Myeloid > Monocyte"), ["Myeloid", "Monocyte", "CD14 monocyte"]);
+  assert.deepEqual(labelChain("Platelet", ""), ["Platelet"]);   // flat label → chain is just itself
+});
+
+test("hierarchyDepth = deepest chain; rollupToLevel rolls cells up by lineage", () => {
+  const recs = { "CD14 monocyte": { label: "CD14 monocyte", category: "Myeloid > Monocyte" },
+                 "CD8 T cell": { label: "CD8 T cell", category: "Lymphoid > T cell" },
+                 "Platelet": { label: "Platelet" } };
+  const cats = ["CD14 monocyte", "CD8 T cell", "Platelet"];
+  assert.equal(hierarchyDepth(cats, recs as any), 3);
+  const codes = Int32Array.of(0, 0, 1, 2, -1);
+  // L1 (coarsest): Myeloid / Lymphoid / Platelet(flat repeats itself)
+  const l1 = rollupToLevel(codes, cats, recs as any, 1);
+  assert.deepEqual([...l1.codes].map((c) => c < 0 ? null : l1.categories[c]), ["Myeloid", "Myeloid", "Lymphoid", "Platelet", null]);
+  // L2 (mid): Monocyte / T cell / Platelet
+  const l2 = rollupToLevel(codes, cats, recs as any, 2);
+  assert.deepEqual([...l2.codes].map((c) => c < 0 ? null : l2.categories[c]), ["Monocyte", "Monocyte", "T cell", "Platelet", null]);
 });

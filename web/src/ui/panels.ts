@@ -4,7 +4,7 @@ import { EmbeddingView } from "../render/embedding.ts";
 import { colorsFor, focusMaskFor } from "../render/colors.ts";
 import { catColor } from "../data/view.ts";
 import type { EntityRef } from "../data/coord.ts";
-import { reconcile, crosstab, ReconRow, AnnotationLayer, CapRecord } from "../anno/model.ts";
+import { reconcile, crosstab, ReconRow, AnnotationLayer, CapRecord, labelChain } from "../anno/model.ts";
 import { olsLookup } from "../anno/ols.ts";
 
 // Per-panel view spec — the agent's deep-control surface (configure_panel). Each property overrides the
@@ -567,6 +567,8 @@ async function renderCapRecord(host: HTMLElement, layer: AnnotationLayer, label:
   // marker evidence (auto) and canonical markers — so you can eyeball a marker's pattern without leaving the card.
   const geneChip = (g: string) => `<span class="genechip" data-gene="${esc(g)}" title="colour the embedding by ${esc(g)} expression" style="font-family:var(--mono);font-size:11px;border:1px solid var(--line2);border-radius:5px;padding:1px 6px;margin:0 4px 4px 0;display:inline-block;cursor:pointer">${esc(g)}</span>`;
   const geneChips = (arr: string[]) => arr.map(geneChip).join("");
+  // hierarchy breadcrumb: coarsest ▸ … ▸ leaf (the leaf bold). Derived live from the lineage path in `category`.
+  const crumb = (cat?: string) => labelChain(label, cat).map((t, i, a) => i === a.length - 1 ? `<b style="color:var(--dim);font-weight:600">${esc(t)}</b>` : `<span style="color:var(--faint)">${esc(t)}</span>`).join(' <span style="color:var(--line)">▸</span> ');
   const counts = new Int32Array(layer.categories.length); for (const c of layer.codes) if (c >= 0) counts[c]++;
   const idx = layer.categories.indexOf(label); const n = idx >= 0 ? counts[idx] : 0;
   const live = layer.categories.filter((c, i) => counts[i] > 0 || c === label);
@@ -587,18 +589,26 @@ async function renderCapRecord(host: HTMLElement, layer: AnnotationLayer, label:
       ${opts?.onCollapse ? `<button id="armin" class="mini" title="hide the record (more room for the table / matrix)" style="padding:3px 8px">–</button>` : ""}</div>
     ${opts?.context ? `<div style="font-size:10.5px;color:var(--faint);margin:-4px 0 8px">${opts.context}</div>` : ""}
     ${opts?.accept ? `<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:0 0 9px;font-size:11px"><span style="color:var(--faint)">set from source:</span>${opts.accept.options.map((o, i) => { const on = o.label === opts.accept!.current; return `<button class="mini rcacc" data-acc="${i}" title="set ${esc(opts!.accept!.cluster)}'s working label to “${esc(o.label)}” (${esc(o.sources.join(", "))})"${on ? " disabled" : ""} style="${on ? "border-color:var(--good,#6bbf73);color:var(--good,#6bbf73)" : ""}">${esc(o.label)} ${on ? "✓" : `<span style="color:var(--faint)">· ${esc(o.sources.join(","))}</span>`}</button>`; }).join("")}</div>` : ""}
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 14px;font-size:12px">
-      <label>full name<input id="ar_full" value="${esc(rec.fullName || "")}"></label>
-      <label>category · parent<input id="ar_cat" value="${esc(rec.category || "")}"></label>
-      <label style="grid-column:1/-1">ontology term · Cell Ontology
-        <span style="display:flex;gap:6px"><input id="ar_oid" value="${esc(rec.ontologyTermId || "")}" placeholder="CL:…" style="flex:0 0 110px"><input id="ar_oterm" value="${esc(rec.ontologyTerm || "")}" placeholder="term name" style="flex:1;min-width:0"><button id="ar_ols" class="mini">lookup</button></span>
-        <div id="ar_olshits"></div></label>
-      <label style="grid-column:1/-1">marker evidence · this dataset <span style="color:var(--faint)">(auto · click a gene to colour the embedding)</span>
-        <div id="ar_mev">${haveEvidence ? geneChips(rec.markerEvidence || []) : '<span style="color:var(--faint);font-size:11px">computing…</span>'}</div></label>
-      <label style="grid-column:1/-1">canonical markers <span style="color:var(--faint)">(click a gene to colour)</span>
-        <input id="ar_canon" value="${esc((rec.canonicalMarkers || []).join(", "))}" placeholder="comma-separated">
-        <div id="ar_canonchips">${geneChips(rec.canonicalMarkers || [])}</div></label>
-      <label style="grid-column:1/-1">rationale<textarea id="ar_rat" rows="2" style="resize:vertical">${esc(rec.rationale || "")}</textarea></label>
+    <div style="display:flex;align-items:center;gap:8px;margin:0 0 10px;font-size:11px">
+      <span style="color:var(--faint);flex:0 0 auto">hierarchy</span>
+      <span id="ar_crumb" style="flex:1 1 auto;min-width:0;font-size:10.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${crumb(rec.category)}</span>
+      <input id="ar_cat" value="${esc(rec.category || "")}" placeholder="broader › … (coarse to fine)" title="coarser categories as a coarse › fine path, e.g. 'Myeloid › Monocyte' — defines L1/L2 levels you can colour by; leave blank for a flat annotation" style="flex:0 0 200px;font-size:11px">
+    </div>
+    <div style="display:flex;gap:16px;font-size:12px;align-items:stretch">
+      <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:8px">
+        <label>full name<input id="ar_full" value="${esc(rec.fullName || "")}"></label>
+        <label>ontology · Cell Ontology
+          <span style="display:flex;gap:6px"><input id="ar_oid" value="${esc(rec.ontologyTermId || "")}" placeholder="CL:…" style="flex:0 0 92px"><input id="ar_oterm" value="${esc(rec.ontologyTerm || "")}" placeholder="term name" style="flex:1;min-width:0"><button id="ar_ols" class="mini">lookup</button></span>
+          <div id="ar_olshits"></div></label>
+        <label style="flex:1 1 auto;min-height:0">rationale<textarea id="ar_rat" style="resize:vertical;min-height:58px;flex:1 1 auto">${esc(rec.rationale || "")}</textarea></label>
+      </div>
+      <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:8px">
+        <label>marker evidence <span style="color:var(--faint)">· this dataset (click to colour)</span>
+          <div id="ar_mev">${haveEvidence ? geneChips(rec.markerEvidence || []) : '<span style="color:var(--faint);font-size:11px">computing…</span>'}</div></label>
+        <label>canonical markers <span style="color:var(--faint)">(click to colour)</span>
+          <input id="ar_canon" value="${esc((rec.canonicalMarkers || []).join(", "))}" placeholder="comma-separated">
+          <div id="ar_canonchips">${geneChips(rec.canonicalMarkers || [])}</div></label>
+      </div>
     </div></div>`;
   host.querySelectorAll<HTMLElement>("label").forEach((l) => l.style.cssText = "display:flex;flex-direction:column;gap:3px;color:var(--faint);font-size:11px");
   const val = (id: string) => (host.querySelector("#" + id) as HTMLInputElement | null)?.value || "";
@@ -611,6 +621,8 @@ async function renderCapRecord(host: HTMLElement, layer: AnnotationLayer, label:
   host.onclick = (e) => { const c = (e.target as HTMLElement).closest(".genechip") as HTMLElement | null; if (c?.dataset.gene) hooks.onGeneClick(c.dataset.gene); };
   // edited canonical markers → refresh the clickable chips to match
   (host.querySelector("#ar_canon") as HTMLInputElement | null)?.addEventListener("input", () => { const box = host.querySelector("#ar_canonchips") as HTMLElement | null; if (box) box.innerHTML = geneChips(val("ar_canon").split(",").map((s) => s.trim()).filter(Boolean)); });
+  // edited hierarchy path → live-update the breadcrumb (the change-event saves it + rebuilds the level groupings)
+  (host.querySelector("#ar_cat") as HTMLInputElement | null)?.addEventListener("input", () => { const c = host.querySelector("#ar_crumb") as HTMLElement | null; if (c) c.innerHTML = crumb(val("ar_cat")); });
   if (opts?.picker) (host.querySelector("#arlabel") as HTMLSelectElement).onchange = (e) => { save(); opts.onPick?.((e.target as HTMLSelectElement).value); };
   if (opts?.onRename) { const ni = host.querySelector("#arname") as HTMLInputElement; ni.addEventListener("keydown", (e) => { if ((e as KeyboardEvent).key === "Enter") ni.blur(); }); ni.addEventListener("change", () => { const v = ni.value.trim(); if (v && v !== label) opts.onRename!(v); }); }
   (host.querySelector("#ar_ols") as HTMLButtonElement).onclick = async () => {

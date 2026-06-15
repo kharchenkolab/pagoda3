@@ -10,7 +10,7 @@ import { validateCellSet, resolveCellSet, describeCellSet, CellSet, CellWorld, C
 import { validateComputeResult, runInWorker } from "../agent/codeapi.ts";
 import { setCodeValues, setConfValues, invalidateColor } from "../render/colors.ts";
 import { paletteNames, normalizePalette } from "../render/palettes.ts";
-import { AnnotationLayer, seedLayer, setLabel, reconcile, compact } from "../anno/model.ts";
+import { AnnotationLayer, seedLayer, setLabel, reconcile, compact, hierarchyDepth, rollupToLevel } from "../anno/model.ts";
 import { PBMC_MARKERS, MarkerDB } from "../anno/markerdb.ts";
 import { zscoreByGroup, scoreClusters, assignClusters, MarkerIdx } from "../anno/sctype.ts";
 import { LRModel, lrFinalize } from "../anno/celltypist.ts";
@@ -131,7 +131,7 @@ export class App {
       registerGeneHover: (fn) => this.geneHoverSinks.push(fn),
       annotate: (ids, label, layer) => this.labelCells(ids, label, layer),
       annoLayer: (name) => this.annoLayers.get(name),
-      saveRecord: (layerName, record) => { const L = this.annoLayers.get(layerName); if (L) { L.records = L.records || {}; L.records[record.label] = record; } },
+      saveRecord: (layerName, record) => { const L = this.annoLayers.get(layerName); if (L) { L.records = L.records || {}; const prev = L.records[record.label]; L.records[record.label] = record; if (layerName === "annotation" && prev?.category !== record.category) { this.refreshHierarchyLevels(L); this.repaint(); this.syncColorSelects(); } } },   // lineage changed → rebuild the L1/L2 rollups
       adoptSource: (name) => { this.adoptSource(name); },
       renameLabel: (layerName, from, to) => { this.renameLabel(layerName, from, to); },
       proposeRecord: (layerName, label) => { this.proposeRecord(label, layerName); },
@@ -434,7 +434,20 @@ export class App {
     this.annoLayers.set(layer.name, layer);   // phantom 0-cell label lingers anywhere it's listed
     this.ctx.setAnnotationLayer(layer.name, layer.codes, layer.categories);
     invalidateColor(layer.name);   // the overlay changed (often a new category) → drop the stale colour-cache snapshot
+    if (layer.name === "annotation") this.refreshHierarchyLevels(layer);   // derive coarser-level groupings from the lineage
     if (render) this.fullRender();
+  }
+  // Derive the coarser hierarchy levels of the working draft (rolled up by each label's lineage path in
+  // record.category, e.g. "Myeloid > Monocyte") and register them as groupings "annotation: L1 …". Base case
+  // (no lineage anywhere) → depth 1 → no derived groupings, so a flat one-level annotation stays clutter-free.
+  refreshHierarchyLevels(layer: AnnotationLayer): void {
+    this.ctx.clearDerivedGroupings();
+    const depth = hierarchyDepth(layer.categories, layer.records);
+    for (let lvl = 1; lvl < depth; lvl++) {   // level 1 = coarsest … depth = the finest (the layer itself)
+      const r = rollupToLevel(layer.codes, layer.categories, layer.records, lvl);
+      this.ctx.setDerivedGrouping(`annotation: L${lvl}`, r.codes, r.categories);
+      invalidateColor(`annotation: L${lvl}`);
+    }
   }
   // Begin a working annotation draft by seeding the `annotation` layer from an existing categorical
   // (cell_type if present, else clusters) — non-destructive; the base grouping is untouched. Colours by it.
@@ -1080,7 +1093,10 @@ export class App {
     // annotation sources with per-cell confidence add a "<src> confidence" option — colour by it to see the
     // uncertain (ambiguous) cells, i.e. where reconciliation is hard.
     const confOpts = [...this.annoLayers.values()].filter((l) => l.confidence).map((l) => [`conf:${l.name}`, `${l.name} confidence`] as [string, string]);
-    const all = [...this.colorChoices, ...confOpts];
+    // the working draft + its derived hierarchy levels (annotation: L1 …) — so you can colour by a coarser level
+    const levelOpts = ["annotation", ...this.ctx.derivedGroupings()].filter((g) => this.ctx.groupings().includes(g)).map((g) => [`meta:${g}`, g] as [string, string]);
+    const seen = new Set<string>();
+    const all = [...this.colorChoices, ...confOpts, ...levelOpts].filter(([h]) => !seen.has(h) && !!seen.add(h));
     const opts = cur && !all.some(([h]) => h === cur) ? [[cur, handleLabel(cur)] as [string, string], ...all] : all;
     return opts.map(([v, l]) => `<option value="${v}"${v === cur ? " selected" : ""}>${l}</option>`).join("");
   }

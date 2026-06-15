@@ -57,6 +57,31 @@ export function clearLabel(layer: AnnotationLayer, cellIds: ArrayLike<number>): 
   return layer;
 }
 
+// ---- hierarchy (optional, multi-level) ----------------------------------------------------------------
+// The working annotation is always the FINEST level. Coarser levels are DERIVED: each label carries a lineage
+// of broader terms (coarsest→finest, excluding the leaf), stored as a ">"-delimited path in CapRecord.category
+// (e.g. "Myeloid > Monocyte" for the leaf "CD14 monocyte"). Base case = empty path → a flat, one-level
+// annotation with no extra UI. Multi-level just fills the path; coarser views roll up by it.
+export function parseLineage(category?: string): string[] {
+  return (category || "").split(/[>›]/).map((s) => s.trim()).filter(Boolean);
+}
+// Full chain coarsest→finest INCLUDING the leaf label.
+export function labelChain(label: string, category?: string): string[] { return [...parseLineage(category), label]; }
+// Deepest hierarchy across the populated labels (1 = flat). Defines how many levels exist.
+export function hierarchyDepth(categories: string[], records?: Record<string, CapRecord>): number {
+  let d = 1; for (const c of categories) d = Math.max(d, labelChain(c, records?.[c]?.category).length); return d;
+}
+// Roll the annotation up to `level` (1-based from the COARSEST). For each cell, take its label's chain and pick
+// the term at that level (labels with a shallower chain repeat their coarsest term). Returns a compact derived
+// categorical for colour/group by a coarser level. Unlabeled (-1) stays -1.
+export function rollupToLevel(codes: ArrayLike<number>, categories: string[], records: Record<string, CapRecord> | undefined, level: number): { codes: Int32Array; categories: string[] } {
+  const term = categories.map((c) => { const chain = labelChain(c, records?.[c]?.category); return chain[Math.min(Math.max(0, level - 1), chain.length - 1)]; });
+  const cats: string[] = []; const idx = new Map<string, number>();
+  const out = new Int32Array(codes.length).fill(-1);
+  for (let i = 0; i < codes.length; i++) { const c = codes[i]; if (c < 0 || c >= term.length) continue; const t = term[c]; let j = idx.get(t); if (j === undefined) { j = cats.length; cats.push(t); idx.set(t, j); } out[i] = j; }
+  return { codes: out, categories: cats };
+}
+
 // Drop categories no cell uses (after relabeling) + remap codes. Keeps records for surviving labels.
 export function compact(layer: AnnotationLayer): AnnotationLayer {
   const used = new Set<number>(); for (const c of layer.codes) if (c >= 0) used.add(c);
