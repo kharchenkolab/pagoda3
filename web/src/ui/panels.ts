@@ -320,15 +320,19 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
   const nResolved = workRows ? workRows.filter((r) => r.sources[0].label != null).length : 0;
   hdr.innerHTML = `<span style="color:var(--faint)">base</span> <b>${esc(base)}</b> · <span style="color:var(--faint)">${rows.length} clusters, ${nResolved} labeled</span> <span style="color:var(--faint)">·</span> ${sources.length ? sources.map((s) => `<span style="border:1px solid var(--line2);border-radius:5px;padding:1px 6px;color:var(--dim)">${esc(s.name)} <span class="rcadopt" data-adopt="${esc(s.name)}" title="adopt this source as the working draft" style="cursor:pointer;color:var(--cyan)">⤵</span></span>`).join(" ") + ' <span style="color:var(--faint);font-size:11px">— click a cell to accept one label, ⤵ to adopt a whole source</span>' : '<span style="color:var(--amber,#e0a458)">no sources — run scType or add one</span>'}`;
   hdr.querySelectorAll<HTMLElement>(".rcadopt").forEach((el) => el.addEventListener("click", (e) => { e.stopPropagation(); hooks.adoptSource(el.dataset.adopt!); }));
-  // table ↔ matrix toggle (the matrix is the vocabulary-agnostic confusion view between two labelings)
+  // view toggle: table (reconcile) · matrix (confusion, vocab-agnostic) · labels (review the working draft)
   const layers = [...(workMeta ? [{ name: "working", codes: workMeta.codes, categories: workMeta.categories }] : []), ...sources];
   const seg = mk("div", "segtog"); seg.style.marginLeft = "auto";
-  let mode: "table" | "matrix" = "table";
-  for (const [m, lbl] of [["table", "table"], ["matrix", "matrix"]] as const) { const b = mk("button", "mini" + (m === "table" ? " on" : ""), lbl) as HTMLButtonElement; b.dataset.m = m; seg.appendChild(b); }
-  if (layers.length >= 2) hdr.appendChild(seg);
+  let mode: "table" | "matrix" | "labels" = "table";
+  const segItems: [string, string][] = [["table", "table"]];
+  if (layers.length >= 2) segItems.push(["matrix", "matrix"]);
+  if (workMeta) segItems.push(["labels", "labels"]);
+  for (const [m, lbl] of segItems) { const b = mk("button", "mini" + (m === "table" ? " on" : ""), lbl) as HTMLButtonElement; b.dataset.m = m; seg.appendChild(b); }
+  if (segItems.length >= 2) hdr.appendChild(seg);
   w.appendChild(hdr);
   const host = mk("div"); host.style.cssText = "flex:1 1 auto;min-height:0;overflow:auto"; w.appendChild(host);
   const mhost = mk("div"); mhost.style.cssText = "flex:1 1 auto;min-height:0;overflow:auto;display:none;padding:8px 10px"; w.appendChild(mhost);
+  const lhost = mk("div"); lhost.style.cssText = "flex:1 1 auto;min-height:0;overflow:auto;display:none;padding:8px 10px"; w.appendChild(lhost);
   // the CAP record for the selected cluster's working label — folded in here (cohesive single panel, not a
   // separate full-width one). Follows the selection; updates on accept.
   const recDetail = mk("div"); recDetail.style.cssText = "flex:0 0 auto;max-height:46%;overflow:auto;border-top:1px solid var(--line2);padding:8px 10px"; w.appendChild(recDetail);
@@ -339,6 +343,27 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
     const l = (lbl && workLayer.categories.includes(lbl)) ? lbl : (recLabel && workLayer.categories.includes(recLabel) ? recLabel : workLayer.categories.find((_, i) => workLayer.codes.includes(i)) || null);
     if (!l) { recDetail.innerHTML = '<span style="color:var(--faint);font-size:11.5px">select a cluster to edit its label record</span>'; return; }
     recLabel = l; (p as any).recordLabel = l; renderCapRecord(recDetail, workLayer, l, ctx, hooks, { onRename: (to) => { (p as any).recordLabel = to; hooks.renameLabel("annotation", l, to); } });
+  };
+  // "labels" view: review the whole working annotation before export — each label's colour, cell count, and
+  // CAP completeness (ontology term set? rationale?). Click a label to load its record below.
+  const renderLabels = () => {
+    if (!workLayer || !workLayer.categories.length) { lhost.innerHTML = '<span style="color:var(--faint);font-size:11.5px">no working draft yet — accept/adopt labels first</span>'; return; }
+    const cnt = new Int32Array(workLayer.categories.length); for (const c of workLayer.codes) if (c >= 0) cnt[c]++;
+    const recs = workLayer.records || {};
+    const live = workLayer.categories.map((c, i) => ({ c, i, n: cnt[i] })).filter((x) => x.n > 0).sort((a, b) => b.n - a.n);
+    const withOnt = live.filter((x) => recs[x.c]?.ontologyTermId).length, withRat = live.filter((x) => recs[x.c]?.rationale).length;
+    let unlabeled = 0; for (const c of workLayer.codes) if (c < 0) unlabeled++;
+    let h = `<div style="font-size:11px;color:var(--faint);margin-bottom:7px">${live.length} labels · <span style="color:${withOnt === live.length ? "var(--good,#6bbf73)" : "var(--amber,#e0a458)"}">${withOnt} with ontology</span> · ${withRat} with rationale${unlabeled ? ` · <span style="color:var(--amber,#e0a458)">${unlabeled} cells unlabeled</span>` : ""}</div><table style="width:100%;border-collapse:collapse;font-size:12px"><tbody>`;
+    for (const { c, i, n } of live) { const r = recs[c] || {};
+      h += `<tr class="lrow" data-l="${esc(c)}" style="border-top:1px solid var(--line);cursor:pointer">
+        <td style="padding:3px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px"><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:rgb(${catColor(i).join(",")});margin-right:6px"></span>${esc(c)}</td>
+        <td style="padding:3px 6px;color:var(--faint);text-align:right">${n}</td>
+        <td style="padding:3px 6px;font-size:10.5px;white-space:nowrap">${r.ontologyTermId ? `<span style="color:var(--cyan)">${esc(r.ontologyTermId)}</span>` : '<span style="color:var(--amber,#e0a458)">⚠ no ontology</span>'}</td>
+        <td style="padding:3px 6px;color:${r.rationale ? "var(--good,#6bbf73)" : "var(--faint)"};font-size:10.5px">${r.rationale ? "✓ rationale" : "—"}</td></tr>`;
+    }
+    h += `</tbody></table>`;
+    lhost.innerHTML = h;
+    lhost.querySelectorAll<HTMLElement>("tr.lrow").forEach((tr) => tr.addEventListener("click", () => showRecord(tr.dataset.l!)));
   };
 
   const colorOf = (cats: string[], label: string | null) => label == null ? "var(--faint)" : `rgb(${catColor(cats.indexOf(label)).join(",")})`;
@@ -412,8 +437,8 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
   };
   seg.querySelectorAll<HTMLButtonElement>("button").forEach((b) => b.onclick = () => {
     mode = b.dataset.m as any; seg.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b));
-    host.style.display = mode === "table" ? "" : "none"; mhost.style.display = mode === "matrix" ? "" : "none";
-    if (mode === "matrix") renderMatrix();
+    host.style.display = mode === "table" ? "" : "none"; mhost.style.display = mode === "matrix" ? "" : "none"; lhost.style.display = mode === "labels" ? "" : "none";
+    if (mode === "matrix") renderMatrix(); else if (mode === "labels") renderLabels();
   });
 
   return { el: w, afterAttach: () => {
