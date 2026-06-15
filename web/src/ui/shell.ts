@@ -626,6 +626,9 @@ export class App {
       rationale: input.rationale ?? prev.rationale,
       suggested: true,
     };
+    // select the resulting label so the record card reliably FOLLOWS the suggestion (and survives the rename) —
+    // a valid current label, not a stale name. This is the single source of truth the card reads after re-render.
+    this.coord.setSelection({ kind: "category", grouping: "annotation", value: label });
     this.fullRender();   // refresh the open record card so the suggestion shows
     return { ok: `proposed “${label}”${newName && newName !== input.label ? ` (renamed from “${input.label}”)` : ""}` };
   }

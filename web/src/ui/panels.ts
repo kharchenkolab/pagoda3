@@ -331,11 +331,13 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
   // view toggle: table (reconcile) · matrix (confusion, vocab-agnostic) · labels (review the working draft)
   const layers = [...(workMeta ? [{ name: "working", codes: workMeta.codes, categories: workMeta.categories }] : []), ...sources];
   const seg = mk("div", "segtog"); seg.style.marginLeft = "auto";
-  let mode: "table" | "matrix" | "labels" = "table";
   const segItems: [string, string][] = [["table", "table"]];
   if (layers.length >= 2) segItems.push(["matrix", "matrix"]);
   if (workMeta) segItems.push(["labels", "labels"]);
-  for (const [m, lbl] of segItems) { const b = mk("button", "mini" + (m === "table" ? " on" : ""), lbl) as HTMLButtonElement; b.dataset.m = m; seg.appendChild(b); }
+  // persist the chosen view across re-renders (a Suggest/accept triggers fullRender; the view must NOT snap
+  // back to "table"). Fall back to table if the persisted mode isn't available this render.
+  let mode = (segItems.some(([m]) => m === (p as any).reconMode) ? (p as any).reconMode : "table") as "table" | "matrix" | "labels";
+  for (const [m, lbl] of segItems) { const b = mk("button", "mini" + (m === mode ? " on" : ""), lbl) as HTMLButtonElement; b.dataset.m = m; seg.appendChild(b); }
   if (segItems.length >= 2) hdr.appendChild(seg);
   w.appendChild(hdr);
   const host = mk("div"); host.style.cssText = "flex:1 1 auto;min-height:0;overflow:auto"; w.appendChild(host);
@@ -470,14 +472,16 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
       if (ids.length) { const r = td.getBoundingClientRect(); hooks.onSelect(Int32Array.from(ids), { left: r.left, top: r.top }); }
     }));
   };
-  seg.querySelectorAll<HTMLButtonElement>("button").forEach((b) => b.onclick = () => {
-    mode = b.dataset.m as any; seg.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b));
+  const applyMode = () => {
+    seg.querySelectorAll("button").forEach((x) => x.classList.toggle("on", (x as HTMLElement).dataset.m === mode));
     host.style.display = mode === "table" ? "" : "none"; mhost.style.display = mode === "matrix" ? "" : "none"; lhost.style.display = mode === "labels" ? "" : "none";
     if (mode === "matrix") renderMatrix(); else if (mode === "labels") renderLabels();
-  });
+  };
+  seg.querySelectorAll<HTMLButtonElement>("button").forEach((b) => b.onclick = () => { mode = b.dataset.m as any; (p as any).reconMode = mode; applyMode(); });
 
   return { el: w, afterAttach: () => {
     const pb = w.parentElement as HTMLElement | null; if (pb) { pb.style.position = "relative"; if (pb.clientHeight < 80) pb.style.height = "320px"; }
+    if (mode !== "table") applyMode();   // restore the persisted view (matrix/labels) on re-render instead of snapping to table
     hooks.registerComposition({ grouping: base, setSelect: (v) => { selRows = v; selCluster = v && v.size === 1 ? [...v][0] : null; paint(); }, setHover: (v) => { if (!selRows?.size) { selRows = v; paint(); } } });
     // a selected cluster's WORKING label drives the folded record detail (translate the selection into the draft).
     // The base reactor above runs first (registration order), so selCluster is set before showRecord reads it.
