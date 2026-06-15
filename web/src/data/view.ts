@@ -68,7 +68,15 @@ export class LstarView {
     return { data: out, n, dim };
   }
 
+  // App-side categorical overlays (annotation layers): metadata() returns these before the zarr, so an
+  // annotation layer behaves like any stored categorical for colour/groupStats/markers. setOverlay also
+  // clears any cached group stats for that name so re-labeling the working draft recomputes.
+  overlays = new Map<string, Metadata>();
+  setOverlay(name: string, m: Metadata) { this.overlays.set(name, m); this.gssCache.delete(name); }
+  removeOverlay(name: string) { this.overlays.delete(name); this.gssCache.delete(name); }
+
   async metadata(name: string): Promise<Metadata> {
+    if (this.overlays.has(name)) return this.overlays.get(name)!;
     const m = this.ds.field(name);
     if (!m) throw new Error("no field " + name);
     if (m.encoding === "utf8" || m.role === "label") {

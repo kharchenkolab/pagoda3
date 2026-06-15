@@ -10,6 +10,7 @@ import { validateCellSet, resolveCellSet, describeCellSet, CellSet, CellWorld, C
 import { validateComputeResult, runInWorker } from "../agent/codeapi.ts";
 import { setCodeValues } from "../render/colors.ts";
 import { paletteNames, normalizePalette } from "../render/palettes.ts";
+import { AnnotationLayer, seedLayer, setLabel } from "../anno/model.ts";
 
 interface Checkpoint { i: number; q: string; why: string; state: any; kind?: "ask" | "act"; exchange?: { kind: string; entries?: any[]; turns?: any[] }; }
 interface WS { colorBy: string; panels: Partial<Panel>[]; }
@@ -28,6 +29,7 @@ export class App {
   suspendRender = false;   // set while applyViewPatch batches a multi-op patch into a single render
   renderToken = 0;         // guards fullRender against concurrent re-entry (async panel build → stale double-append)
   liveMessages: any[] = [];   // the running Anthropic conversation (persists across asks so follow-ups keep context)
+  annoLayers = new Map<string, AnnotationLayer>();   // rich annotation layers (records/provenance); codes also mirrored into ctx as categoricals
   embeddings: EmbeddingView[] = [];
   compReactors: CompReactor[] = [];   // vocabulary-bound panels that highlight a category on a coord hint
   geneHoverSinks: ((sym: string | null) => void)[] = [];   // panels that highlight a gene's row on a coord geneHint
@@ -394,6 +396,35 @@ export class App {
     } finally { this.suspendRender = false; }
     if (needFull) this.fullRender(); else if (needRepaint) { this.repaint(); this.syncColorSelects(); this.syncToggles(); }
     return { applied, rejected, notes };
+  }
+
+  // ----- annotation layers -----
+  // Register/refresh a rich layer: mirror its codes into ctx (so it's a first-class categorical everywhere)
+  // and keep the rich object (records/provenance) app-side. Re-renders so panels keyed to it update.
+  commitLayer(layer: AnnotationLayer, render = true): void {
+    this.annoLayers.set(layer.name, layer);
+    this.ctx.setAnnotationLayer(layer.name, layer.codes, layer.categories);
+    if (render) this.fullRender();
+  }
+  // Begin a working annotation draft by seeding the `annotation` layer from an existing categorical
+  // (cell_type if present, else clusters) — non-destructive; the base grouping is untouched. Colours by it.
+  async startAnnotation(from?: string): Promise<{ ok?: string; error?: string }> {
+    const src = from || (this.ctx.groupings().includes("cell_type") ? "cell_type" : "leiden");
+    let m: any; try { m = await this.ctx.view.metadata(src); } catch { return { error: `no field "${src}"` }; }
+    if (m.kind !== "categorical") return { error: `"${src}" is not categorical` };
+    const layer = seedLayer("annotation", "derived", { codes: m.codes, categories: m.categories });
+    layer.provenance = { method: "seed", params: { from: src } };
+    this.commitLayer(layer, false);
+    this.noteColor("meta:annotation"); this.coord.setColor("meta:annotation");
+    this.fullRender();
+    return { ok: `started annotation draft from ${src} (${layer.categories.length} labels)` };
+  }
+  // Label a cell set in a layer (default the working draft). Last-write-wins; re-renders.
+  labelCells(cellIds: ArrayLike<number>, label: string, layerName = "annotation"): void {
+    let layer = this.annoLayers.get(layerName);
+    if (!layer) { layer = seedLayer(layerName, "manual", { codes: new Int32Array(this.ctx.view.nCells).fill(-1), categories: [] }); }
+    setLabel(layer, cellIds, label);
+    this.commitLayer(layer);
   }
 
   // Build a Panel from a normalized PanelSpec — view fields into .view, bind/group set per type.
