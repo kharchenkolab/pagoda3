@@ -43,6 +43,12 @@ export function setCodeValues(label: string, values: Float32Array): void {
   let mx = 0; for (let i = 0; i < values.length; i++) if (values[i] > mx) mx = values[i];
   codeStore.set(label, { values, max: mx || 1 });
 }
+// Per-cell confidence vectors for annotation sources → the `conf:<layer>` handle (uncertain = where to look).
+const confStore = new Map<string, { values: Float32Array; max: number }>();
+export function setConfValues(label: string, values: Float32Array): void {
+  let mx = 0; for (let i = 0; i < values.length; i++) if (values[i] > mx) mx = values[i];
+  confStore.set(label, { values, max: mx || 1 });
+}
 
 export async function colorsFor(view: LstarView, colorBy: string, focusMask?: Uint8Array, colormap?: string): Promise<{ rgba: Uint8Array; legend: Legend }> {
   const pal = PALETTES[normalizePalette(colormap || "") || "amber"];   // chosen palette for numeric colourings; default = amber
@@ -73,6 +79,12 @@ export async function colorsFor(view: LstarView, colorBy: string, focusMask?: Ui
     // mark the legend unvalidated → the panel shows a persistent "custom" badge (this colouring came from
     // sandboxed agent code, not a validated metric), so it's never mistaken for a real gene/QC colouring.
     return { rgba: numericRGBA(vals, e ? e.max : 1, pal, focusMask), legend: { ...numericLegend(rest, pal), unvalidated: true } };
+  }
+  if (kind === "conf") {
+    // per-cell CONFIDENCE of an annotation source (scType margin / CellTypist prob). Low = where the call is
+    // uncertain — i.e. where reconciliation is hard. Honest spatial signal (vocabulary-free).
+    const e = confStore.get(rest); const vals = e ? e.values : new Float32Array(view.nCells);
+    return { rgba: numericRGBA(vals, e ? e.max : 1, pal, focusMask), legend: { ...numericLegend(rest + " confidence", pal) } };
   }
   if (kind === "geneset") {
     const m = await md(view, "aspect_scores"); // dense (cells, aspects)

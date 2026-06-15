@@ -68,5 +68,6 @@ export function handleLabel(handle: string): string {
   if (kind === "qc") return rest;
   if (kind === "geneset") return rest;
   if (kind === "code") return rest;   // a custom per-cell score from compute_code
+  if (kind === "conf") return rest + " confidence";   // annotation-source confidence (uncertain = where to look)
   return handle;
 }

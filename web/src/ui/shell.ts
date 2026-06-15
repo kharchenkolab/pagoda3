@@ -8,7 +8,7 @@ import { checkLive } from "../agent/live.ts";
 import { normalizeViewPatch, RawViewPatch, World, PanelSpec, PanelPatch } from "../agent/viewpatch.ts";
 import { validateCellSet, resolveCellSet, describeCellSet, CellSet, CellWorld, CellEnv } from "../agent/cellset.ts";
 import { validateComputeResult, runInWorker } from "../agent/codeapi.ts";
-import { setCodeValues } from "../render/colors.ts";
+import { setCodeValues, setConfValues } from "../render/colors.ts";
 import { paletteNames, normalizePalette } from "../render/palettes.ts";
 import { AnnotationLayer, seedLayer, setLabel, reconcile } from "../anno/model.ts";
 import { PBMC_MARKERS, MarkerDB } from "../anno/markerdb.ts";
@@ -454,6 +454,7 @@ export class App {
     const codes = new Int32Array(baseMeta.codes.length), conf = new Float32Array(baseMeta.codes.length);
     for (let i = 0; i < codes.length; i++) { const g = baseMeta.codes[i]; if (g >= 0 && g < groupToCat.length) { codes[i] = groupToCat[g]; conf[i] = assigned[g].margin; } else codes[i] = -1; }
     const layer: AnnotationLayer = { name: "scType", source: "sctype", codes, categories: cats, confidence: conf, records: {}, provenance: { method: "scType", params: { base, db: opts?.db ? "custom" : "PBMC_MARKERS" } } };
+    setConfValues("scType", conf);   // colour by conf:scType to see low-confidence (ambiguous) cells
     this.commitLayer(layer);
     return { ok: `scType labeled ${gs.groups.length} ${base} clusters → ${cats.length} cell types (${cats.slice(0, 5).join(", ")}${cats.length > 5 ? "…" : ""})` };
   }
@@ -475,6 +476,7 @@ export class App {
     if (!present) return { error: "none of the model's genes are present in this dataset" };
     const { codes, conf } = lrFinalize(logits, N, C);
     const layer: AnnotationLayer = { name: "CellTypist", source: "celltypist", codes, categories: model.classes.slice(), confidence: conf, records: {}, provenance: { method: "CellTypist", params: { genes: `${present}/${model.genes.length}` } } };
+    setConfValues("CellTypist", conf);
     this.commitLayer(layer);
     return { ok: `CellTypist labeled ${N} cells using ${present}/${model.genes.length} model genes → ${new Set(codes).size} classes` };
   }
@@ -963,7 +965,11 @@ export class App {
   }
   // <option> list for an embedding colour dropdown from the capped choices (always including the current handle).
   colorOptionsHtml(cur: string): string {
-    const opts = cur && !this.colorChoices.some(([h]) => h === cur) ? [[cur, handleLabel(cur)] as [string, string], ...this.colorChoices] : this.colorChoices;
+    // annotation sources with per-cell confidence add a "<src> confidence" option — colour by it to see the
+    // uncertain (ambiguous) cells, i.e. where reconciliation is hard.
+    const confOpts = [...this.annoLayers.values()].filter((l) => l.confidence).map((l) => [`conf:${l.name}`, `${l.name} confidence`] as [string, string]);
+    const all = [...this.colorChoices, ...confOpts];
+    const opts = cur && !all.some(([h]) => h === cur) ? [[cur, handleLabel(cur)] as [string, string], ...all] : all;
     return opts.map(([v, l]) => `<option value="${v}"${v === cur ? " selected" : ""}>${l}</option>`).join("");
   }
   // reflect display state onto the header toggle buttons — PER PANEL (each button reads its own panel's
