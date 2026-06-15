@@ -417,9 +417,11 @@ async function annoRecordBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bu
     const idx = layer.categories.indexOf(current); const n = idx >= 0 ? counts[idx] : 0;
     const liveLabels = layer.categories.filter((c, i) => counts[i] > 0 || c === current);
     w.innerHTML = `
+     <div style="max-width:760px">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-        <select id="arlabel" class="inline" style="font-size:13px;font-weight:600;max-width:200px">${liveLabels.map((c) => `<option${c === current ? " selected" : ""}>${esc(c)}</option>`).join("")}</select>
+        <select id="arlabel" class="inline" style="font-size:13px;font-weight:600;max-width:220px">${liveLabels.map((c) => `<option${c === current ? " selected" : ""}>${esc(c)}</option>`).join("")}</select>
         <span style="color:var(--faint)">${n} cells</span>
+        <span id="arsaved" style="color:var(--good,#6bbf73);font-size:11px;opacity:0;transition:opacity .2s">saved ✓</span>
         <button id="arexport" class="mini" style="margin-left:auto">export CAP</button>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:9px 14px">
@@ -432,11 +434,13 @@ async function annoRecordBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bu
           <div>${(rec.markerEvidence || []).map((g) => `<span style="font-family:var(--mono);font-size:11px;border:1px solid var(--line2);border-radius:5px;padding:1px 6px;margin:0 4px 4px 0;display:inline-block">${esc(g)}</span>`).join("")}</div></label>
         <label style="grid-column:1/-1">canonical markers<input id="ar_canon" value="${esc((rec.canonicalMarkers || []).join(", "))}" placeholder="comma-separated"></label>
         <label style="grid-column:1/-1">rationale<textarea id="ar_rat" rows="2" style="resize:vertical">${esc(rec.rationale || "")}</textarea></label>
-      </div>`;
+      </div>
+     </div>`;
     w.querySelectorAll<HTMLElement>("label").forEach((l) => l.style.cssText = "display:flex;flex-direction:column;gap:3px;color:var(--faint);font-size:11px");
     w.querySelectorAll<HTMLElement>("input,textarea").forEach((i) => i.style.fontSize = "12px");
     const val = (id: string) => (w.querySelector("#" + id) as HTMLInputElement | null)?.value || "";
-    const save = () => hooks.saveRecord(layerName, { label: current, fullName: val("ar_full"), category: val("ar_cat"), ontologyTermId: val("ar_oid"), ontologyTerm: val("ar_oterm"), canonicalMarkers: val("ar_canon").split(",").map((s) => s.trim()).filter(Boolean), rationale: val("ar_rat"), markerEvidence: rec.markerEvidence });
+    const flashSaved = () => { const s = w.querySelector("#arsaved") as HTMLElement | null; if (!s) return; s.style.opacity = "1"; setTimeout(() => { s.style.opacity = "0"; }, 1200); };
+    const save = () => { hooks.saveRecord(layerName, { label: current, fullName: val("ar_full"), category: val("ar_cat"), ontologyTermId: val("ar_oid"), ontologyTerm: val("ar_oterm"), canonicalMarkers: val("ar_canon").split(",").map((s) => s.trim()).filter(Boolean), rationale: val("ar_rat"), markerEvidence: rec.markerEvidence }); flashSaved(); };
     w.querySelectorAll("input,textarea").forEach((i) => i.addEventListener("change", save));
     (w.querySelector("#arlabel") as HTMLSelectElement).onchange = (e) => { save(); current = (e.target as HTMLSelectElement).value; draw(); };
     (w.querySelector("#ar_ols") as HTMLButtonElement).onclick = async () => {
