@@ -2,6 +2,7 @@
 // the real libstar WASM kernels when available (numbers match R/Python), with a pure-TS fallback.
 import type { LstarDataset } from "./store.ts";
 import { kernels } from "./kernels.ts";
+import { DIM_RGB, DIM_A } from "../render/theme.ts";   // theme-aware non-focus dot colour (live binding)
 
 export type Metadata =
   | { kind: "categorical"; codes: Int32Array; categories: string[]; colors?: number[] }   // colors = per-category palette INDEX (annotation layers use a stable name→colour map)
@@ -464,7 +465,6 @@ function sample(arr: number[], k: number): number[] {
 const RAMP_LO = [27, 34, 48], RAMP_HI = [224, 164, 88]; // inset -> amber (matches the mock)
 // out-of-selection cells go to a desaturated slate (kept VISIBLE as context) so the in-selection cells
 // pop by colour + halo — clearer than dropping alpha toward invisible (the old behaviour).
-const DIM_RGB = [62, 68, 80], DIM_A = 150;
 export function scalarToRGBA(values: ArrayLike<number>, max: number, focusMask?: Uint8Array): Uint8Array {
   const n = values.length, out = new Uint8Array(n * 4), m = max || 1;
   for (let i = 0; i < n; i++) {

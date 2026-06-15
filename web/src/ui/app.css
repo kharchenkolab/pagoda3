@@ -1,10 +1,18 @@
 :root{
   --ink:#0d1117; --panel:#161b22; --inset:#1b2230; --line:#2a3340; --line2:#222a35;
   --text:#d7dee8; --dim:#8a97a8; --faint:#5b6675;
-  --teal:#3fb6b2; --cyan:#5cc8ff; --amber:#e0a458; --ok:#5bbf8f; --bad:#e07a7a;
+  --teal:#3fb6b2; --cyan:#5cc8ff; --amber:#e0a458; --ok:#5bbf8f; --good:#5bbf8f; --bad:#e07a7a;
   --ct0:#6ea8fe; --ct1:#e0a458; --ct2:#b48ead; --ct3:#88c0a0; --ct4:#d98c8c;
   --mono: ui-monospace,"SF Mono","Cascadia Code",Menlo,Consolas,monospace;
   --sans: -apple-system,"Segoe UI",system-ui,Roboto,sans-serif;
+}
+/* LIGHT theme — solarized-style. Overrides the same vars, so the whole DOM re-themes; the embedding canvas is
+   transparent (panel bg shows through) and its non-focus dot colour is set in JS (theme.ts). */
+html.light{
+  --ink:#eee8d5; --panel:#fdf6e3; --inset:#e9e1ca; --line:#d7cdb2; --line2:#e7dfc9;
+  --text:#586e75; --dim:#657b83; --faint:#93a1a1;
+  --teal:#2aa198; --cyan:#1f7faf; --amber:#b07d00; --ok:#6f8f00; --good:#6f8f00; --bad:#dc322f;
+  --ct0:#268bd2; --ct1:#cb4b16; --ct2:#6c71c4; --ct3:#859900; --ct4:#d33682;
 }
 *{box-sizing:border-box}
 html,body{margin:0;height:100%;background:var(--ink);color:var(--text);

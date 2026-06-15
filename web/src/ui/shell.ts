@@ -9,6 +9,7 @@ import { normalizeViewPatch, RawViewPatch, World, PanelSpec, PanelPatch } from "
 import { validateCellSet, resolveCellSet, describeCellSet, CellSet, CellWorld, CellEnv } from "../agent/cellset.ts";
 import { validateComputeResult, runInWorker } from "../agent/codeapi.ts";
 import { setCodeValues, setConfValues, invalidateColor } from "../render/colors.ts";
+import { setThemeColors } from "../render/theme.ts";
 import { paletteNames, normalizePalette } from "../render/palettes.ts";
 import { AnnotationLayer, seedLayer, setLabel, reconcile, compact, hierarchyDepth, rollupToLevel } from "../anno/model.ts";
 import { PBMC_MARKERS, MarkerDB } from "../anno/markerdb.ts";
@@ -86,6 +87,7 @@ export class App {
         <div class="spacer"></div>
         <div class="tb pip" id="askBtn"><span class="dot"></span>Ask<span class="kbd">⌘K</span></div>
         <div class="tb" id="lockBtn">🔓 Layout</div>
+        <div class="tb" id="themeBtn" title="toggle light / dark theme">☾</div>
         <div class="tb" id="railBtn">Answers</div>
       </div>
       <div class="stage">
@@ -1031,6 +1033,16 @@ export class App {
     if (!this.thread) this.setPip("listening"); this.renderScope(); (this.$("pin") as HTMLInputElement).value = ""; this.filter(""); (this.$("pin") as HTMLInputElement).focus();
   }
   closePalette() { this.$("scrim").classList.remove("show"); this.$("palette").classList.remove("show"); if (!this.thread) this.setPip(this.nudgePending ? "nudge" : "idle", this.nudgePending ? "1" : undefined); }
+  // Light / dark theme. The DOM re-themes via CSS variables (html.light overrides :root); the embedding's
+  // non-focus dot colour is JS-set (theme.ts), so update it + repaint. Persisted as a preference.
+  applyTheme(theme: "light" | "dark"): void {
+    const light = theme === "light";
+    document.documentElement.classList.toggle("light", light);
+    setThemeColors(!light);
+    try { localStorage.setItem("p2-theme", theme); } catch {}
+    const b = this.$("themeBtn"); if (b) { b.textContent = light ? "☀" : "☾"; b.title = light ? "switch to dark theme" : "switch to light theme"; }
+    if (this.embeddings.length) this.repaint();   // recolour the embeddings with the theme's dim colour
+  }
   // The global FOCUS chip in the top bar — the inter-panel "restricted to this subpopulation" indicator AND
   // its release control (clicking "show all" clears focus everywhere). Visible whenever a focus is set.
   renderFocus() {
@@ -1049,6 +1061,8 @@ export class App {
   wire() {
     this.$("askBtn").onclick = () => { if (this.nudgePending) this.agent.openNudge(); else this.openPalette(); };
     this.$("lockBtn").onclick = () => { this.locked = !this.locked; this.$("lockBtn").classList.toggle("on", this.locked); this.$("lockBtn").textContent = this.locked ? "🔒 Layout" : "🔓 Layout"; this.toast(this.locked ? "Layout locked" : "Layout unlocked", this.locked ? "The agent will route bigger changes to the rail instead of touching your workbench." : null); };
+    this.$("themeBtn").onclick = () => this.applyTheme(document.documentElement.classList.contains("light") ? "dark" : "light");
+    this.applyTheme((localStorage.getItem("p2-theme") as "light" | "dark") || "dark");   // restore the saved preference
     this.$("railBtn").onclick = () => this.setRail(!this.$("rail").classList.contains("open"));
     this.$("railX").onclick = () => this.setRail(false);
     // drag the Answers column's left edge to resize it (width persists for the session)

@@ -5,7 +5,7 @@ import { PALETTES, normalizePalette, Palette } from "./palettes.ts";
 
 export interface Legend { kind: "categorical" | "numeric"; items: { label: string; rgb: [number, number, number] }[]; title: string; unvalidated?: boolean; }
 
-const DIM_RGB = [62, 68, 80], DIM_A = 150;   // non-focus cells under a focus (matches view.ts scalarToRGBA)
+import { DIM_RGB, DIM_A } from "./theme.ts";   // non-focus cells under a focus — theme-aware (live binding)
 // Per-cell RGBA for a NUMERIC field through a chosen palette. Replaces the old fixed-ramp scalarToRGBA so the
 // colormap is a drivable property, not baked into paint.
 function numericRGBA(values: ArrayLike<number>, max: number, pal: Palette, focusMask?: Uint8Array): Uint8Array {
