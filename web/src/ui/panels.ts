@@ -357,7 +357,7 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
   const lhost = mk("div"); lhost.style.cssText = "flex:1 1 auto;min-height:0;overflow:auto;display:none;padding:8px 10px"; w.appendChild(lhost);
   // the CAP record for the selected cluster's working label — folded in here (cohesive single panel, not a
   // separate full-width one). Follows the selection; updates on accept.
-  const recDetail = mk("div"); recDetail.style.cssText = "flex:0 0 auto;max-height:46%;overflow:auto;border-top:1px solid var(--line);padding:8px 10px;background:var(--card)"; w.appendChild(recDetail);
+  const recDetail = mk("div", "rcrec"); recDetail.style.cssText = "flex:0 0 auto;max-height:46%;overflow:auto;border-top:1px solid var(--line);padding:8px 10px;background:var(--card)"; w.appendChild(recDetail);
   const workLayer = hooks.annoLayer("annotation");
   let recLabel: string | null = (p as any).recordLabel || null;
   let selCluster: string | null = null;   // the base cluster the user last clicked (drives the card's context line)

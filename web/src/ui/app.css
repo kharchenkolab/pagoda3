@@ -14,10 +14,10 @@
    foreground (slightly darker). So ink=white › panel=barely-off-white › card=a touch more. The warm cream (--inset)
    stays a designation tint (header shade, working column). Embedding canvas is transparent; its dot colour is JS-set. */
 html.light{
-  --ink:#ffffff; --panel:#fbfaf7; --inset:#f3ecd9; --card:#ece8df; --line:#e0ddd2; --line2:#eeece3;
+  --ink:#ffffff; --panel:#fbfaf7; --inset:#f3ecd9; --card:#f5f1ea; --line:#e0ddd2; --line2:#eeece3;
   /* --ink (desktop behind panels) = white; --panel = barely-off-white so panels read as raised against it.
-     --card (record card) = a warm, desaturated greige — a clear step below the near-white table, but less yellow
-     than the cream --inset designation, so it reads as its own calm surface and fits the warm palette. */
+     --card (record card) = a light, warm tint — its border-top does the separating, so it can stay airy; the card's
+     fields use var(--ink) (white) for crisp contrast against it (see .rcrec). */
   --text:#33444b; --dim:#5a6970; --faint:#7c8789;
   --teal:#2a9d96; --cyan:#1f7faf; --amber:#a9750a; --ok:#5f8500; --good:#5f8500; --bad:#cb2f2f;
   --on-accent:#ffffff;   /* light-theme accents are DARKER → white text on them reads */
@@ -274,6 +274,9 @@ select.inline{background:var(--inset);color:var(--text);border:1px solid var(--l
 .pbody input:not(.inline),.pbody textarea{background:var(--inset);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:5px 8px;font-family:var(--sans);outline:none}
 .pbody input:not(.inline)::placeholder,.pbody textarea::placeholder{color:var(--faint)}
 .pbody input:not(.inline):focus,.pbody textarea:focus{border-color:var(--cyan)}
+/* record-card fields: --inset ≈ --card (and identical in dark), so fields would vanish into the card. Give them
+   var(--ink) — white on the light card (crisp), near-black on the dark card (recessed) — for clear contrast. */
+.rcrec input:not(.inline),.rcrec textarea,.rcrec select.inline{background:var(--ink)}
 .embhost{position:absolute;inset:0}
 .emblegend{position:absolute;left:10px;bottom:10px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:var(--chip);border:1px solid var(--line);border-radius:8px;padding:5px 9px;font-size:10.5px;color:var(--dim);max-width:90%;backdrop-filter:blur(3px)}
 .emblegend:empty{display:none}
