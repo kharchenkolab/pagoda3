@@ -33,6 +33,8 @@ export interface RawViewPatch {
   color?: string;                                              // global colour handle
   focus?: { dim?: string; value?: string; set?: any; label?: string };   // global focus: a category (dim=value) OR a cell-SET (for populations spanning several labels, e.g. T cells)
   clearFocus?: boolean;
+  select?: { dim?: string; value?: string };   // transient selection of a metadata value (cross-filters facets, highlights embedding)
+  clearSelect?: boolean;
   display?: { labels?: boolean; legend?: boolean; alpha?: number; winsor?: number };
   panels?: RawPanelOp[];
   facet?: { by?: string; panel?: number; values?: string[]; layout?: string };   // split one panel into aligned copies
@@ -47,6 +49,8 @@ export type NormOp =
   | { kind: "color"; handle: string }
   | { kind: "focus"; dim?: string; value?: string; set?: any; label?: string }
   | { kind: "clearFocus" }
+  | { kind: "select"; dim?: string; value?: string }
+  | { kind: "clearSelect" }
   | { kind: "display"; patch: { labels?: boolean; legend?: boolean; alpha?: number; winsor?: number } }
   | { kind: "addPanel"; spec: PanelSpec }
   | { kind: "configPanel"; id: number; patch: PanelPatch }
@@ -129,6 +133,13 @@ export function normalizeViewPatch(patch: RawViewPatch, w: World): NormResult {
     if (!w.categoricals.includes(dim)) rejected.push(`focus: unknown field "${dim}" (have: ${w.categoricals.join(", ") || "—"})`);
     else if (!w.valuesOf(dim).includes(value)) rejected.push(`focus: "${value}" is not a value of ${dim}`);
     else ops.push({ kind: "focus", dim, value, label: `${dim} = ${value}` });
+  }
+  if (patch.clearSelect) ops.push({ kind: "clearSelect" });
+  else if (patch.select && patch.select.dim && patch.select.value) {   // transient SELECTION of a metadata value (cross-filters the facets, highlights the embedding) — lighter than focus
+    const { dim, value } = patch.select;
+    if (!w.categoricals.includes(dim)) rejected.push(`select: unknown field "${dim}" (have: ${w.categoricals.join(", ") || "—"})`);
+    else if (!w.valuesOf(dim).includes(value)) rejected.push(`select: "${value}" is not a value of ${dim}`);
+    else ops.push({ kind: "select", dim, value });
   }
   if (patch.display && typeof patch.display === "object") {
     const d: { labels?: boolean; legend?: boolean; alpha?: number; winsor?: number } = {};

@@ -134,6 +134,8 @@ export class App {
       onCellClick: (idx, anchor) => this.onCellClick(idx, anchor),
       registerComposition: (r) => this.compReactors.push(r),
       onCoord: (fn) => { const u = this.coord.subscribe(fn); this.coordSubs.push(u); },   // managed coord subscription — torn down on fullRender (no leak)
+      focusCategory: (field, value) => { const r = this.focusFromOp({ dim: field, value }); if (!r.error) { this.fullRender(); this.checkpoint(`focus · ${field}=${value}`, "Restricted the workspace to a metadata value — release with the focus chip."); } },
+      addPanel: (spec) => { this.addPanel(spec); this.fullRender(); },
       onConfigurePanel: (id, patch) => this.configurePanel(id, patch),
       registerGeneHover: (fn) => this.geneHoverSinks.push(fn),
       annotate: (ids, label, layer) => this.labelCells(ids, label, layer),
@@ -400,6 +402,8 @@ export class App {
         if (op.kind === "color") { for (const p of this.canvas) if (p.type === "Embedding" && p.view?.colorBy) delete p.view.colorBy; this.noteColor(op.handle); this.coord.setColor(op.handle); applied.push(`colour → ${handleLabel(op.handle)}`); needRepaint = true; }
         else if (op.kind === "focus") { const r = this.focusFromOp(op); if (r.error) rejected.push(r.error); else { applied.push(`focus → ${r.label}`); needFull = true; } }   // needFull: the reconcile table re-filters to the focus
         else if (op.kind === "clearFocus") { this.coord.clearFocus(); applied.push("released focus"); needFull = true; }
+        else if (op.kind === "select") { this.coord.setSelection({ kind: "category", grouping: op.dim!, value: op.value! }); applied.push(`select → ${op.dim} = ${op.value}`); needRepaint = true; }
+        else if (op.kind === "clearSelect") { this.coord.setSelection(null); applied.push("cleared selection"); needRepaint = true; }
         else if (op.kind === "display") {   // display is per-panel — a top-level display patch fans out to every embedding (so "show labels" applies to all, with no global coupling)
           for (const p of this.canvas) if (p.type === "Embedding") p.view = { ...p.view, display: { ...(p.view?.display || {}), ...op.patch } };
           applied.push(`display ${JSON.stringify(op.patch)}`); needRepaint = true;

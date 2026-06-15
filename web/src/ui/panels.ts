@@ -38,6 +38,8 @@ export interface PanelHooks {
   onCellClick: (index: number | null, anchor?: { left: number; top: number }) => void;   // embedding click → select cluster (+ selpop), or deselect (empty)
   registerComposition: (r: CompReactor) => void;               // a panel that reacts to selection + hint
   onCoord: (fn: (s: any, changed: string[]) => void) => void;  // managed coord subscription (colorBy/selection/focus reactivity); cleaned up on fullRender
+  focusCategory: (field: string, value: string) => void;       // restrict the workspace to a metadata value (focus + chip)
+  addPanel: (spec: any) => void;                               // add a panel to the workbench (e.g. → composition hand-off)
   onConfigurePanel: (panelId: number, patch: any) => void;     // a panel reconfiguring itself (e.g. dismissing pinned genes)
   registerGeneHover: (fn: (sym: string | null) => void) => void;   // a panel that highlights a gene's row on cross-panel geneHint
   annotate: (cellIds: ArrayLike<number>, label: string, layer?: string) => void;   // write a label onto a cell set in an annotation layer (default the working draft)
@@ -313,8 +315,13 @@ async function facetsBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltB
   const w = mk("div"); w.style.cssText = "position:absolute;inset:0;display:flex;flex-direction:column;overflow:hidden;font-size:12px";
   const hdr = mk("div"); hdr.style.cssText = "flex:0 0 auto;display:flex;align-items:center;gap:7px;padding:6px 10px;border-bottom:1px solid var(--line2)";
   const search = document.createElement("input"); search.placeholder = "filter fields…"; search.className = "facetsearch"; search.style.cssText = "flex:1;min-width:0;font-size:11px;padding:3px 8px";
-  hdr.appendChild(search); w.appendChild(hdr);
+  let sortMode: "count" | "name" = (p as any).facetSort === "name" ? "name" : "count";
+  const sortBtn = mk("button", "mini facetsort") as HTMLButtonElement; sortBtn.title = "sort values: count ↔ name";
+  const setSortLabel = () => { sortBtn.textContent = sortMode === "count" ? "↓ #" : "a–z"; };
+  sortBtn.onclick = () => { sortMode = sortMode === "count" ? "name" : "count"; (p as any).facetSort = sortMode; setSortLabel(); render(); };
+  hdr.appendChild(search); hdr.appendChild(sortBtn); w.appendChild(hdr); setSortLabel();
   const host = mk("div"); host.style.cssText = "flex:1 1 auto;min-height:0;overflow:auto"; w.appendChild(host);
+  const brush = (p as any).facetBrush || ((p as any).facetBrush = { field: "", lo: 0, hi: 0, mn: 0, mx: -1 });   // persisted histogram brush
 
   // expanded fields persist on the panel (instanceof guard: a workspace-switch JSON round-trip turns a Set into {})
   let open: Set<string> = (p as any).facetOpen instanceof Set ? (p as any).facetOpen : ((p as any).facetOpen = new Set<string>());
@@ -325,7 +332,8 @@ async function facetsBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltB
 
   const valuesEl = (f: any, sel: any, selCells: Int32Array | null) => {
     const G = meta.get(f.name); if (!G) return mk("div");
-    const order = valueStats(f.name);                            // stable full-data order
+    let order = valueStats(f.name);                              // count-sorted (stable order)
+    if (sortMode === "name") order = [...order].sort((a: any, b: any) => a.value.localeCompare(b.value, undefined, { numeric: true }));
     const act = activeField();
     const F = (act && act !== f.name && meta.has(act)) ? meta.get(act) : null;   // crosstab vs the active colour-by (categorical only)
     const t = tally(G, F, selCells);                            // counts (+ segments) over the current universe
@@ -338,14 +346,26 @@ async function facetsBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltB
       const seg = (F && cnt > 0) ? F.categories.map((_: any, fi: number) => { const s = t.seg![gi][fi]; return s ? `<i style="width:${(s / cnt * 100).toFixed(2)}%;background:${Fcol![fi]}"></i>` : ""; }).join("")
                                  : (cnt > 0 ? `<i style="width:100%;background:${self}"></i>` : "");
       const selfOn = sel && sel.kind === "category" && sel.grouping === f.name && sel.value === r.value;
-      return `<div class="facetv${selfOn ? " on" : ""}${selCells && !cnt ? " dim" : ""}" data-v="${esc(r.value)}" title="${esc(r.value)} · ${cnt.toLocaleString()} cells">
+      return `<div class="facetv${selfOn ? " on" : ""}${selCells && !cnt ? " dim" : ""}" data-v="${esc(r.value)}" title="${esc(r.value)} · ${cnt.toLocaleString()} cells · click to select, ⌘-click to add, ⊙ to focus">
         <span class="vsw" style="background:${self}"></span><span class="vname">${esc(r.value)}</span>
         <span class="vbar"><span class="vbarfill" style="width:${(cnt / maxC * 100).toFixed(1)}%">${seg}</span></span>
-        <span class="vcount">${cnt.toLocaleString()}</span></div>`;
+        <span class="vcount">${cnt.toLocaleString()}</span><span class="vfocus" title="restrict the workspace to this value">⊙</span></div>`;
     }).join("");
     wrap.querySelectorAll<HTMLElement>(".facetv").forEach((el) => {
       const value = el.dataset.v!;
-      el.onclick = () => { const c = ctx.coord.state.selection; const same = !!c && c.kind === "category" && (c as any).grouping === f.name && (c as any).value === value; ctx.coord.setSelection(same ? null : { kind: "category", grouping: f.name, value }); };
+      el.onclick = (e) => {
+        if ((e.target as HTMLElement).closest(".vfocus")) return;
+        if (e.metaKey || e.shiftKey || e.ctrlKey) {   // additive: union this value's cells into the selection (across fields)
+          const cur = ctx.coord.state.selection, curCells = cur ? ctx.refToCells(cur) : new Int32Array(0);
+          const add = ctx.cellsOfCategory(f.name, value); const set = new Set<number>();
+          for (let j = 0; j < curCells.length; j++) set.add(curCells[j]); for (let j = 0; j < add.length; j++) set.add(add[j]);
+          ctx.coord.setSelection(set.size ? { kind: "cells", ids: Int32Array.from(set) } : null);
+        } else {
+          const c = ctx.coord.state.selection; const same = !!c && c.kind === "category" && (c as any).grouping === f.name && (c as any).value === value;
+          ctx.coord.setSelection(same ? null : { kind: "category", grouping: f.name, value });
+        }
+      };
+      (el.querySelector(".vfocus") as HTMLElement).onclick = (e) => { e.stopPropagation(); hooks.focusCategory(f.name, value); };
       el.addEventListener("pointerenter", () => ctx.coord.setHint({ kind: "category", grouping: f.name, value }));
       el.addEventListener("pointerleave", () => ctx.coord.clearHint());
     });
@@ -359,9 +379,10 @@ async function facetsBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltB
     const hist = new Int32Array(BINS), N = selCells ? selCells.length : vals.length;
     for (let k = 0; k < N; k++) { const v = vals[selCells ? selCells[k] : k]; let bi = Math.floor((v - lo) / wbin); if (bi < 0) bi = 0; else if (bi >= BINS) bi = BINS - 1; hist[bi]++; }
     const maxH = hist.reduce((m, x) => Math.max(m, x), 1);
+    const mine = brush.field === f.name && brush.mx >= brush.mn;   // a persisted brush on THIS field
     const wrap = mk("div", "facethist");
-    wrap.innerHTML = `<div class="hbars">${Array.from(hist, (h, i) => `<span class="hbin" data-i="${i}" style="height:${(h / maxH * 100).toFixed(1)}%"></span>`).join("")}</div>
-      <div class="hmeta"><span>${fmtNum(lo)}</span><span class="hrange">drag to brush a range</span><span>${fmtNum(hi)}</span></div>`;
+    wrap.innerHTML = `<div class="hbars">${Array.from(hist, (h, i) => `<span class="hbin${mine && i >= brush.mn && i <= brush.mx ? " sel" : ""}" data-i="${i}" style="height:${(h / maxH * 100).toFixed(1)}%"></span>`).join("")}</div>
+      <div class="hmeta"><span>${fmtNum(lo)}</span><span class="hrange">${mine ? `${fmtNum(brush.lo)}–${fmtNum(brush.hi)}` : "drag to brush a range"}</span><span>${fmtNum(hi)}</span></div>`;
     const bars = wrap.querySelector(".hbars") as HTMLElement, rangeEl = wrap.querySelector(".hrange") as HTMLElement;
     let down = -1;
     const binAt = (e: PointerEvent) => { const r = bars.getBoundingClientRect(); return Math.max(0, Math.min(BINS - 1, Math.floor((e.clientX - r.left) / r.width * BINS))); };
@@ -373,6 +394,7 @@ async function facetsBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltB
       const vlo = lo + mn * wbin, vhi = lo + (mx + 1) * wbin, ids: number[] = [];
       for (let i = 0; i < vals.length; i++) if (vals[i] >= vlo && vals[i] <= vhi) ids.push(i);
       rangeEl.textContent = `${fmtNum(vlo)}–${fmtNum(vhi)} · ${ids.length.toLocaleString()} cells`;
+      (p as any).facetBrush = { field: f.name, lo: vlo, hi: vhi, mn, mx };   // persist so the readout survives re-render
       ctx.coord.setSelection(ids.length ? { kind: "cells", ids: Int32Array.from(ids) } : null);
     });
     return wrap;
@@ -384,10 +406,15 @@ async function facetsBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltB
     const row = mk("div", "facetf");
     const count = f.kind === "categorical" ? `<span class="fcount">${meta.get(f.name)?.categories.length ?? 0}</span>` : `<span class="fnum" title="numeric covariate">#</span>`;
     row.innerHTML = `<span class="fchev">${isOpen ? "▾" : "▸"}</span><span class="fname">${esc(f.name)}</span>${count}<span style="flex:1"></span>`;
+    if (f.group === "annotation") {   // composition-by-sample is meaningful for cell-type/cluster groupings (proportions per sample)
+      const comp = mk("button", "fcomp mini", "▤"); comp.title = `open composition by sample, stacked by ${f.name}`;
+      comp.onclick = (e) => { e.stopPropagation(); hooks.addPanel({ type: "CompositionBars", title: `Composition · ${f.name}`, cap: "by sample", bind: "composition:bySample", view: { colorBy: "meta:" + f.name } }); };
+      row.appendChild(comp);
+    }
     const drop = mk("button", "fdrop mini" + (act === f.name ? " on" : ""), "◉"); drop.title = `colour the embedding by ${f.name}`;
     drop.onclick = (e) => { e.stopPropagation(); ctx.coord.setColor("meta:" + f.name); };
     row.appendChild(drop);
-    row.onclick = (e) => { if ((e.target as HTMLElement).closest(".fdrop")) return; if (open.has(f.name)) open.delete(f.name); else open.add(f.name); render(); };
+    row.onclick = (e) => { if ((e.target as HTMLElement).closest(".fdrop,.fcomp")) return; if (open.has(f.name)) open.delete(f.name); else open.add(f.name); render(); };
     box.appendChild(row);
     if (isOpen) box.appendChild(f.kind === "categorical" ? valuesEl(f, sel, selCells) : numericEl(f, selCells));
     return box;
