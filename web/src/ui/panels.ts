@@ -350,12 +350,22 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
   const workLayer = hooks.annoLayer("annotation");
   let recLabel: string | null = (p as any).recordLabel || null;
   let selCluster: string | null = null;   // the base cluster the user last clicked (drives the card's context line)
+  let recCollapsed: boolean = !!(p as any).recCollapsed;   // user minimized the card (frees space, esp. in matrix view)
   const flashCard = () => { recDetail.style.transition = "none"; recDetail.style.background = "rgba(92,200,255,0.10)"; requestAnimationFrame(() => { recDetail.style.transition = "background .5s"; recDetail.style.background = ""; }); };
   const showRecord = (lbl: string | null) => {
-    if (!workLayer || !workLayer.categories.length) { recDetail.innerHTML = '<span style="color:var(--faint);font-size:11.5px">accept or label clusters to build a working draft — each label\'s record appears here</span>'; return; }
-    const l = (lbl && workLayer.categories.includes(lbl)) ? lbl : (recLabel && workLayer.categories.includes(recLabel) ? recLabel : workLayer.categories.find((_, i) => workLayer.codes.includes(i)) || null);
-    if (!l) { recDetail.innerHTML = '<span style="color:var(--faint);font-size:11.5px">select a cluster to edit its label record</span>'; return; }
+    // show the card ONLY for a real selection — no fallback to an arbitrary first label (which made a record
+    // appear on load with no row selected). No valid label → hide the panel entirely.
+    const l = (workLayer && lbl && workLayer.categories.includes(lbl)) ? lbl : null;
+    if (!l) { recDetail.style.display = "none"; return; }
+    recDetail.style.display = "";
     recLabel = l; (p as any).recordLabel = l;
+    if (recCollapsed) {   // minimized: a thin bar with the label + an expand affordance
+      recDetail.style.maxHeight = ""; recDetail.style.overflow = "hidden";
+      recDetail.innerHTML = `<div class="reccollapsed" title="show the label record" style="cursor:pointer;font-size:11.5px;display:flex;align-items:center;gap:6px"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:rgb(${catColor(ctx.labelColorIndex(l)).join(",")})"></span><b style="color:var(--dim);font-weight:500">${esc(l)}</b><span style="color:var(--faint)">— record hidden · click to show ▸</span></div>`;
+      (recDetail.querySelector(".reccollapsed") as HTMLElement).onclick = () => { recCollapsed = false; (p as any).recCollapsed = false; showRecord(l); };
+      return;
+    }
+    recDetail.style.maxHeight = "46%"; recDetail.style.overflow = "auto";
     // context line: which base cluster you clicked + a note when this label spans several clusters (so two rows
     // mapping to the same label visibly differ — the "why doesn't the card change?" fix).
     let context: string | undefined;
@@ -372,7 +382,7 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
         if (options.length) accept = { cluster: selCluster, current: l, options, onAccept: (lab) => { (p as any).recordLabel = lab; hooks.annotate(ctx.cellsOfCategory(base, selCluster!), lab); } };
       }
     }
-    renderCapRecord(recDetail, workLayer, l, ctx, hooks, { context, accept, onRename: (to) => { (p as any).recordLabel = to; hooks.renameLabel("annotation", l, to); } });
+    renderCapRecord(recDetail, workLayer!, l, ctx, hooks, { context, accept, onRename: (to) => { (p as any).recordLabel = to; hooks.renameLabel("annotation", l, to); }, onCollapse: () => { recCollapsed = true; (p as any).recCollapsed = true; showRecord(l); } });
     flashCard();
   };
   // "labels" view: review the whole working annotation before export — each label's colour, cell count, and
@@ -516,8 +526,13 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
     hooks.registerComposition({ grouping: base, setSelect: (v) => { selRows = v; selCluster = v && v.size === 1 ? [...v][0] : null; paint(); }, setHover: (v) => { if (!selRows?.size) { selRows = v; paint(); } } });
     // a selected cluster's WORKING label drives the folded record detail (translate the selection into the draft).
     // The base reactor above runs first (registration order), so selCluster is set before showRecord reads it.
-    hooks.registerComposition({ grouping: "annotation", setSelect: (labels) => { if (labels && labels.size) { (document.activeElement as HTMLElement | null)?.blur?.(); showRecord([...labels][0]); } }, setHover: () => {} });
-    showRecord(null);   // initial: last-picked or the first labeled cluster
+    hooks.registerComposition({ grouping: "annotation", setSelect: (labels) => { if (labels && labels.size) {
+      // dismiss an OPEN edit field (e.g. the rename input) when the selection changes — but do NOT blur the
+      // focused table host, or keyboard ↑/↓ navigation dies after the first press.
+      const ae = document.activeElement as HTMLElement | null; if (ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA")) ae.blur();
+      showRecord([...labels][0]);
+    } }, setHover: () => {} });
+    showRecord(null);   // initial: nothing selected → the record card stays hidden
   } };
 }
 
@@ -525,7 +540,7 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
 // reconcile panel's detail section and the standalone record panel. CAP schema (celltype.info): name/full
 // name, Cell-Ontology term (live OLS lookup), parent category, marker evidence (auto from derived markers),
 // canonical markers, rationale. Edits persist to the layer; export → JSON. opts.picker adds a label dropdown.
-async function renderCapRecord(host: HTMLElement, layer: AnnotationLayer, label: string, ctx: Ctx, hooks: PanelHooks, opts?: { picker?: boolean; onPick?: (l: string) => void; onRename?: (to: string) => void; context?: string; accept?: { cluster: string; current: string; options: { label: string; sources: string[] }[]; onAccept: (lab: string) => void } }): Promise<void> {
+async function renderCapRecord(host: HTMLElement, layer: AnnotationLayer, label: string, ctx: Ctx, hooks: PanelHooks, opts?: { picker?: boolean; onPick?: (l: string) => void; onRename?: (to: string) => void; context?: string; accept?: { cluster: string; current: string; options: { label: string; sources: string[] }[]; onAccept: (lab: string) => void }; onCollapse?: () => void }): Promise<void> {
   const layerName = layer.name; layer.records = layer.records || {};
   const rec: CapRecord = { ...(layer.records[label] || {}), label };
   host.dataset.recLabel = label;   // staleness tag: a slow async fill must not overwrite a card the user has since switched away from
@@ -552,7 +567,8 @@ async function renderCapRecord(host: HTMLElement, layer: AnnotationLayer, label:
       <span style="color:var(--faint);font-size:11px">${n} cells</span>
       ${suggestedBadge}
       <span id="arsaved" style="color:var(--good,#6bbf73);font-size:11px;opacity:0;transition:opacity .2s">saved ✓</span>
-      <button id="arsuggest" class="mini" title="ask the agent to propose a name, category, ontology term, markers + rationale from this cluster's genes" style="margin-left:auto;border-color:var(--amber,#e0a458);color:var(--amber,#e0a458)">✨ Suggest</button></div>
+      <button id="arsuggest" class="mini" title="ask the agent to propose a name, category, ontology term, markers + rationale from this cluster's genes" style="margin-left:auto;border-color:var(--amber,#e0a458);color:var(--amber,#e0a458)">✨ Suggest</button>
+      ${opts?.onCollapse ? `<button id="armin" class="mini" title="hide the record (more room for the table / matrix)" style="padding:3px 8px">–</button>` : ""}</div>
     ${opts?.context ? `<div style="font-size:10.5px;color:var(--faint);margin:-4px 0 8px">${opts.context}</div>` : ""}
     ${opts?.accept ? `<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:0 0 9px;font-size:11px"><span style="color:var(--faint)">set from source:</span>${opts.accept.options.map((o, i) => { const on = o.label === opts.accept!.current; return `<button class="mini rcacc" data-acc="${i}" title="set ${esc(opts!.accept!.cluster)}'s working label to “${esc(o.label)}” (${esc(o.sources.join(", "))})"${on ? " disabled" : ""} style="${on ? "border-color:var(--good,#6bbf73);color:var(--good,#6bbf73)" : ""}">${esc(o.label)} ${on ? "✓" : `<span style="color:var(--faint)">· ${esc(o.sources.join(","))}</span>`}</button>`; }).join("")}</div>` : ""}
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 14px;font-size:12px">
@@ -589,6 +605,7 @@ async function renderCapRecord(host: HTMLElement, layer: AnnotationLayer, label:
   };
   const sug = host.querySelector("#arsuggest") as HTMLButtonElement;
   sug.onclick = () => { sug.disabled = true; sug.textContent = "✨ thinking…"; save(); hooks.proposeRecord(layerName, label); };   // save current edits, then let the agent propose (re-renders on propose_label)
+  const minBtn = host.querySelector("#armin") as HTMLButtonElement | null; if (minBtn && opts?.onCollapse) minBtn.onclick = () => { save(); opts.onCollapse!(); };
   if (opts?.accept) host.querySelectorAll<HTMLButtonElement>(".rcacc").forEach((b) => b.onclick = () => { const o = opts.accept!.options[+b.dataset.acc!]; if (o) opts.accept!.onAccept(o.label); });
   // fill marker evidence asynchronously (the DE call is slow — don't block the card). Staleness-guarded: if the
   // user has switched the card to another label by the time markers resolve, drop this update.

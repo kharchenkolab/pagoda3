@@ -510,6 +510,9 @@ export class App {
     }
     // compute scType in the BACKGROUND (it re-renders to add its column when ready) — don't block the first paint
     if (!this.annoLayers.has("scType")) this.runScType();
+    // pre-warm the working draft's per-label markers (a ~2s DE) in the background, so the FIRST record card's
+    // marker-evidence chips appear instantly instead of sitting on "computing…" after the first row click.
+    if (this.annoLayers.has("annotation")) this.ctx.markers("annotation").catch(() => {});
   }
 
   // Adopt a source as the WORKING draft: set every base cluster to that source's dominant label, in ONE
