@@ -101,15 +101,18 @@ export interface ReconRow { group: string; n: number; sources: SrcRead[]; status
 
 // Reconcile a base partition (usually the clustering) against source layers. For each base group, find the
 // dominant + runner-up label each source assigns and their coverage, then classify agreement on the dominant.
-export function reconcile(base: { codes: ArrayLike<number>; categories: string[] }, sources: { name: string; codes: ArrayLike<number>; categories: string[] }[]): ReconRow[] {
+// `restrict` (optional) = a per-cell mask (1 = in the focus subpopulation); when given, only those cells are
+// counted, so reconcile reflects the focused subset and empty groups drop out.
+export function reconcile(base: { codes: ArrayLike<number>; categories: string[] }, sources: { name: string; codes: ArrayLike<number>; categories: string[] }[], restrict?: ArrayLike<number>): ReconRow[] {
   const G = base.categories.length, N = base.codes.length;
   const counts = new Int32Array(G);
-  for (let i = 0; i < N; i++) { const g = base.codes[i]; if (g >= 0 && g < G) counts[g]++; }
+  for (let i = 0; i < N; i++) { if (restrict && !restrict[i]) continue; const g = base.codes[i]; if (g >= 0 && g < G) counts[g]++; }
   const rows: ReconRow[] = [];
   for (let g = 0; g < G; g++) {
+    if (restrict && counts[g] === 0) continue;   // a cluster with no focus cells drops out
     const srcOut: SrcRead[] = sources.map((s) => {
       const tally = new Map<number, number>();
-      for (let i = 0; i < N; i++) { if (base.codes[i] !== g) continue; const c = s.codes[i]; if (c >= 0) tally.set(c, (tally.get(c) || 0) + 1); }
+      for (let i = 0; i < N; i++) { if (restrict && !restrict[i]) continue; if (base.codes[i] !== g) continue; const c = s.codes[i]; if (c >= 0) tally.set(c, (tally.get(c) || 0) + 1); }
       let best = -1, bestN = 0, sec = -1, secN = 0;
       for (const [c, n] of tally) { if (n > bestN) { sec = best; secN = bestN; best = c; bestN = n; } else if (n > secN) { sec = c; secN = n; } }
       const tot = counts[g] || 1;

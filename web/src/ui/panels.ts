@@ -106,7 +106,7 @@ export async function paintEmbedding(ev: EmbeddingView, ctx: Ctx) {
   let mask: Uint8Array | undefined;
   if (scopeCells && scopeCells.length) { mask = new Uint8Array(ctx.n); for (let j = 0; j < scopeCells.length; j++) mask[scopeCells[j]] = 1; }
   else if (selCells.length) { mask = new Uint8Array(ctx.n); for (let j = 0; j < selCells.length; j++) mask[selCells[j]] = 1; }
-  else mask = await focusMaskFor(ctx.view, c.focus, ctx.n);
+  else mask = focusMaskFor(c.focus, ctx.n);
   const { rgba, legend } = await colorsFor(ctx.view, colorBy, mask, view?.colormap);
   ev.setColors(rgba);
   ev.setSelection(selCells.length ? selCells : null);
@@ -313,9 +313,13 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
   const srcNames = ctx.annotationSources();
   const sources: { name: string; codes: ArrayLike<number>; categories: string[] }[] = [];
   for (const n of srcNames) { const m: any = await ctx.view.metadata(n); if (m.kind === "categorical") sources.push({ name: n, codes: m.codes, categories: m.categories }); }
-  const rows = reconcile({ codes: baseMeta.codes, categories: baseMeta.categories }, sources);
+  // FOCUS restricts the table to the focused subpopulation (a cross-panel restriction): only clusters with
+  // focus cells appear, counts/fractions are within-focus. (The embedding greys non-focus cells in parallel.)
+  const focus = ctx.coord.state.focus;
+  const restrict = focus ? focusMaskFor(focus, ctx.n) : undefined;
+  const rows = reconcile({ codes: baseMeta.codes, categories: baseMeta.categories }, sources, restrict);
   const workMeta: any = ctx.annotationLayers().includes("annotation") ? await ctx.view.metadata("annotation") : null;
-  const workRows = workMeta ? reconcile({ codes: baseMeta.codes, categories: baseMeta.categories }, [{ name: "annotation", codes: workMeta.codes, categories: workMeta.categories }]) : null;
+  const workRows = workMeta ? reconcile({ codes: baseMeta.codes, categories: baseMeta.categories }, [{ name: "annotation", codes: workMeta.codes, categories: workMeta.categories }], restrict) : null;
   // base cluster → cell count, and working label → the base clusters carrying it (so the card can show the
   // selected cluster's context and note when one label spans several clusters — why two rows show the same card).
   const grpN = new Map<string, number>(rows.map((r) => [r.group, r.n]));

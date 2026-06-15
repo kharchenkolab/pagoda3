@@ -31,7 +31,7 @@ export interface RawPanelOp {
 
 export interface RawViewPatch {
   color?: string;                                              // global colour handle
-  focus?: { dim?: string; value?: string };                   // global focus
+  focus?: { dim?: string; value?: string; set?: any; label?: string };   // global focus: a category (dim=value) OR a cell-SET (for populations spanning several labels, e.g. T cells)
   clearFocus?: boolean;
   display?: { labels?: boolean; legend?: boolean; alpha?: number };
   panels?: RawPanelOp[];
@@ -45,7 +45,7 @@ export interface PanelPatch { title?: string; col?: 0 | 1; full?: boolean; color
 
 export type NormOp =
   | { kind: "color"; handle: string }
-  | { kind: "focus"; dim: string; value: string }
+  | { kind: "focus"; dim?: string; value?: string; set?: any; label?: string }
   | { kind: "clearFocus" }
   | { kind: "display"; patch: { labels?: boolean; legend?: boolean; alpha?: number } }
   | { kind: "addPanel"; spec: PanelSpec }
@@ -122,11 +122,13 @@ export function normalizeViewPatch(patch: RawViewPatch, w: World): NormResult {
     if (e) rejected.push(`color: ${e}`); else ops.push({ kind: "color", handle: patch.color });
   }
   if (patch.clearFocus) ops.push({ kind: "clearFocus" });
-  else if (patch.focus && patch.focus.dim && patch.focus.value) {
+  else if (patch.focus && patch.focus.set && typeof patch.focus.set === "object") {   // cell-SET focus (a population over several labels, e.g. T cells) — the shell resolves + validates it
+    ops.push({ kind: "focus", set: patch.focus.set, label: patch.focus.label || "subset" });
+  } else if (patch.focus && patch.focus.dim && patch.focus.value) {
     const { dim, value } = patch.focus;
     if (!w.categoricals.includes(dim)) rejected.push(`focus: unknown field "${dim}" (have: ${w.categoricals.join(", ") || "—"})`);
     else if (!w.valuesOf(dim).includes(value)) rejected.push(`focus: "${value}" is not a value of ${dim}`);
-    else ops.push({ kind: "focus", dim, value });
+    else ops.push({ kind: "focus", dim, value, label: `${dim} = ${value}` });
   }
   if (patch.display && typeof patch.display === "object") {
     const d: { labels?: boolean; legend?: boolean; alpha?: number } = {};

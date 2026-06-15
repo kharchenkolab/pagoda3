@@ -82,6 +82,7 @@ export class App {
       <div class="top">
         <div class="logo">pagoda<span>2</span></div>
         <div class="wstabs" id="wstabs"></div>
+        <div class="focuschip" id="focuschip" style="display:none"></div>
         <div class="spacer"></div>
         <div class="tb pip" id="askBtn"><span class="dot"></span>Ask<span class="kbd">⌘K</span></div>
         <div class="tb" id="lockBtn">🔓 Layout</div>
@@ -312,6 +313,7 @@ export class App {
       this.lastSel = sel; this.reactorsStale = false;
     }
     this.$("railBtn").innerHTML = "Answers" + (this.rail.length ? ` <span class="badge">${this.rail.length}</span>` : "");
+    this.renderFocus();   // keep the global focus chip (the release control) in sync
     // embeddings AFTER — the recolour/highlight catches up a frame later (imperceptible for categorical; for a
     // gene colouring the expression is cached so a selection-only change is just a focus-mask recompute).
     for (const ev of this.embeddings) await paintEmbedding(ev, this.ctx);
@@ -377,8 +379,8 @@ export class App {
     try {
       for (const op of ops) {
         if (op.kind === "color") { for (const p of this.canvas) if (p.type === "Embedding" && p.view?.colorBy) delete p.view.colorBy; this.noteColor(op.handle); this.coord.setColor(op.handle); applied.push(`colour → ${handleLabel(op.handle)}`); needRepaint = true; }
-        else if (op.kind === "focus") { this.coord.setFocus(op.dim, op.value); applied.push(`focus ${op.dim}=${op.value}`); needRepaint = true; }
-        else if (op.kind === "clearFocus") { this.coord.clearFocus(); applied.push("cleared focus"); needRepaint = true; }
+        else if (op.kind === "focus") { const r = this.focusFromOp(op); if (r.error) rejected.push(r.error); else { applied.push(`focus → ${r.label}`); needFull = true; } }   // needFull: the reconcile table re-filters to the focus
+        else if (op.kind === "clearFocus") { this.coord.clearFocus(); applied.push("released focus"); needFull = true; }
         else if (op.kind === "display") {   // display is per-panel — a top-level display patch fans out to every embedding (so "show labels" applies to all, with no global coupling)
           for (const p of this.canvas) if (p.type === "Embedding") p.view = { ...p.view, display: { ...(p.view?.display || {}), ...op.patch } };
           applied.push(`display ${JSON.stringify(op.patch)}`); needRepaint = true;
@@ -571,9 +573,20 @@ export class App {
     const ctx = this.ctx;
     const world: CellWorld = { categoricals: ctx.categoricalFields(), valuesOf: (f) => ctx.categoricalValues(f), hasSelection: ctx.selectedCells().length > 0, hasFocus: !!ctx.coord.state.focus };
     const e = validateCellSet(spec, world, "cells"); if (e) return { ids: new Int32Array(0), error: e };
-    const env: CellEnv = { n: ctx.n, category: (g, v) => ctx.cellsOfCategory(g, v), selection: () => ctx.selectedCells(), focus: () => { const f = ctx.coord.state.focus; return f ? ctx.cellsOfCategory(f.dim, f.value) : []; } };
+    const env: CellEnv = { n: ctx.n, category: (g, v) => ctx.cellsOfCategory(g, v), selection: () => ctx.selectedCells(), focus: () => ctx.coord.state.focus?.ids ?? [] };
     return { ids: Int32Array.from(resolveCellSet(spec, env)) };
   }
+
+  // Resolve a focus op (a category dim=value OR a cell-set) into the committed focus restriction.
+  focusFromOp(op: { dim?: string; value?: string; set?: any; label?: string }): { label?: string; error?: string } {
+    let ids: Int32Array, spec: any, label = op.label || "subset";
+    if (op.set) { const r = this.resolveCells(op.set); if (r.error) return { error: `focus: ${r.error}` }; if (!r.ids.length) return { error: "focus: that set is empty" }; ids = r.ids; spec = op.set; }
+    else if (op.dim && op.value) { ids = Int32Array.from(this.ctx.cellsOfCategory(op.dim, op.value)); spec = { category: { grouping: op.dim, value: op.value } }; label = op.label || `${op.dim} = ${op.value}`; }
+    else return { error: "focus: need dim+value or a set" };
+    this.coord.setFocus({ label, ids, spec }); return { label };
+  }
+  // Release the focus restriction (the UI control + agent clearFocus both land here).
+  releaseFocus(): void { if (this.coord.state.focus) { this.coord.clearFocus(); this.fullRender(); } }
 
   // A compact reconciliation read-out for the agent: per base cluster, every source's dominant label, plus
   // which clusters the sources DISAGREE on (string-wise — vocabulary differences included; the agent judges).
@@ -756,7 +769,7 @@ export class App {
     const eA = validateCellSet(input.A, world, "A"); if (eA) return { error: eA };
     const Bexpr: CellSet | undefined = input.stat === "de" ? (input.B ?? ({ complement: input.A } as CellSet)) : undefined;
     if (Bexpr) { const eB = validateCellSet(Bexpr, world, "B"); if (eB) return { error: eB }; }
-    const env: CellEnv = { n: ctx.n, category: (g, v) => ctx.cellsOfCategory(g, v), selection: () => ctx.selectedCells(), focus: () => { const f = ctx.coord.state.focus; return f ? ctx.cellsOfCategory(f.dim, f.value) : []; } };
+    const env: CellEnv = { n: ctx.n, category: (g, v) => ctx.cellsOfCategory(g, v), selection: () => ctx.selectedCells(), focus: () => ctx.coord.state.focus?.ids ?? [] };
     const Aids = [...resolveCellSet(input.A, env)];
     if (!Aids.length) return { error: `A (${describeCellSet(input.A)}) resolves to no cells` };
     await ctx.view.genes();
@@ -1018,6 +1031,15 @@ export class App {
     if (!this.thread) this.setPip("listening"); this.renderScope(); (this.$("pin") as HTMLInputElement).value = ""; this.filter(""); (this.$("pin") as HTMLInputElement).focus();
   }
   closePalette() { this.$("scrim").classList.remove("show"); this.$("palette").classList.remove("show"); if (!this.thread) this.setPip(this.nudgePending ? "nudge" : "idle", this.nudgePending ? "1" : undefined); }
+  // The global FOCUS chip in the top bar — the inter-panel "restricted to this subpopulation" indicator AND
+  // its release control (clicking "show all" clears focus everywhere). Visible whenever a focus is set.
+  renderFocus() {
+    const el = this.$("focuschip"); const f = this.coord.state.focus;
+    if (!f) { el.style.display = "none"; return; }
+    const lbl = String(f.label).replace(/[<&]/g, (c) => c === "<" ? "&lt;" : "&amp;");
+    el.style.display = ""; el.innerHTML = `<span class="fdot"></span>focused: <b>${lbl}</b> <span class="fn">${f.ids.length.toLocaleString()} cells</span> <span class="x" id="focusX" title="release the focus — show all cells">show all ✕</span>`;
+    (this.$("focusX")).onclick = () => this.releaseFocus();
+  }
   renderScope() { const s = this.$("scope"); if (this.scope) { s.style.display = ""; s.innerHTML = `<span>↳ about ${this.scope.summary}</span><span class="x" id="scx">clear</span>`; this.$("scx").onclick = () => { this.scope = null; this.renderScope(); this.filter((this.$("pin") as HTMLInputElement).value); }; } else s.style.display = "none"; }
   scopedSugs() { return this.scope ? [{ t: "Run differential expression on this selection", q: "run de", ic: "≢" }, { t: "What cell types are these?", q: "what are these", ic: "?" }, { t: "Colour by condition", q: "colour by condition", ic: "◐" }] : this.SUGS; }
   filter(v: string) { const base = this.scopedSugs(); this.filtered = base.filter((s) => s.t.toLowerCase().includes(v.toLowerCase())); if (v && !this.filtered.length) this.filtered = [{ t: `Ask: “${v}”`, q: v, ic: "➤", free: true }]; this.hot = 0; this.renderSugs(); }

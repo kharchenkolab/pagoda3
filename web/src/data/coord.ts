@@ -9,7 +9,10 @@ export type EntityRef =
 
 export interface CoordState {
   colorBy: string;            // "meta:leiden" | "gene:IL6" | "qc:mito" | "geneset:Inflammatory response"
-  focus: { dim: string; value: string } | null;
+  // FOCUS = an inter-panel restriction to a subpopulation. A labeled cell set every panel reads: the embedding
+  // greys non-focus cells, the reconcile table restricts to clusters in the focus, compute defaults to it.
+  // ids = the resolved cells (source of truth for masks); spec = the cell-set expression (serializable, re-resolved).
+  focus: { label: string; ids: Int32Array; spec?: any } | null;
   selection: EntityRef | null;
   geneFocus: string | null;
   // ephemeral cross-panel hover cue — a typed EntityRef (a CELL when you hover the embedding, a CATEGORY
@@ -41,7 +44,8 @@ export class Coord {
 
   // convenience verbs (the agent and direct manipulation both call these)
   setColor(handle: string) { this.set({ colorBy: handle }); }
-  setFocus(dim: string, value: string) { this.set({ focus: { dim, value } }); }
+  // focus to a resolved subpopulation (caller resolves the cells); a null clears it.
+  setFocus(focus: { label: string; ids: Int32Array; spec?: any } | null) { this.set({ focus }); }
   clearFocus() { this.set({ focus: null, selection: null }); }
   setSelection(ref: EntityRef | null) { this.set({ selection: ref }); }
   setHint(ref: EntityRef | null) { if (refEq(this.s.hint, ref)) return; this.set({ hint: ref }); }

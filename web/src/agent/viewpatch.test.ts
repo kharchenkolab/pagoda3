@@ -58,7 +58,10 @@ test("global color: valid grouping accepted, bad gene/grouping rejected", () => 
 test("focus set and clearFocus", () => {
   const w = makeWorld();
   const set = normalizeViewPatch({ focus: { dim: "condition", value: "disease" } }, w);
-  assert.deepEqual(find(set.ops, "focus"), [{ kind: "focus", dim: "condition", value: "disease" }]);
+  assert.deepEqual(find(set.ops, "focus"), [{ kind: "focus", dim: "condition", value: "disease", label: "condition = disease" }]);
+  // cell-SET focus (a population over several labels) is accepted with a label
+  const sset = normalizeViewPatch({ focus: { set: { category: { grouping: "condition", value: "disease" } }, label: "T cells" } }, w);
+  assert.deepEqual(find(sset.ops, "focus"), [{ kind: "focus", set: { category: { grouping: "condition", value: "disease" } }, label: "T cells" }]);
   const cleared = normalizeViewPatch({ clearFocus: true }, w);
   assert.deepEqual(find(cleared.ops, "clearFocus"), [{ kind: "clearFocus" }]);
   // clearFocus wins over focus

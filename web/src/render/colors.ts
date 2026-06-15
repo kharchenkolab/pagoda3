@@ -27,13 +27,12 @@ async function md(view: LstarView, field: string) {
 // so the stale snapshot would carry an outdated codes/colors pairing). No arg = clear all.
 export function invalidateColor(field?: string) { if (field) mdCache.delete(field); else mdCache.clear(); }
 
-export async function focusMaskFor(view: LstarView, focus: { dim: string; value: string } | null, n: number): Promise<Uint8Array | undefined> {
-  if (!focus) return undefined;
-  const m = await md(view, focus.dim);
-  if (m.kind !== "categorical") return undefined;
-  const code = m.categories.indexOf(focus.value);
+// Boolean mask (1 = in focus) over n cells, from the focus's resolved cell ids. Sync — the focus already
+// carries its ids (a labeled subpopulation), so no metadata lookup is needed.
+export function focusMaskFor(focus: { ids: ArrayLike<number> } | null, n: number): Uint8Array | undefined {
+  if (!focus || !focus.ids || !focus.ids.length) return undefined;
   const mask = new Uint8Array(n);
-  for (let i = 0; i < n; i++) mask[i] = m.codes[i] === code ? 1 : 0;
+  for (let i = 0; i < focus.ids.length; i++) { const c = focus.ids[i]; if (c >= 0 && c < n) mask[c] = 1; }
   return mask;
 }
 

@@ -60,6 +60,13 @@ button{font-family:inherit}
 .rctab tr.rcrow:hover{background:rgba(255,255,255,.03)}
 .olshit:hover{background:var(--inset)}
 .genechip:hover{border-color:var(--cyan)!important;color:var(--cyan)}   /* gene chip → click to colour the embedding by its expression */
+/* global FOCUS chip in the top bar — the inter-panel "restricted to a subpopulation" indicator + release control */
+.focuschip{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--amber,#e0a458);background:rgba(224,164,88,.10);border:1px solid var(--amber,#e0a458);border-radius:8px;padding:4px 10px;margin-left:10px}
+.focuschip b{color:var(--text);font-weight:600}
+.focuschip .fn{color:var(--faint);font-size:11px}
+.focuschip .fdot{width:7px;height:7px;border-radius:50%;background:var(--amber,#e0a458);flex:0 0 auto}
+.focuschip .x{cursor:pointer;border:1px solid var(--amber,#e0a458);border-radius:6px;padding:0 7px;font-size:11px;margin-left:2px}
+.focuschip .x:hover{background:var(--amber,#e0a458);color:var(--ink)}
 .mini.on{color:var(--cyan);border-color:var(--cyan)}   /* an engaged view-option toggle (labels / legend) */
 .segtog{display:inline-flex;gap:0;margin-right:2px}     /* heatmap/dotplot segmented toggle */
 .segtog .mini{border-radius:0} .segtog .mini:first-child{border-radius:6px 0 0 6px} .segtog .mini:last-child{border-radius:0 6px 6px 0;border-left:0}

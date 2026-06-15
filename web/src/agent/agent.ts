@@ -99,8 +99,8 @@ export class Agent {
     if (/leiden|cluster/.test(q) && /colou?r|show/.test(q)) return this.setColorVerb("meta:leiden", "Asked for clusters", "Coordinated recolour.");
     if (/condition/.test(q)) return this.setColorVerb("meta:condition", "Asked for condition", "Coordinated recolour.");
     if (/\bmito|quality|\bqc\b/.test(q)) return this.setColorVerb("qc:mito", "Asked for QC", "Coordinated recolour.");
-    if (/focus|disease only|only.*disease/.test(q)) { this.app.coord.setFocus("condition", "disease"); this.app.toast("Focused on disease", "Control cells dim everywhere at once — one change to the shared focus."); return this.app.checkpoint("focus disease", "Coordinated focus."); }
-    if (/clear|reset|show all|unfocus/.test(q)) { this.app.coord.clearFocus(); this.app.toast("Cleared focus", null); return this.app.checkpoint("clear focus", "Cleared coordination state."); }
+    if (/focus|disease only|only.*disease/.test(q)) { this.app.focusFromOp({ dim: "condition", value: "disease" }); this.app.fullRender(); this.app.toast("Focused on disease", "Control cells dim everywhere at once — one change to the shared focus."); return this.app.checkpoint("focus disease", "Coordinated focus."); }
+    if (/clear|reset|show all|unfocus/.test(q)) { this.app.releaseFocus(); this.app.toast("Cleared focus", null); return this.app.checkpoint("clear focus", "Cleared coordination state."); }
     // rung 1 — answers
     if (/highly variable|variable gene|\bhvg\b|overdispersed gene|most variable/.test(q)) {
       const selCells = this.ctx.selectedCells();
