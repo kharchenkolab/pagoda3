@@ -125,6 +125,19 @@ button{font-family:inherit}
 .facethist .hbin.sel{background:var(--cyan);opacity:1}
 .facethist .hmeta{display:flex;justify-content:space-between;font-size:10px;color:var(--faint);font-family:var(--mono);margin-top:3px}
 .facethist .hrange{color:var(--dim)}
+.facetfoot{flex:0 0 auto;border-top:1px solid var(--line2);padding:6px 10px;background:var(--panel)}
+.facetfoot .mini{width:100%;color:var(--cyan);border-color:var(--line)}
+.facetcreate{position:absolute;inset:0;background:var(--panel);z-index:5;display:flex;flex-direction:column;overflow:auto;padding:10px 12px;gap:8px}
+.facetcreate .fchead{display:flex;align-items:center;font-size:13px} .facetcreate .fchead b{font-weight:500} .facetcreate .fcx{margin-left:auto;cursor:pointer;color:var(--faint);font-size:14px} .facetcreate .fcx:hover{color:var(--cyan)}
+.facetcreate .fcname{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--dim)} .facetcreate .fcname input{flex:1}
+.facetcreate .fcseg{display:flex;gap:5px;flex-wrap:wrap} .facetcreate .fcm{font-size:11px} .facetcreate .fcm.on{border-color:var(--cyan);color:var(--cyan)}
+.facetcreate .fcrow{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--dim);margin:2px 0} .facetcreate .fcrow select,.facetcreate .fcrow input{flex:1;min-width:0}
+.facetcreate .fcvlist{max-height:230px;overflow:auto;border:1px solid var(--line2);border-radius:6px;padding:3px 4px}
+.facetcreate .fcvrow{display:flex;align-items:center;gap:7px;padding:2px 4px;font-size:11.5px;cursor:pointer;border-radius:4px} .facetcreate .fcvrow:hover{background:var(--inset)}
+.facetcreate .fcvn{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dim)} .facetcreate .fcvg{color:var(--cyan);font-size:10.5px} .facetcreate .fcvc{color:var(--faint);font-family:var(--mono);font-size:10.5px}
+.facetcreate .fchint{font-size:10.5px;color:var(--faint);line-height:1.5}
+.facetcreate .fcerr{font-size:11px;color:var(--bad,#e07a7a);min-height:14px}
+.facetcreate .fcfoot{display:flex;gap:8px;justify-content:flex-end;margin-top:auto;padding-top:6px} .facetcreate .fcok{border-color:var(--cyan);color:var(--cyan)}
 .pbody{padding:11px;min-height:0}
 .panelerr{font-size:11.5px;color:var(--amber,#e0a458);line-height:1.5;padding:6px 2px}   /* a panel whose body failed to build */
 .workbench .pbody{flex:1 1 auto;overflow:auto}      /* canvas panel bodies fill their (stretched) cell */

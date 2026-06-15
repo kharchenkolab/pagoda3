@@ -404,8 +404,9 @@ async function facetsBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltB
       (banner.querySelector(".ffclear") as HTMLElement).onclick = () => ctx.coord.setSelection(null);
       host.appendChild(banner);
     }
+    const allFields = ctx.metadataFields();   // recompute each render → newly created derived categories appear
     for (const [g, label] of GROUPS) {
-      const fs = fields.filter((f) => f.group === g && (!q || f.name.toLowerCase().includes(q)));
+      const fs = allFields.filter((f) => f.group === g && (!q || f.name.toLowerCase().includes(q)));
       if (!fs.length) continue;
       host.appendChild(mk("div", "facetsub", label));
       for (const f of fs) host.appendChild(fieldEl(f, act, sel, selCells, q));
@@ -413,6 +414,93 @@ async function facetsBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltB
     if (!host.querySelector(".facetf")) host.innerHTML = `<div style="color:var(--faint);padding:12px;font-size:11px">no fields match “${esc(q)}”</div>`;
     host.scrollTop = top;
   };
+
+  // CREATE DERIVED CATEGORY — derive a new grouping from existing metadata (the checkboxes live here). Four modes:
+  // regroup an existing field's values (merge into named groups), cross two fields, bin a covariate, or name the
+  // current selection. The result is a real derived grouping (ctx.setDerivedGrouping) — colourable/selectable like
+  // any field, and it shows up in the list immediately.
+  const showCreateCard = () => {
+    if (w.querySelector(".facetcreate")) return;
+    const catFields = ctx.metadataFields().filter((f) => f.kind === "categorical");
+    const numFields = ctx.metadataFields().filter((f) => f.kind === "numeric");
+    let mode: "values" | "cross" | "bin" | "selection" = ctx.coord.state.selection ? "selection" : "values";
+    let regroupSrc = catFields[0]?.name || "";
+    const assign = new Map<string, string>();   // srcValue → group label (regroup mode)
+    const ov = mk("div", "facetcreate");
+    ov.innerHTML = `<div class="fchead"><b>Create derived category</b><span class="fcx" title="cancel">✕</span></div>
+      <label class="fcname">name <input class="fcnameinp" placeholder="my_category"></label>
+      <div class="fcseg">${[["values", "regroup values"], ["cross", "cross fields"], ["bin", "bin covariate"], ["selection", "from selection"]].map(([m, l]) => `<button class="mini fcm" data-m="${m}">${l}</button>`).join("")}</div>`;
+    const body = mk("div", "fcbody"); ov.appendChild(body);
+    const err = mk("div", "fcerr"); ov.appendChild(err);
+    const foot = mk("div", "fcfoot"); foot.innerHTML = `<button class="mini fccancel">cancel</button><button class="mini fcok">create</button>`; ov.appendChild(foot);
+    const setErr = (m: string) => { err.textContent = m || ""; };
+
+    const buildBody = () => {
+      body.innerHTML = ""; ov.querySelectorAll(".fcm").forEach((b) => b.classList.toggle("on", (b as HTMLElement).dataset.m === mode));
+      if (mode === "values") {
+        body.innerHTML = `<div class="fcrow">source <select class="fcsrc">${catFields.map((f) => `<option${f.name === regroupSrc ? " selected" : ""}>${esc(f.name)}</option>`).join("")}</select></div>
+          <div class="fcrow"><input class="fcgname" placeholder="group name"><button class="mini fcadd">group selected →</button></div>
+          <div class="fcvlist">${valueStats(regroupSrc).map((r: any) => `<label class="fcvrow"><input type="checkbox" data-v="${esc(r.value)}"><span class="fcvn">${esc(r.value)}</span><span class="fcvg">${esc(assign.get(r.value) || "")}</span><span class="fcvc">${r.count.toLocaleString()}</span></label>`).join("")}</div>
+          <div class="fchint">checked rows take the group name; unchecked keep their own label</div>`;
+        (body.querySelector(".fcsrc") as HTMLSelectElement).onchange = (e) => { regroupSrc = (e.target as HTMLSelectElement).value; assign.clear(); buildBody(); };
+        (body.querySelector(".fcadd") as HTMLElement).onclick = () => { const g = (body.querySelector(".fcgname") as HTMLInputElement).value.trim(); if (!g) return setErr("type a group name first"); body.querySelectorAll<HTMLInputElement>("input[type=checkbox]:checked").forEach((c) => assign.set(c.dataset.v!, g)); setErr(""); buildBody(); };
+      } else if (mode === "cross") {
+        body.innerHTML = `<div class="fcrow">field A <select class="fca">${catFields.map((f) => `<option>${esc(f.name)}</option>`).join("")}</select></div>
+          <div class="fcrow">field B <select class="fcb">${catFields.map((f, i) => `<option${i === 1 ? " selected" : ""}>${esc(f.name)}</option>`).join("")}</select></div>
+          <div class="fchint">one value per present A × B combination</div>`;
+      } else if (mode === "bin") {
+        body.innerHTML = `<div class="fcrow">covariate <select class="fcnum">${numFields.map((f) => `<option>${esc(f.name)}</option>`).join("")}</select></div>
+          <div class="fcrow">cut points <input class="fccuts" placeholder="e.g. 5, 10"></div>
+          <div class="fchint">split into bins at the cut points (e.g. &lt; 5 · 5–10 · ≥ 10)</div>`;
+      } else {
+        const sc = ctx.coord.state.selection ? ctx.refToCells(ctx.coord.state.selection).length : 0;
+        body.innerHTML = sc
+          ? `<div class="fchint">label the current selection (${sc.toLocaleString()} cells) as a new value; the rest become “other”.</div><div class="fcrow">value name <input class="fcselname" placeholder="my_group"></div>`
+          : `<div class="fchint">no active selection — click a value, brush the embedding, or brush a histogram first.</div>`;
+      }
+    };
+
+    const doCreate = () => {
+      const name = (ov.querySelector(".fcnameinp") as HTMLInputElement).value.trim();
+      if (!name) return setErr("give the category a name");
+      if (ctx.metadataFields().some((f) => f.name === name)) return setErr(`“${name}” already exists`);
+      let codes: Int32Array | null = null; let categories: string[] = [];
+      if (mode === "values") {
+        const G = meta.get(regroupSrc); if (!G) return setErr("pick a source field");
+        const idx = new Map<string, number>(); const labelOf = (v: string) => assign.get(v) || v;
+        G.categories.forEach((v: string) => { const l = labelOf(v); if (!idx.has(l)) { idx.set(l, categories.length); categories.push(l); } });
+        codes = new Int32Array(ctx.n); for (let i = 0; i < ctx.n; i++) { const sc = G.codes[i]; codes[i] = sc >= 0 ? idx.get(labelOf(G.categories[sc]))! : -1; }
+      } else if (mode === "cross") {
+        const a = (body.querySelector(".fca") as HTMLSelectElement).value, b = (body.querySelector(".fcb") as HTMLSelectElement).value;
+        const A = meta.get(a), B = meta.get(b); if (!A || !B || a === b) return setErr("pick two different fields");
+        const idx = new Map<string, number>(); codes = new Int32Array(ctx.n);
+        for (let i = 0; i < ctx.n; i++) { const ac = A.codes[i], bc = B.codes[i]; if (ac < 0 || bc < 0) { codes[i] = -1; continue; } const key = `${A.categories[ac]} · ${B.categories[bc]}`; let k = idx.get(key); if (k == null) { k = categories.length; categories.push(key); idx.set(key, k); } codes[i] = k; }
+      } else if (mode === "bin") {
+        const fld = (body.querySelector(".fcnum") as HTMLSelectElement).value; const nm = numMeta.get(fld); if (!nm) return setErr("pick a covariate");
+        const cuts = (body.querySelector(".fccuts") as HTMLInputElement).value.split(",").map((s) => parseFloat(s.trim())).filter((x) => !isNaN(x)).sort((p, q) => p - q);
+        if (!cuts.length) return setErr("enter at least one cut point");
+        categories = cuts.map((c, i) => i === 0 ? `< ${fmtNum(c)}` : `${fmtNum(cuts[i - 1])}–${fmtNum(c)}`).concat(`≥ ${fmtNum(cuts[cuts.length - 1])}`);
+        codes = new Int32Array(ctx.n); const vals = nm.values; for (let i = 0; i < ctx.n; i++) { let bi = cuts.findIndex((c) => vals[i] < c); if (bi < 0) bi = cuts.length; codes[i] = bi; }
+      } else {
+        const sel = ctx.coord.state.selection; if (!sel) return setErr("no active selection");
+        const cells = ctx.refToCells(sel); const set = new Set<number>(); for (let j = 0; j < cells.length; j++) set.add(cells[j]);
+        const val = (body.querySelector(".fcselname") as HTMLInputElement)?.value.trim() || "selected";
+        categories = [val, "other"]; codes = new Int32Array(ctx.n); for (let i = 0; i < ctx.n; i++) codes[i] = set.has(i) ? 0 : 1;
+      }
+      if (!codes || categories.length < 2) return setErr("that produces fewer than two groups");
+      ctx.setDerivedGrouping(name, codes, categories);
+      meta.set(name, { kind: "categorical", codes, categories, colors: categories.map((c) => ctx.labelColorIndex(c)) });
+      countCache.delete(name); ov.remove(); open.add(name); ctx.coord.setColor("meta:" + name); render();
+    };
+
+    ov.querySelectorAll(".fcm").forEach((b) => ((b as HTMLElement).onclick = () => { mode = (b as HTMLElement).dataset.m as any; setErr(""); buildBody(); }));
+    (ov.querySelector(".fcx") as HTMLElement).onclick = () => ov.remove();
+    (ov.querySelector(".fccancel") as HTMLElement).onclick = () => ov.remove();
+    (ov.querySelector(".fcok") as HTMLElement).onclick = doCreate;
+    buildBody(); w.appendChild(ov); (ov.querySelector(".fcnameinp") as HTMLInputElement).focus();
+  };
+
+  const foot = mk("div", "facetfoot"); const cbtn = mk("button", "mini", "＋ create category"); cbtn.onclick = showCreateCard; foot.appendChild(cbtn); w.appendChild(foot);
 
   search.oninput = () => render();
   render();
