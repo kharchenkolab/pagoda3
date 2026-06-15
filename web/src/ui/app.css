@@ -94,6 +94,27 @@ button{font-family:inherit}
 .mini.on{color:var(--cyan);border-color:var(--cyan)}   /* an engaged view-option toggle (labels / legend) */
 .segtog{display:inline-flex;gap:0;margin-right:2px}     /* heatmap/dotplot segmented toggle */
 .segtog .mini{border-radius:0} .segtog .mini:first-child{border-radius:6px 0 0 6px} .segtog .mini:last-child{border-radius:0 6px 6px 0;border-left:0}
+/* metadata facet panel */
+.facetsub{font-size:9px;letter-spacing:1.2px;text-transform:uppercase;color:var(--faint);padding:9px 10px 3px;position:sticky;top:0;background:var(--panel);z-index:1}
+.facetf{display:flex;align-items:center;gap:6px;padding:5px 8px 5px 10px;cursor:pointer;border-top:1px solid var(--line2)}
+.facetf:hover{background:var(--inset)}
+.facetf .fchev{width:12px;color:var(--faint);font-size:10px;flex:0 0 auto;text-align:center}
+.facetf .fname{font-weight:500;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.facetf .fcount{font-size:10px;color:var(--faint);font-family:var(--mono)}
+.facetf .fnum{font-size:11px;color:var(--faint);font-family:var(--mono)}
+.facetf .fdrop{padding:1px 6px;font-size:12px;line-height:1;color:var(--faint);border-color:transparent;background:transparent}
+.facetf .fdrop:hover{color:var(--cyan);border-color:var(--line)}
+.facetf .fdrop.on{color:var(--on-accent);background:var(--cyan);border-color:var(--cyan)}
+.facetvals{padding:1px 10px 6px 22px}
+.facetv{display:flex;align-items:center;gap:7px;padding:2px 4px;border-radius:5px;cursor:pointer}
+.facetv:hover{background:var(--inset)}
+.facetv.on{background:var(--sel)}
+.facetv .vsw{width:9px;height:9px;border-radius:2px;flex:0 0 auto;box-shadow:inset 0 0 0 1px rgba(128,128,128,.35)}
+.facetv .vname{font-size:11.5px;color:var(--dim);flex:0 0 38%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.facetv.on .vname{color:var(--text)}
+.facetv .vbar{flex:1 1 auto;height:8px;background:var(--inset);border-radius:2px;overflow:hidden;min-width:20px}
+.facetv .vbar>span{display:block;height:100%;border-radius:2px}
+.facetv .vcount{font-size:10.5px;color:var(--faint);font-family:var(--mono);flex:0 0 auto;min-width:42px;text-align:right}
 .pbody{padding:11px;min-height:0}
 .panelerr{font-size:11.5px;color:var(--amber,#e0a458);line-height:1.5;padding:6px 2px}   /* a panel whose body failed to build */
 .workbench .pbody{flex:1 1 auto;overflow:auto}      /* canvas panel bodies fill their (stretched) cell */

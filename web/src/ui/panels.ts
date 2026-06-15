@@ -37,6 +37,7 @@ export interface PanelHooks {
   onCellHover: (index: number | null) => void;                 // embedding → cross-panel hint (hover tier)
   onCellClick: (index: number | null, anchor?: { left: number; top: number }) => void;   // embedding click → select cluster (+ selpop), or deselect (empty)
   registerComposition: (r: CompReactor) => void;               // a panel that reacts to selection + hint
+  onCoord: (fn: (s: any, changed: string[]) => void) => void;  // managed coord subscription (colorBy/selection/focus reactivity); cleaned up on fullRender
   onConfigurePanel: (panelId: number, patch: any) => void;     // a panel reconfiguring itself (e.g. dismissing pinned genes)
   registerGeneHover: (fn: (sym: string | null) => void) => void;   // a panel that highlights a gene's row on cross-panel geneHint
   annotate: (cellIds: ArrayLike<number>, label: string, layer?: string) => void;   // write a label onto a cell set in an annotation layer (default the working draft)
@@ -64,6 +65,7 @@ export async function bodyFor(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bu
     case "DeTable": return deBody(p, ctx, hooks);
     case "Volcano": return volcanoBody(p, ctx);
     case "CompositionBars": return compositionBody(p, ctx, hooks);
+    case "MetadataFacets": return facetsBody(p, ctx, hooks);
     case "BoxBySample": return boxBody(p, ctx);
     case "Overdispersion": return overdispBody(ctx, hooks);
     case "Heatmap": return heatmapBody(p, ctx, hooks);
@@ -271,6 +273,99 @@ async function compositionBody(panel: Panel, ctx: Ctx, hooks: PanelHooks): Promi
     draw();
     let ro: ResizeObserver; ro = new ResizeObserver(() => { if (!w.isConnected) ro.disconnect(); else draw(); });   // fill on resize; self-cleans
     ro.observe(host);
+  } };
+}
+
+// METADATA FACETS — a fast browser over every per-cell metadata field (experimental design · technical covariates ·
+// annotation/clusters), the general analogue of cellxgene's left sidebar. A FIELD row expands to its values; the
+// droplet colours the embedding by that field; clicking a VALUE emits a selection event (the embedding + other
+// panels react in their own vocabulary); hovering a value locates it on the map. Phase 1: occupancy bars are
+// self-coloured (cells per value). [Phase 2 makes them an active-colour-by crosstab + cross-filter under selection.]
+async function facetsBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltBody> {
+  const fields = ctx.metadataFields();
+  const meta = new Map<string, any>();
+  for (const f of fields) if (f.kind === "categorical") { try { meta.set(f.name, await ctx.metaOf(f.name)); } catch { /* unreadable field — skip */ } }
+  const countCache = new Map<string, { value: string; count: number; ci: number }[]>();
+  const valueStats = (field: string) => {
+    if (countCache.has(field)) return countCache.get(field)!;
+    const m = meta.get(field); if (!m) return [];
+    const counts = new Int32Array(m.categories.length);
+    for (let i = 0; i < m.codes.length; i++) { const c = m.codes[i]; if (c >= 0) counts[c]++; }
+    const rows = m.categories.map((value: string, i: number) => ({ value, count: counts[i], ci: m.colors?.[i] ?? i }))
+      .filter((r: any) => r.count > 0).sort((a: any, b: any) => b.count - a.count);
+    countCache.set(field, rows); return rows;
+  };
+
+  const w = mk("div"); w.style.cssText = "position:absolute;inset:0;display:flex;flex-direction:column;overflow:hidden;font-size:12px";
+  const hdr = mk("div"); hdr.style.cssText = "flex:0 0 auto;display:flex;align-items:center;gap:7px;padding:6px 10px;border-bottom:1px solid var(--line2)";
+  const search = document.createElement("input"); search.placeholder = "filter fields…"; search.className = "facetsearch"; search.style.cssText = "flex:1;min-width:0;font-size:11px;padding:3px 8px";
+  hdr.appendChild(search); w.appendChild(hdr);
+  const host = mk("div"); host.style.cssText = "flex:1 1 auto;min-height:0;overflow:auto"; w.appendChild(host);
+
+  // expanded fields persist on the panel (instanceof guard: a workspace-switch JSON round-trip turns a Set into {})
+  let open: Set<string> = (p as any).facetOpen instanceof Set ? (p as any).facetOpen : ((p as any).facetOpen = new Set<string>());
+  if (!open.size) { const cb = ctx.coord.state.colorBy; const m = cb.startsWith("meta:") ? cb.slice(5) : ""; const def = (meta.has(m) && m) || fields.find((f) => ["annotation", "cell_type", "leiden"].includes(f.name))?.name; if (def) open.add(def); }
+
+  const activeField = () => { const cb = ctx.coord.state.colorBy; return cb.startsWith("meta:") ? cb.slice(5) : cb.startsWith("qc:") ? cb.slice(3) : ""; };
+  const GROUPS: [string, string][] = [["annotation", "annotation & clusters"], ["design", "experimental design"], ["covariate", "technical covariates"]];
+
+  const valuesEl = (f: any, sel: any) => {
+    const rows = valueStats(f.name);
+    const maxC = rows.reduce((mx: number, r: any) => Math.max(mx, r.count), 1);
+    const selVals = sel ? new Set(ctx.refToCategories(sel, f.name).filter((t: any) => t.frac >= 0.08).map((t: any) => t.value)) : null;
+    const wrap = mk("div", "facetvals");
+    wrap.innerHTML = rows.map((r: any) => {
+      const col = `rgb(${catColor(r.ci).join(",")})`;
+      return `<div class="facetv${selVals?.has(r.value) ? " on" : ""}" data-v="${esc(r.value)}" title="${esc(r.value)} · ${r.count.toLocaleString()} cells">
+        <span class="vsw" style="background:${col}"></span><span class="vname">${esc(r.value)}</span>
+        <span class="vbar"><span style="width:${(r.count / maxC * 100).toFixed(1)}%;background:${col}"></span></span>
+        <span class="vcount">${r.count.toLocaleString()}</span></div>`;
+    }).join("");
+    wrap.querySelectorAll<HTMLElement>(".facetv").forEach((el) => {
+      const value = el.dataset.v!;
+      el.onclick = () => { const c = ctx.coord.state.selection; const same = !!c && c.kind === "category" && (c as any).grouping === f.name && (c as any).value === value; ctx.coord.setSelection(same ? null : { kind: "category", grouping: f.name, value }); };
+      el.addEventListener("pointerenter", () => ctx.coord.setHint({ kind: "category", grouping: f.name, value }));
+      el.addEventListener("pointerleave", () => ctx.coord.clearHint());
+    });
+    return wrap;
+  };
+
+  const fieldEl = (f: any, act: string, sel: any, q: string) => {
+    const isOpen = open.has(f.name) || (!!q && f.kind === "categorical");   // an active search auto-expands matching categorical fields
+    const box = mk("div"); box.dataset.field = f.name;
+    const row = mk("div", "facetf");
+    const count = f.kind === "categorical" ? `<span class="fcount">${meta.get(f.name)?.categories.length ?? 0}</span>` : `<span class="fnum" title="numeric covariate">#</span>`;
+    row.innerHTML = `<span class="fchev">${f.kind === "categorical" ? (isOpen ? "▾" : "▸") : "·"}</span><span class="fname">${esc(f.name)}</span>${count}<span style="flex:1"></span>`;
+    const drop = mk("button", "fdrop mini" + (act === f.name ? " on" : ""), "◉"); drop.title = `colour the embedding by ${f.name}`;
+    drop.onclick = (e) => { e.stopPropagation(); ctx.coord.setColor("meta:" + f.name); };
+    row.appendChild(drop);
+    if (f.kind === "categorical") row.onclick = (e) => { if ((e.target as HTMLElement).closest(".fdrop")) return; if (open.has(f.name)) open.delete(f.name); else open.add(f.name); render(); };
+    box.appendChild(row);
+    if (isOpen && f.kind === "categorical") box.appendChild(valuesEl(f, sel));
+    return box;
+  };
+
+  const render = () => {
+    const q = search.value.trim().toLowerCase();
+    const top = host.scrollTop; host.innerHTML = "";
+    const act = activeField(); const sel = ctx.coord.state.selection;
+    for (const [g, label] of GROUPS) {
+      const fs = fields.filter((f) => f.group === g && (!q || f.name.toLowerCase().includes(q)));
+      if (!fs.length) continue;
+      host.appendChild(mk("div", "facetsub", label));
+      for (const f of fs) host.appendChild(fieldEl(f, act, sel, q));
+    }
+    if (!host.children.length) host.innerHTML = `<div style="color:var(--faint);padding:12px;font-size:11px">no fields match “${esc(q)}”</div>`;
+    host.scrollTop = top;
+  };
+
+  search.oninput = () => render();
+  render();
+
+  return { el: w, afterAttach: () => {
+    const pb = w.parentElement as HTMLElement | null; if (pb) { pb.style.position = "relative"; if (pb.clientHeight < 80) pb.style.height = "320px"; }
+    // recolour-active droplet + selection cross-highlight; ignore hover spam (hint/geneHint) to avoid re-render churn
+    hooks.onCoord((_s, changed) => { if (changed.some((k) => k === "colorBy" || k === "selection" || k === "focus")) render(); });
   } };
 }
 

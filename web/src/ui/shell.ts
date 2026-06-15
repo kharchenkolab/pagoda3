@@ -37,6 +37,7 @@ export class App {
   annoLayers = new Map<string, AnnotationLayer>();   // rich annotation layers (records/provenance); codes also mirrored into ctx as categoricals
   embeddings: EmbeddingView[] = [];
   compReactors: CompReactor[] = [];   // vocabulary-bound panels that highlight a category on a coord hint
+  coordSubs: (() => void)[] = [];     // managed coord subscriptions (panels' onCoord) — unsubscribed each fullRender
   private lastSel: any;               // last selection dispatched to reactors — skip re-dispatch on colour-only repaints
   private reactorsStale = true;       // set when reactors are rebuilt (fullRender) → force one dispatch
   geneHoverSinks: ((sym: string | null) => void)[] = [];   // panels that highlight a gene's row on a coord geneHint
@@ -55,9 +56,9 @@ export class App {
     const defGroup = "meta:" + defGrp;
     this.coord.set({ colorBy: defGroup });
     this.WS = {
-      Overview: { colorBy: defGroup, panels: [
+      Metadata: { colorBy: defGroup, panels: [
         { type: "Embedding", title: "Embedding", cap: "all cells", bind: "embedding:main" },
-        { type: "CompositionBars", title: "Composition by sample", cap: "by condition", bind: "composition:bySample" }] },
+        { type: "MetadataFacets", title: "Metadata", cap: "browse facets", bind: "facets:all" }] },
       "Markers": { colorBy: defGroup, panels: [
         { type: "Embedding", title: "Embedding", cap: "clusters", bind: "embedding:main" },
         { type: "Heatmap", title: "Marker genes", cap: "top genes per group", group: defGrp }] },
@@ -112,8 +113,8 @@ export class App {
     }
     this.wire();
     this.setPip("idle");
-    this.switchWS("Overview", false);
-    this.checkpoint("session start", "Baseline Overview workspace.");
+    this.switchWS("Metadata", false);
+    this.checkpoint("session start", "Baseline Metadata workspace.");
     setTimeout(() => this.toast("Drag with Shift to select cells · ⌘K to ask · right-click a panel", null), 500);
     // connect the live Anthropic planner if the proxy + token are reachable
     checkLive().then((ok) => { this.agent.live = ok; if (ok) this.toast("Live agent connected · Opus", "The agent is the real Anthropic planner now — it drives the coordination space through tools, at the lowest sufficient rung."); });
@@ -132,6 +133,7 @@ export class App {
       onCellHover: (idx) => this.onCellHover(idx),
       onCellClick: (idx, anchor) => this.onCellClick(idx, anchor),
       registerComposition: (r) => this.compReactors.push(r),
+      onCoord: (fn) => { const u = this.coord.subscribe(fn); this.coordSubs.push(u); },   // managed coord subscription — torn down on fullRender (no leak)
       onConfigurePanel: (id, patch) => this.configurePanel(id, patch),
       registerGeneHover: (fn) => this.geneHoverSinks.push(fn),
       annotate: (ids, label, layer) => this.labelCells(ids, label, layer),
@@ -170,6 +172,7 @@ export class App {
     const built: { dom: HTMLElement; afterAttach?: () => void }[] = [];
     for (const p of this.canvas) built.push(await this.panelEl(p));   // build off-DOM first; old panels stay visible meanwhile
     if (token !== this.renderToken) return;   // superseded by a newer fullRender → it owns pointerEvents; discard this build
+    this.coordSubs.forEach((u) => u()); this.coordSubs = [];   // tear down old panels' coord subscriptions before rebuilding
     this.embeddings = []; this.compReactors = []; this.geneHoverSinks = []; this.reactorsStale = true;   // new reactors → repaint must dispatch the selection to them once
     wb.innerHTML = "";
     const afters: (() => void)[] = [];
