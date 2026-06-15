@@ -5,15 +5,17 @@ graphics/layout + density/wasted-space) → list issues → fix the clear ones v
 park questionable calls for review.
 
 ## Campaign summary (this run)
-Ran 8 scenario groups (Markers, Layout, Coordination, Encoding, Compute, Conversation,
-Persistence/Honesty/Stress, long-tail). **9 bugs fixed + 1 new feature**, all committed; S3–S7 verified
-working (no fixes needed). Tests: 29 pass.
+Ran 9 scenario groups (Markers, Layout, Coordination, Encoding, Compute, Conversation,
+Persistence/Honesty/Stress, long-tail, 2×2-layout-control). **10 bugs fixed + 2 new features (facet,
+arrange)**, all committed; S3–S7 verified working (no fixes needed). Tests: 30 pass.
 - **Fixed:** embedding labels invisible on mount (A); lexical cluster order + cramped dotplot labels (B);
   panel title wrap (C); faceted panels not comparable (D, → facet feature); panels scrolling off the
   viewport (E); narrow faceted headers clipping controls (F); grid rows blowing past their track (G);
   composition wasting ~40% of its height (H); a throwing panel leaving stale DOM + data-less workspaces
-  offered (I).
-- **New feature:** `update_view.facet({by,…})` — declarative panel splits that are guaranteed comparable.
+  offered (I); the agent unable to make a 2×2 — col-pin no-op on full panels + panel corruption on
+  rearrange (J).
+- **New features:** `update_view.facet({by,…})` (comparable panel splits) and `update_view.arrange(
+  {rows|columns})` (pure reposition into the 2-col grid — fixes "make it a 2×2").
 - **Verified working:** cross-panel coordination, colormap/heat-dot/alpha, DE/overdispersion/compute_code,
   conversation clarify+continuity, workspace restore, unmeasured-gene + impossible-view honesty, rapid-
   switch stress.
@@ -192,3 +194,20 @@ executor + a small legend card + a couple of agent-prompt lines), with unit test
 - Pinning many genes (14, incl. unmeasured IL17A) to a dotplot — PASS: 13 pinned + highlighted at top
   with a separator, IL17A shown as a "not in this dataset" footnote, rows scroll within the panel.
 - Rapid/responsive viewport — parked (see For review).
+
+### Scenario 9 — Layout control / "arrange in 2×2" (Peter hit this: agent did every arrangement EXCEPT a 2×2)
+- **Bug J — the agent could not produce a 2×2; two root causes.**
+  1. **`col` pin was a silent no-op on a `full` panel.** After faceting, dotplots are `full:true`. The agent
+     set `col:0/1` to make them side-by-side, but `full` overrides `col` in layout, so nothing moved — the
+     agent kept "succeeding" while the layout never changed. Fix: a `col` pin now clears `full` in
+     applyPanelModel (a column pin means not full-width). Verified: setting cols now yields a real 2×2.
+  2. **The agent corrupted panels while "rearranging."** Using low-level add/remove to rearrange, it
+     dropped the day7 dotplot and made a 2nd day0 one (two day0 dotplots). Fix: a new pure
+     **`update_view.arrange({rows|columns})`** that ONLY repositions existing panels (col/full + order),
+     never recreates them — `rows` = grid rows (≤2 ids each; 1-id row = full-width), `columns` = stacked
+     columns (≤2). Reducer-validated (viewpatch.ts) + executed in shell.ts; agent-prompt + label added.
+  Verified end-to-end via the live agent: "arrange in a 2×2" → top-row embeddings / bottom-row dotplots;
+  "embeddings stacked left, dotplots right" → column 2×2 — BOTH with all day0/day7 scopes preserved. Unit
+  test added (rows/columns/overflow/dupes). (shell.ts applyPanelModel + arrange executor, viewpatch.ts, live.ts)
+- Added catalog scenarios L6–L9 (2×2 rows, 2×2 columns, stack-all, preserve-on-rearrange) to
+  pagoda3/stage-test.md.

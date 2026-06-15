@@ -43,6 +43,14 @@ Run by Claude on the running dev server using the preview tools. Triggered on de
 - L3 build a 2×2 board (2 embeddings + 2 dotplots) → balanced grid, all readable.
 - L4 maximize one panel, then restore → spans / returns cleanly.
 - L5 add 5–6 panels → no off-screen, columns stay balanced.
+- **L6 "arrange in a 2×2"** (the agent-couldn't-do-it case): facet both embedding+dotplot by day, then ask
+  the agent for a 2×2 → top-row embeddings, bottom-row dotplots, all ~half-width, 2 distinct x & 2 distinct y.
+- **L7 "embeddings stacked left, dotplots stacked right"** (column 2×2) → embeddings both in col0 (different
+  rows), dotplots both in col1. Tests `arrange:{columns:…}` / the agent reasoning left-vs-right.
+- **L8 "stack everything full-width"** → each panel full width, one per row, in order.
+- **L9 rearrange must PRESERVE panels** — after any arrange, assert scopes/genes unchanged (no panel
+  recreated, no duplicated/lost facet — the day0/day0 corruption bug). Check `col` pins actually take effect
+  (a col pin must clear `full`, else it silently no-ops).
 
 ### coordination
 - C1 select a cluster in the embedding → composition + dotplot columns highlight (translated).
