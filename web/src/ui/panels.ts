@@ -328,6 +328,17 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
   w.appendChild(hdr);
   const host = mk("div"); host.style.cssText = "flex:1 1 auto;min-height:0;overflow:auto"; w.appendChild(host);
   const mhost = mk("div"); mhost.style.cssText = "flex:1 1 auto;min-height:0;overflow:auto;display:none;padding:8px 10px"; w.appendChild(mhost);
+  // the CAP record for the selected cluster's working label — folded in here (cohesive single panel, not a
+  // separate full-width one). Follows the selection; updates on accept.
+  const recDetail = mk("div"); recDetail.style.cssText = "flex:0 0 auto;max-height:46%;overflow:auto;border-top:1px solid var(--line2);padding:8px 10px"; w.appendChild(recDetail);
+  const workLayer = hooks.annoLayer("annotation");
+  let recLabel: string | null = (p as any).recordLabel || null;
+  const showRecord = (lbl: string | null) => {
+    if (!workLayer || !workLayer.categories.length) { recDetail.innerHTML = '<span style="color:var(--faint);font-size:11.5px">accept or label clusters to build a working draft — each label\'s record appears here</span>'; return; }
+    const l = (lbl && workLayer.categories.includes(lbl)) ? lbl : (recLabel && workLayer.categories.includes(recLabel) ? recLabel : workLayer.categories.find((_, i) => workLayer.codes.includes(i)) || null);
+    if (!l) { recDetail.innerHTML = '<span style="color:var(--faint);font-size:11.5px">select a cluster to edit its label record</span>'; return; }
+    recLabel = l; (p as any).recordLabel = l; renderCapRecord(recDetail, workLayer, l, ctx, hooks);
+  };
 
   const colorOf = (cats: string[], label: string | null) => label == null ? "var(--faint)" : `rgb(${catColor(cats.indexOf(label)).join(",")})`;
   const cell = (label: string | null, frac: number, accept?: string) => {
@@ -401,79 +412,74 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
   return { el: w, afterAttach: () => {
     const pb = w.parentElement as HTMLElement | null; if (pb) { pb.style.position = "relative"; if (pb.clientHeight < 80) pb.style.height = "320px"; }
     hooks.registerComposition({ grouping: base, setSelect: (v) => { selRows = v; paint(); }, setHover: (v) => { if (!selRows?.size) { selRows = v; paint(); } } });
+    // a selected cluster's WORKING label drives the folded record detail (translate the selection into the draft)
+    hooks.registerComposition({ grouping: "annotation", setSelect: (labels) => { if (labels && labels.size) { (document.activeElement as HTMLElement | null)?.blur?.(); showRecord([...labels][0]); } }, setHover: () => {} });
+    showRecord(null);   // initial: last-picked or the first labeled cluster
   } };
 }
 
-// CAP record card for one working-draft label — the depositable per-label metadata (celltype.info schema):
-// name/full name, Cell-Ontology term (with live OLS lookup), parent category, marker evidence (auto-filled
-// from this dataset's derived markers), canonical markers, rationale. Edits persist to the layer; export → JSON.
+// Render the CAP record form for ONE label into `host` (dark-themed, matches the app). Shared by the
+// reconcile panel's detail section and the standalone record panel. CAP schema (celltype.info): name/full
+// name, Cell-Ontology term (live OLS lookup), parent category, marker evidence (auto from derived markers),
+// canonical markers, rationale. Edits persist to the layer; export → JSON. opts.picker adds a label dropdown.
+async function renderCapRecord(host: HTMLElement, layer: AnnotationLayer, label: string, ctx: Ctx, hooks: PanelHooks, opts?: { picker?: boolean; onPick?: (l: string) => void }): Promise<void> {
+  const layerName = layer.name; layer.records = layer.records || {};
+  const rec: CapRecord = { ...(layer.records[label] || {}), label };
+  if (!rec.markerEvidence || !rec.markerEvidence.length) { const mm = await ctx.markers(layerName); rec.markerEvidence = (mm.get(label) || []).slice(0, 8).map((m: any) => m.symbol); }
+  const counts = new Int32Array(layer.categories.length); for (const c of layer.codes) if (c >= 0) counts[c]++;
+  const idx = layer.categories.indexOf(label); const n = idx >= 0 ? counts[idx] : 0;
+  const live = layer.categories.filter((c, i) => counts[i] > 0 || c === label);
+  const head = opts?.picker
+    ? `<select id="arlabel" class="inline" style="font-size:13px;font-weight:600;max-width:220px">${live.map((c) => `<option${c === label ? " selected" : ""}>${esc(c)}</option>`).join("")}</select>`
+    : `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${idx >= 0 ? `rgb(${catColor(idx).join(",")})` : "var(--faint)"}"></span><b style="font-size:13px">${esc(label)}</b>`;
+  host.innerHTML = `
+   <div style="max-width:720px">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:9px">${head}
+      <span style="color:var(--faint);font-size:11px">${n} cells</span>
+      <span id="arsaved" style="color:var(--good,#6bbf73);font-size:11px;opacity:0;transition:opacity .2s">saved ✓</span>
+      <button id="arexport" class="mini" style="margin-left:auto">export CAP</button></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 14px;font-size:12px">
+      <label>full name<input id="ar_full" value="${esc(rec.fullName || "")}"></label>
+      <label>category · parent<input id="ar_cat" value="${esc(rec.category || "")}"></label>
+      <label style="grid-column:1/-1">ontology term · Cell Ontology
+        <span style="display:flex;gap:6px"><input id="ar_oid" value="${esc(rec.ontologyTermId || "")}" placeholder="CL:…" style="flex:0 0 110px"><input id="ar_oterm" value="${esc(rec.ontologyTerm || "")}" placeholder="term name" style="flex:1;min-width:0"><button id="ar_ols" class="mini">lookup</button></span>
+        <div id="ar_olshits"></div></label>
+      <label style="grid-column:1/-1">marker evidence · this dataset <span style="color:var(--faint)">(auto)</span>
+        <div>${(rec.markerEvidence || []).map((g) => `<span style="font-family:var(--mono);font-size:11px;border:1px solid var(--line2);border-radius:5px;padding:1px 6px;margin:0 4px 4px 0;display:inline-block">${esc(g)}</span>`).join("")}</div></label>
+      <label style="grid-column:1/-1">canonical markers<input id="ar_canon" value="${esc((rec.canonicalMarkers || []).join(", "))}" placeholder="comma-separated"></label>
+      <label style="grid-column:1/-1">rationale<textarea id="ar_rat" rows="2" style="resize:vertical">${esc(rec.rationale || "")}</textarea></label>
+    </div></div>`;
+  host.querySelectorAll<HTMLElement>("label").forEach((l) => l.style.cssText = "display:flex;flex-direction:column;gap:3px;color:var(--faint);font-size:11px");
+  const val = (id: string) => (host.querySelector("#" + id) as HTMLInputElement | null)?.value || "";
+  const flash = () => { const s = host.querySelector("#arsaved") as HTMLElement | null; if (s) { s.style.opacity = "1"; setTimeout(() => { s.style.opacity = "0"; }, 1200); } };
+  const save = () => { hooks.saveRecord(layerName, { label, fullName: val("ar_full"), category: val("ar_cat"), ontologyTermId: val("ar_oid"), ontologyTerm: val("ar_oterm"), canonicalMarkers: val("ar_canon").split(",").map((s) => s.trim()).filter(Boolean), rationale: val("ar_rat"), markerEvidence: rec.markerEvidence }); flash(); };
+  host.querySelectorAll("input,textarea").forEach((i) => i.addEventListener("change", save));
+  if (opts?.picker) (host.querySelector("#arlabel") as HTMLSelectElement).onchange = (e) => { save(); opts.onPick?.((e.target as HTMLSelectElement).value); };
+  (host.querySelector("#ar_ols") as HTMLButtonElement).onclick = async () => {
+    const box = host.querySelector("#ar_olshits") as HTMLElement; box.innerHTML = '<span style="color:var(--faint);font-size:11px">searching OLS…</span>';
+    const hits = await olsLookup(label);
+    box.innerHTML = hits.length ? hits.map((h) => `<div class="olshit" data-id="${esc(h.id)}" data-label="${esc(h.label)}" style="cursor:pointer;padding:2px 4px;font-size:11px;border-radius:4px"><b style="color:var(--cyan)">${esc(h.id)}</b> ${esc(h.label)}</div>`).join("") : '<span style="color:var(--faint);font-size:11px">no CL match (or offline) — enter manually</span>';
+    box.querySelectorAll<HTMLElement>(".olshit").forEach((el) => el.onclick = () => { (host.querySelector("#ar_oid") as HTMLInputElement).value = el.dataset.id!; (host.querySelector("#ar_oterm") as HTMLInputElement).value = el.dataset.label!; save(); box.innerHTML = ""; });
+  };
+  (host.querySelector("#arexport") as HTMLButtonElement).onclick = async () => {
+    const mm = await ctx.markers(layerName);
+    const recs = layer.categories.map((c) => ({ ...(layer.records![c] || {}), label: c, markerEvidence: (layer.records![c]?.markerEvidence) || (mm.get(c) || []).slice(0, 8).map((m: any) => m.symbol) }));
+    const blob = new Blob([JSON.stringify(recs, null, 2)], { type: "application/json" });
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "annotation_cap.json"; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  };
+}
+
+// Standalone record panel (optional) — a label picker + the shared CAP form, following the selection.
 async function annoRecordBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltBody> {
-  const layerName = "annotation";
-  const layer = hooks.annoLayer(layerName);
+  const layer = hooks.annoLayer("annotation");
   if (!layer || !layer.categories.length) { const m = mk("div", "panelerr"); m.textContent = "No working annotation yet — accept labels in the Reconcile panel first."; return { el: m }; }
-  layer.records = layer.records || {};
   const w = mk("div"); w.style.cssText = "position:absolute;inset:0;overflow:auto;font-size:12px;padding:10px 12px";
   let current = (p as any).recordLabel && layer.categories.includes((p as any).recordLabel) ? (p as any).recordLabel : layer.categories[0];
-
-  const draw = async () => {
-    const saved = layer.records![current] || {};
-    const rec: CapRecord = { ...saved, label: current };
-    if (!rec.markerEvidence || !rec.markerEvidence.length) { const mm = await ctx.markers(layerName); rec.markerEvidence = (mm.get(current) || []).slice(0, 8).map((m: any) => m.symbol); }
-    // per-label cell counts → only offer labels that some cell actually carries (relabeling leaves orphans)
-    const counts = new Int32Array(layer.categories.length); for (const c of layer.codes) if (c >= 0) counts[c]++;
-    const idx = layer.categories.indexOf(current); const n = idx >= 0 ? counts[idx] : 0;
-    const liveLabels = layer.categories.filter((c, i) => counts[i] > 0 || c === current);
-    w.innerHTML = `
-     <div style="max-width:760px">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-        <select id="arlabel" class="inline" style="font-size:13px;font-weight:600;max-width:220px">${liveLabels.map((c) => `<option${c === current ? " selected" : ""}>${esc(c)}</option>`).join("")}</select>
-        <span style="color:var(--faint)">${n} cells</span>
-        <span id="arsaved" style="color:var(--good,#6bbf73);font-size:11px;opacity:0;transition:opacity .2s">saved ✓</span>
-        <button id="arexport" class="mini" style="margin-left:auto">export CAP</button>
-      </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:9px 14px">
-        <label>full name<input id="ar_full" value="${esc(rec.fullName || "")}"></label>
-        <label>category · parent<input id="ar_cat" value="${esc(rec.category || "")}"></label>
-        <label style="grid-column:1/-1">ontology term · Cell Ontology
-          <span style="display:flex;gap:6px"><input id="ar_oid" value="${esc(rec.ontologyTermId || "")}" placeholder="CL:…" style="flex:0 0 110px"><input id="ar_oterm" value="${esc(rec.ontologyTerm || "")}" placeholder="term name" style="flex:1;min-width:0"><button id="ar_ols" class="mini">lookup</button></span>
-          <div id="ar_olshits"></div></label>
-        <label style="grid-column:1/-1">marker evidence · this dataset <span style="color:var(--faint)">(auto)</span>
-          <div>${(rec.markerEvidence || []).map((g) => `<span style="font-family:var(--mono);font-size:11px;border:1px solid var(--line2);border-radius:5px;padding:1px 6px;margin:0 4px 4px 0;display:inline-block">${esc(g)}</span>`).join("")}</div></label>
-        <label style="grid-column:1/-1">canonical markers<input id="ar_canon" value="${esc((rec.canonicalMarkers || []).join(", "))}" placeholder="comma-separated"></label>
-        <label style="grid-column:1/-1">rationale<textarea id="ar_rat" rows="2" style="resize:vertical">${esc(rec.rationale || "")}</textarea></label>
-      </div>
-     </div>`;
-    w.querySelectorAll<HTMLElement>("label").forEach((l) => l.style.cssText = "display:flex;flex-direction:column;gap:3px;color:var(--faint);font-size:11px");
-    w.querySelectorAll<HTMLElement>("input,textarea").forEach((i) => i.style.fontSize = "12px");
-    const val = (id: string) => (w.querySelector("#" + id) as HTMLInputElement | null)?.value || "";
-    const flashSaved = () => { const s = w.querySelector("#arsaved") as HTMLElement | null; if (!s) return; s.style.opacity = "1"; setTimeout(() => { s.style.opacity = "0"; }, 1200); };
-    const save = () => { hooks.saveRecord(layerName, { label: current, fullName: val("ar_full"), category: val("ar_cat"), ontologyTermId: val("ar_oid"), ontologyTerm: val("ar_oterm"), canonicalMarkers: val("ar_canon").split(",").map((s) => s.trim()).filter(Boolean), rationale: val("ar_rat"), markerEvidence: rec.markerEvidence }); flashSaved(); };
-    w.querySelectorAll("input,textarea").forEach((i) => i.addEventListener("change", save));
-    (w.querySelector("#arlabel") as HTMLSelectElement).onchange = (e) => { save(); current = (e.target as HTMLSelectElement).value; draw(); };
-    (w.querySelector("#ar_ols") as HTMLButtonElement).onclick = async () => {
-      const box = w.querySelector("#ar_olshits") as HTMLElement; box.innerHTML = '<span style="color:var(--faint);font-size:11px">searching OLS…</span>';
-      const hits = await olsLookup(current);
-      box.innerHTML = hits.length ? hits.map((h) => `<div class="olshit" data-id="${esc(h.id)}" data-label="${esc(h.label)}" style="cursor:pointer;padding:2px 4px;font-size:11px;border-radius:4px"><b style="color:var(--cyan)">${esc(h.id)}</b> ${esc(h.label)}</div>`).join("") : '<span style="color:var(--faint);font-size:11px">no CL match (or offline) — enter manually</span>';
-      box.querySelectorAll<HTMLElement>(".olshit").forEach((el) => el.onclick = () => { (w.querySelector("#ar_oid") as HTMLInputElement).value = el.dataset.id!; (w.querySelector("#ar_oterm") as HTMLInputElement).value = el.dataset.label!; save(); box.innerHTML = ""; });
-    };
-    (w.querySelector("#arexport") as HTMLButtonElement).onclick = async () => {
-      const mm = await ctx.markers(layerName);
-      const recs = layer.categories.map((c) => ({ ...(layer.records![c] || {}), label: c, markerEvidence: (layer.records![c]?.markerEvidence) || (mm.get(c) || []).slice(0, 8).map((m: any) => m.symbol) }));
-      const blob = new Blob([JSON.stringify(recs, null, 2)], { type: "application/json" });
-      const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "annotation_cap.json"; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-    };
-  };
+  const draw = () => renderCapRecord(w, layer, current, ctx, hooks, { picker: true, onPick: (l) => { current = l; (p as any).recordLabel = l; draw(); } });
   await draw();
   return { el: w, afterAttach: () => {
     const pb = w.parentElement as HTMLElement | null; if (pb) { pb.style.position = "relative"; if (pb.clientHeight < 80) pb.style.height = "300px"; }
-    // follow the selection: clicking a cluster anywhere shows ITS working-draft label's record (dominant label
-    // of the selected cells). The picker still works for manual jumps; the chosen label persists across rebuilds.
-    hooks.registerComposition({ grouping: layerName, setSelect: (labels) => {
-      if (!labels || !labels.size) return; const lab = [...labels][0];
-      if (lab === current || !layer.categories.includes(lab)) return;
-      (document.activeElement as HTMLElement | null)?.blur?.();   // commit any in-progress edit first
-      current = lab; (p as any).recordLabel = lab; draw();
-    }, setHover: () => {} });
+    hooks.registerComposition({ grouping: "annotation", setSelect: (labels) => { if (!labels || !labels.size) return; const lab = [...labels][0]; if (lab === current || !layer.categories.includes(lab)) return; (document.activeElement as HTMLElement | null)?.blur?.(); current = lab; (p as any).recordLabel = lab; draw(); }, setHover: () => {} });
   } };
 }
 

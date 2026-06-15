@@ -238,6 +238,10 @@ tr.gene{cursor:pointer} tr.gene:hover{background:var(--inset)} tr.gene.on{backgr
 .gtable thead th{position:sticky;top:0;background:var(--panel)}
 th.sortable{cursor:pointer;user-select:none} th.sortable:hover{color:var(--text)} th.sorted{color:var(--cyan)}
 select.inline{background:var(--inset);color:var(--text);border:1px solid var(--line);border-radius:6px;font-size:11px;padding:2px 5px;font-family:var(--mono)}
+/* dark-theme bare form fields inside panel bodies (e.g. the annotation record card) — match the app, not the OS */
+.pbody input:not(.inline),.pbody textarea{background:var(--inset);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:5px 8px;font-family:var(--sans);outline:none}
+.pbody input:not(.inline)::placeholder,.pbody textarea::placeholder{color:var(--faint)}
+.pbody input:not(.inline):focus,.pbody textarea:focus{border-color:var(--cyan)}
 .embhost{position:absolute;inset:0}
 .emblegend{position:absolute;left:10px;bottom:10px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:rgba(13,17,23,.72);border:1px solid var(--line);border-radius:8px;padding:5px 9px;font-size:10.5px;color:var(--dim);max-width:90%}
 .emblegend .lt{font-family:var(--mono);color:var(--text)}
