@@ -64,7 +64,7 @@ const TOOLS: Tool[] = [
   { name: "get_widget_recipe", description: "DELIVER a recipe/snippet's full SOURCE by name (from find/list) — a widget to adapt, or snippet helpers to paste in. Compose a few snippets + your own glue, then preview_widget before saving.", input_schema: { type: "object", properties: { name: { type: "string", description: "recipe/snippet name, e.g. 'scatter' or 'hit-test'" } }, required: ["name"] } },
   { name: "fetch_url", description: "Fetch the TEXT of a web page (server-side, so no CORS) to consult an external viz/data technique or doc when the recipes don't cover it — e.g. a charting-pattern or algorithm reference. Returns truncated text. The widget itself must stay SELF-CONTAINED (no remote code/CDN at runtime); use this only to learn a technique, then write the code inline.", input_schema: { type: "object", properties: { url: { type: "string", description: "an https:// page URL" } }, required: ["url"] } },
   { name: "preview_widget", description: "Render a widget SOURCE in a sandbox and return {ok, error, logs, manifest, renderedText} — your TEST/DEBUG loop: call after each draft, read error/logs/renderedText and FIX until ok:true before saving. NOTE it only exercises the INITIAL render; to test interactive logic (a button, computed output, setSelection) pass `probe`: JS run after mount IN THE WIDGET'S OWN SCOPE — it can call the widget's functions and set inputs, e.g. \"document.querySelector('#g').value='CD3E'; await compute();\"; console.log to inspect. renderedText also includes a [viz: …] summary of SVG/canvas content (element counts + sizes, e.g. 'svg 440x120 (36 circle, 12 text)'), so you can confirm a CHART actually drew WITHOUT a DOM-counting probe (data-driven draws are async, so if a probe shows 0 elements, just `await` a moment first).", input_schema: { type: "object", properties: { source: { type: "string", description: "the full widget source" }, probe: { type: "string", description: "optional JS run after mount to exercise interactions (can be async)" } }, required: ["source"] } },
-  { name: "save_widget", description: "Mount the finished widget as a Widget PANEL on the workbench. Call only once preview_widget returned ok:true. The widget reads/writes the same coordination space (selection/colour) as other panels and themes automatically.", input_schema: { type: "object", properties: { source: { type: "string" }, title: { type: "string" } }, required: ["source"] } },
+  { name: "save_widget", description: "Mount the finished widget as a Widget PANEL on the workbench. Call only once preview_widget returned ok:true. OMIT `source` to mount EXACTLY what you last previewed (the default + much faster — don't re-emit the whole source); pass `source` only if you changed it since the last preview. The widget reads/writes the same coordination space (selection/colour) as other panels and themes automatically.", input_schema: { type: "object", properties: { source: { type: "string", description: "optional — omit to reuse the last previewed source" }, title: { type: "string" } } } },
   { name: "inspect_widget", description: "CHECK A WIDGET'S LIVE USE after it's mounted — returns its current rendered text, recent console logs, any runtime error, and manifest, captured from the actual running panel (with real data + the user's current selection). Use it to confirm a widget you saved is actually working, or to debug one the user says is misbehaving, then fix it (re-author + save_widget). Omit panelId if there's only one widget; otherwise pass it (LAYOUT lists Widget panel ids).", input_schema: { type: "object", properties: { panelId: { type: "number" } } } },
   // ---- annotation: build a clean cell-type labeling by reconciling sources (see the Annotate workspace) ----
   { name: "run_annotation", description: "Compute an annotation SOURCE by running a cell-typing method in-browser, added as a layer to reconcile against others. method='sctype' scores each cluster against a bundled marker DB (no server). Then read get_reconciliation and compare in the Annotate workspace's Reconcile panel.", input_schema: { type: "object", properties: { method: { type: "string", enum: ["sctype"] }, base: { type: "string", description: "clustering to label (default leiden)" } }, required: ["method"] } },
@@ -108,6 +108,10 @@ LAYOUT (panel ids for update_view panels[].id): ${app.canvas.map((p) => `#${p.id
 EMBEDDINGS available (update_view panels[].embedding): ${app.ctx.embeddingNames().join(", ") || "umap"}.`;
 }
 
+// The most recent source the agent previewed — so save_widget can reuse it without the agent re-emitting the whole
+// widget (re-generating ~2K tokens of source is the dominant latency of an authoring run; see the proxy agent log).
+let lastWidgetSource = "";
+
 // ---- tool executors (side effects on the app + a compact result for the model) ----
 async function execTool(app: App, name: string, input: any): Promise<string> {
   const ag = app.agent;
@@ -137,10 +141,11 @@ async function execTool(app: App, name: string, input: any): Promise<string> {
     case "fetch_url": return await fetchUrlText(String(input?.url || ""));
     case "inspect_widget": return await app.inspectWidget(input?.panelId != null ? Number(input.panelId) : undefined);
     case "preview_widget": {
-      const r = await previewWidget(String(input?.source || ""), readonlyHost(app.widgetHost()), 4000, input?.probe ? String(input.probe) : undefined);
+      lastWidgetSource = String(input?.source || "");
+      const r = await previewWidget(lastWidgetSource, readonlyHost(app.widgetHost()), 4000, input?.probe ? String(input.probe) : undefined);
       return JSON.stringify({ ok: r.ok, error: r.error, logs: r.logs.slice(-8), manifest: r.manifest, renderedText: (r.text || "").slice(0, 400) });
     }
-    case "save_widget": { const src = String(input?.source || ""); if (!src.trim()) return "save_widget: 'source' is required"; const id = app.addWidgetPanel(src, input?.title); return `mounted widget panel #${id} on the workbench`; }
+    case "save_widget": { const src = String(input?.source || lastWidgetSource); if (!src.trim()) return "save_widget: no source — preview_widget first, then save (omit source to reuse it)"; const id = app.addWidgetPanel(src, input?.title); return `mounted widget panel #${id} on the workbench`; }
     case "run_annotation": { const method = String(input.method || "sctype").toLowerCase(); if (method !== "sctype") return `unknown method "${method}" — available: sctype`; const { ok, error } = await app.runScType({ base: input.base }); return error ? `error: ${error}` : ok!; }
     case "annotate": {
       if (!input.label) return "annotate: 'label' is required"; if (!input.A) return "annotate: 'A' (a cell set) is required";
@@ -205,7 +210,7 @@ export async function runLive(app: App, userText: string, abort: AbortSignal): P
   let emptyRetries = 0;
   for (let turn = 0; turn < 12; turn++) {   // headroom for multi-step flows like widget authoring (template → preview → fix → save)
     if (abort.aborted) break;
-    const res = await fetch(PROXY, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ system: sys, messages, tools: TOOLS, model: "claude-opus-4-8", max_tokens: 8192 }), signal: abort });
+    const res = await fetch(PROXY, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ system: sys, messages, tools: TOOLS, model: "claude-opus-4-8", max_tokens: 8192, client: "app" }), signal: abort });
     if (!res.ok || !res.body) { app.thread.entries.push({ role: "agent", text: "(agent unreachable — using local fallback)" }); ag.renderThread(); throw new Error("live unreachable"); }
     const assistant: any[] = []; let curText = ""; let curTool: any = null; let curJson = ""; let textEntry: any = null; let stop = "";
     const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = "";

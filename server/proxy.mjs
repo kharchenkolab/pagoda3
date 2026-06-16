@@ -20,6 +20,11 @@ const CC_MARKER = { type: "text", text: "You are a Claude agent, built on Anthro
 
 function loadStore() { try { return JSON.parse(fs.readFileSync(OAUTH_STORE, "utf8")); } catch { return null; } }
 
+// Per-request agent log (JSONL) — the chokepoint EVERY agent turn flows through (app + harness), so this is the one
+// place to see latency, turn counts, tool calls, and prompt-cache hit/miss across all sessions. Analyze with jq/node.
+const AGENT_LOG = process.env.PAGODA_AGENT_LOG || "/tmp/pagoda-agent.jsonl";
+function logAgent(rec) { try { fs.appendFileSync(AGENT_LOG, JSON.stringify(rec) + "\n"); } catch { /* non-fatal */ } }
+
 // ---- web fetch (for the agent's fetch_url tool: consult an external viz/technique reference) ----
 // SSRF guard: only http(s), and refuse loopback / link-local / private-range hosts so the tool can't be steered at
 // internal services. (Literal-host checks only — adequate for a local single-user dev tool.)
@@ -109,6 +114,13 @@ const server = http.createServer(async (req, res) => {
       // on every follow-up turn instead of re-billed in full. Transparent to results.
       if (out.system && out.system.length) out.system[out.system.length - 1] = { ...out.system[out.system.length - 1], cache_control: { type: "ephemeral" } };
       if (out.tools && out.tools.length) out.tools[out.tools.length - 1] = { ...out.tools[out.tools.length - 1], cache_control: { type: "ephemeral" } };
+      // also cache the CONVERSATION prefix: mark the LAST message so each turn READS the cached prior turns instead of
+      // reprocessing the whole growing history (the dominant cost of a multi-turn authoring loop). 3 of 4 breakpoints.
+      if (out.messages && out.messages.length) {
+        const lm = out.messages[out.messages.length - 1];
+        if (typeof lm.content === "string") lm.content = [{ type: "text", text: lm.content, cache_control: { type: "ephemeral" } }];
+        else if (Array.isArray(lm.content) && lm.content.length) lm.content[lm.content.length - 1] = { ...lm.content[lm.content.length - 1], cache_control: { type: "ephemeral" } };
+      }
       if (payload.thinking) out.thinking = payload.thinking;
       const headers = { "content-type": "application/json", "anthropic-version": "2023-06-01" };
       if (auth.mode === "oauth") { headers["authorization"] = `Bearer ${auth.token}`; headers["anthropic-beta"] = "oauth-2025-04-20"; }
@@ -116,13 +128,25 @@ const server = http.createServer(async (req, res) => {
       let up;
       try { up = await fetch("https://api.anthropic.com/v1/messages", { method: "POST", headers, body: JSON.stringify(out) }); }
       catch (e) { res.statusCode = 502; return res.end(JSON.stringify({ error: String(e) })); }
+      const t0 = Date.now();
       res.statusCode = up.status;
       res.setHeader("content-type", up.headers.get("content-type") || "text/event-stream");
-      if (!up.ok) { const t = await up.text(); return res.end(t); }
-      const reader = up.body.getReader();
+      if (!up.ok) { const t = await up.text(); logAgent({ t: new Date().toISOString(), ms: Date.now() - t0, client: payload.client || "?", msgs: out.messages.length, error: up.status, body: t.slice(0, 160) }); return res.end(t); }
+      const reader = up.body.getReader(); const dec = new TextDecoder(); let raw = "";
       const pump = async () => {
-        for (;;) { const { done, value } = await reader.read(); if (done) break; res.write(Buffer.from(value)); }
+        for (;;) { const { done, value } = await reader.read(); if (done) break; res.write(Buffer.from(value)); raw += dec.decode(value, { stream: true }); }
         res.end();
+        // tee-parse the buffered SSE for usage / tool calls / stop reason → one log line per turn
+        let usage = {}, tools = [], stop = "", textChars = 0;
+        for (const line of raw.split("\n")) { if (!line.startsWith("data:")) continue; let ev; try { ev = JSON.parse(line.slice(5).trim()); } catch { continue; }
+          if (ev.type === "message_start") usage = { ...(ev.message && ev.message.usage || {}) };
+          else if (ev.type === "content_block_start" && ev.content_block && ev.content_block.type === "tool_use") tools.push(ev.content_block.name);
+          else if (ev.type === "content_block_delta" && ev.delta && ev.delta.type === "text_delta") textChars += (ev.delta.text || "").length;
+          else if (ev.type === "message_delta") { if (ev.usage) usage = { ...usage, ...ev.usage }; if (ev.delta && ev.delta.stop_reason) stop = ev.delta.stop_reason; }
+        }
+        logAgent({ t: new Date().toISOString(), ms: Date.now() - t0, client: payload.client || "?", model: out.model, msgs: out.messages.length,
+          tools, stop: stop || null, textChars, in: usage.input_tokens || 0, cr: usage.cache_read_input_tokens || 0, cc: usage.cache_creation_input_tokens || 0, out: usage.output_tokens || 0,
+          empty: tools.length === 0 && textChars === 0 });
       };
       pump().catch(() => res.end());
     });
