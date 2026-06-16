@@ -142,15 +142,18 @@ export class App {
   widgetHost(): WidgetHost { return (this._widgetHost ||= makeWidgetHost(this)); }
 
   // ---- persistence: the current session (layout incl. widget source) + the custom-widget library ----
+  // Identity of the loaded dataset — the ?store= param (default = the demo). Sessions are scoped to this so a session
+  // saved for one dataset is never restored onto another (which would clobber its view with a stale colorBy/scope/widget).
+  currentStore(): string { try { return new URLSearchParams(location.search).get("store") || "default"; } catch { return "default"; } }
   scheduleSave() { if (this._saveTimer) return; this._saveTimer = setTimeout(() => { this._saveTimer = null; this.persistSession(); }, 400); }
   persistSession() {
     const userWS = this.wsOrder.filter((n) => !this.builtinWS.has(n) && this.WS[n]).map((n) => ({ name: n, ws: this.WS[n] }));
-    try { localStorage.setItem(SESSION_KEY, serializeSession({ currentWS: this.currentWS, colorBy: this.coord.state.colorBy, canvas: this.captureLayout(), userWS })); } catch { /* quota / private mode — non-fatal */ }
+    try { localStorage.setItem(SESSION_KEY, serializeSession({ store: this.currentStore(), currentWS: this.currentWS, colorBy: this.coord.state.colorBy, canvas: this.captureLayout(), userWS })); } catch { /* quota / private mode — non-fatal */ }
   }
   restoreSession() {
-    this.widgetLib = loadWidgets(localStorage.getItem(WIDGETS_KEY));
+    this.widgetLib = loadWidgets(localStorage.getItem(WIDGETS_KEY));   // the widget LIBRARY is dataset-agnostic — always load it
     const doc = parseSession(localStorage.getItem(SESSION_KEY));
-    if (!doc) return;
+    if (!doc || doc.store !== this.currentStore()) return;   // no session, or one from a DIFFERENT dataset → keep this store's default layout (no redundant re-render)
     for (const u of doc.userWS) if (u && u.name && !this.WS[u.name]) { this.WS[u.name] = u.ws; this.wsOrder.push(u.name); }   // re-add user workspaces
     if (doc.currentWS && this.WS[doc.currentWS]) this.currentWS = doc.currentWS;
     if (doc.colorBy) this.coord.set({ colorBy: doc.colorBy });

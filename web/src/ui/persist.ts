@@ -5,16 +5,18 @@ export const WIDGETS_KEY = "p3-widgets";
 const VERSION = 1;
 
 export interface SavedWidget { id: string; name: string; source: string; controls?: { id: string; label: string }[]; createdAt: number; }
-export interface SessionDoc { v: number; currentWS: string; colorBy: string; canvas: any[]; userWS: { name: string; ws: any }[]; }
+// `store` scopes the session to its DATASET — a session saved for one store must NOT be restored onto another (it would
+// clobber the new dataset's view with a stale colorBy/scope/widget). Restore only when the store matches.
+export interface SessionDoc { v: number; store: string; currentWS: string; colorBy: string; canvas: any[]; userWS: { name: string; ws: any }[]; }
 
-export function serializeSession(d: { currentWS: string; colorBy: string; canvas: any[]; userWS: { name: string; ws: any }[] }): string {
-  return JSON.stringify({ v: VERSION, currentWS: d.currentWS, colorBy: d.colorBy, canvas: d.canvas, userWS: d.userWS });
+export function serializeSession(d: { store: string; currentWS: string; colorBy: string; canvas: any[]; userWS: { name: string; ws: any }[] }): string {
+  return JSON.stringify({ v: VERSION, store: d.store, currentWS: d.currentWS, colorBy: d.colorBy, canvas: d.canvas, userWS: d.userWS });
 }
 // Tolerant parse: anything malformed / from an older version → null (start fresh, never throw on boot).
 export function parseSession(raw: string | null): SessionDoc | null {
   if (!raw) return null;
   try { const o = JSON.parse(raw); if (!o || o.v !== VERSION || !Array.isArray(o.canvas)) return null;
-    return { v: o.v, currentWS: String(o.currentWS || ""), colorBy: String(o.colorBy || ""), canvas: o.canvas, userWS: Array.isArray(o.userWS) ? o.userWS : [] };
+    return { v: o.v, store: String(o.store || ""), currentWS: String(o.currentWS || ""), colorBy: String(o.colorBy || ""), canvas: o.canvas, userWS: Array.isArray(o.userWS) ? o.userWS : [] };
   } catch { return null; }
 }
 

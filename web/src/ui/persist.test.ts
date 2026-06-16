@@ -3,10 +3,11 @@ import { test } from "node:test";
 import assert from "node:assert";
 import { serializeSession, parseSession, upsertWidget, loadWidgets } from "./persist.ts";
 
-test("session round-trips through serialize/parse", () => {
-  const s = { currentWS: "Metadata", colorBy: "meta:cell_type", canvas: [{ type: "Widget", source: "x", title: "W" }], userWS: [{ name: "Mine", ws: { colorBy: "meta:leiden", panels: [] } }] };
+test("session round-trips through serialize/parse, incl. the store key", () => {
+  const s = { store: "/pbmc6.lstar.zarr", currentWS: "Metadata", colorBy: "meta:cell_type", canvas: [{ type: "Widget", source: "x", title: "W" }], userWS: [{ name: "Mine", ws: { colorBy: "meta:leiden", panels: [] } }] };
   const doc = parseSession(serializeSession(s));
   assert.ok(doc);
+  assert.equal(doc!.store, "/pbmc6.lstar.zarr");   // scopes restore to the dataset
   assert.equal(doc!.currentWS, "Metadata");
   assert.equal(doc!.canvas[0].source, "x");
   assert.equal(doc!.userWS[0].name, "Mine");
