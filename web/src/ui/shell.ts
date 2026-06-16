@@ -13,6 +13,7 @@ import { setThemeColors } from "../render/theme.ts";
 import { installOverflow } from "./overflow.ts";
 import { makeWidgetHost } from "../widget/apphost.ts";
 import type { WidgetHost } from "../widget/runtime.ts";
+import { SESSION_KEY, WIDGETS_KEY, SavedWidget, serializeSession, parseSession, upsertWidget, loadWidgets } from "./persist.ts";
 import { paletteNames, normalizePalette } from "../render/palettes.ts";
 import { AnnotationLayer, seedLayer, setLabel, reconcile, compact, hierarchyDepth, rollupToLevel } from "../anno/model.ts";
 import { PBMC_MARKERS, MarkerDB } from "../anno/markerdb.ts";
@@ -42,6 +43,9 @@ export class App {
   coordSubs: (() => void)[] = [];     // managed coord subscriptions (panels' onCoord) — unsubscribed each fullRender
   teardowns: (() => void)[] = [];     // per-panel cleanup (e.g. a widget iframe + its host subscription) — run each fullRender
   themeSubs = new Set<() => void>();  // theme-change listeners (widgets re-theme their iframes); fired in applyTheme
+  builtinWS!: Set<string>;            // code-defined workspace names (the rest are user-saved → persisted)
+  widgetLib: SavedWidget[] = [];      // the custom-widget LIBRARY (authored widgets, re-addable from the menu); persisted
+  private _saveTimer: any = null;     // debounce for session persistence
   private lastSel: any;               // last selection dispatched to reactors — skip re-dispatch on colour-only repaints
   private reactorsStale = true;       // set when reactors are rebuilt (fullRender) → force one dispatch
   geneHoverSinks: ((sym: string | null) => void)[] = [];   // panels that highlight a gene's row on a coord geneHint
@@ -80,6 +84,7 @@ export class App {
     // which many stores (e.g. this PBMC set) don't carry. Keeps every visible tab functional.
     if (!ctx.view.ds.axisNames().includes("aspects")) delete (this.WS as Record<string, unknown>)["Aspects"];
     this.wsOrder = Object.keys(this.WS);
+    this.builtinWS = new Set(this.wsOrder);   // the code-defined workspaces — user-saved ones (the rest) get persisted
     this.root = mk("div", "app");
   }
 
@@ -119,6 +124,7 @@ export class App {
     this.setPip("idle");
     this.switchWS("Metadata", false);
     this.checkpoint("session start", "Baseline Metadata workspace.");
+    this.restoreSession();   // restore the last session (layout incl. widget panels) + load the custom-widget library
     setTimeout(() => this.toast("Drag with Shift to select cells · ⌘K to ask · right-click a panel", null), 500);
     // connect the live Anthropic planner if the proxy + token are reachable
     checkLive().then((ok) => { this.agent.live = ok; if (ok) this.toast("Live agent connected · Opus", "The agent is the real Anthropic planner now — it drives the coordination space through tools, at the lowest sufficient rung."); });
@@ -133,6 +139,32 @@ export class App {
   // The shared WidgetHost bridge (coord/ctx/theme) — built once, reused by every widget panel + the preview tool.
   private _widgetHost?: WidgetHost;
   widgetHost(): WidgetHost { return (this._widgetHost ||= makeWidgetHost(this)); }
+
+  // ---- persistence: the current session (layout incl. widget source) + the custom-widget library ----
+  scheduleSave() { if (this._saveTimer) return; this._saveTimer = setTimeout(() => { this._saveTimer = null; this.persistSession(); }, 400); }
+  persistSession() {
+    const userWS = this.wsOrder.filter((n) => !this.builtinWS.has(n) && this.WS[n]).map((n) => ({ name: n, ws: this.WS[n] }));
+    try { localStorage.setItem(SESSION_KEY, serializeSession({ currentWS: this.currentWS, colorBy: this.coord.state.colorBy, canvas: this.captureLayout(), userWS })); } catch { /* quota / private mode — non-fatal */ }
+  }
+  restoreSession() {
+    this.widgetLib = loadWidgets(localStorage.getItem(WIDGETS_KEY));
+    const doc = parseSession(localStorage.getItem(SESSION_KEY));
+    if (!doc) return;
+    for (const u of doc.userWS) if (u && u.name && !this.WS[u.name]) { this.WS[u.name] = u.ws; this.wsOrder.push(u.name); }   // re-add user workspaces
+    if (doc.currentWS && this.WS[doc.currentWS]) this.currentWS = doc.currentWS;
+    if (doc.colorBy) this.coord.set({ colorBy: doc.colorBy });
+    if (Array.isArray(doc.canvas)) this.canvas = doc.canvas.map((p) => this.newPanel(p));   // restore the live layout (widget panels carry their source)
+    this.fullRender();
+  }
+  // The custom-widget library (menu): upsert an authored widget, delete one, persist.
+  saveWidgetToLibrary(name: string, source: string, controls?: { id: string; label: string }[]) {
+    this.widgetLib = upsertWidget(this.widgetLib, { name: name || "Widget", source, controls }, Date.now(), "w" + Date.now().toString(36));
+    try { localStorage.setItem(WIDGETS_KEY, JSON.stringify({ widgets: this.widgetLib })); } catch { /* */ }
+  }
+  deleteWidgetFromLibrary(id: string) {
+    this.widgetLib = this.widgetLib.filter((w) => w.id !== id);
+    try { localStorage.setItem(WIDGETS_KEY, JSON.stringify({ widgets: this.widgetLib })); } catch { /* */ }
+  }
 
   // ---------- workbench ----------
   hooks(): PanelHooks {
@@ -1005,6 +1037,7 @@ export class App {
   // Add an author-written widget as a Widget panel on the workbench. Used by the agent's save_widget tool and the
   // custom-widget library menu. The iframe mounts via widgetBody; controls (if known) render in the header.
   addWidgetPanel(source: string, title?: string, controls?: { id: string; label: string }[]): number {
+    this.saveWidgetToLibrary(title || "Widget", source, controls);   // also keep it in the re-addable library
     return this.addPanel({ type: "Widget", title: title || "Widget", source, controls, bind: "widget:custom" });
   }
   startSaveWS() {
@@ -1023,7 +1056,7 @@ export class App {
 
   // ---------- checkpoints ----------
   snap() { return { colorBy: this.coord.state.colorBy, focus: this.coord.state.focus, ws: this.currentWS, canvas: JSON.parse(JSON.stringify(this.canvas)), rail: JSON.parse(JSON.stringify(this.rail)) }; }
-  checkpoint(q: string, why: string, opts?: { kind?: "ask" | "act"; exchange?: any }) { this.history.push({ i: this.history.length, q, why, state: this.snap(), kind: opts?.kind || "act", exchange: opts?.exchange }); this.viewing = -1; this.renderSpine(); if (this.threadDocked) this.renderThread(); }
+  checkpoint(q: string, why: string, opts?: { kind?: "ask" | "act"; exchange?: any }) { this.history.push({ i: this.history.length, q, why, state: this.snap(), kind: opts?.kind || "act", exchange: opts?.exchange }); this.viewing = -1; this.renderSpine(); if (this.threadDocked) this.renderThread(); this.scheduleSave(); }
   renderSpine() {
     const c = this.$("ckpts"); c.innerHTML = "";
     this.history.forEach((h) => { const d = mk("div", "ckpt" + (h.i === this.viewing ? " on" : "")); d.title = h.why || ""; d.innerHTML = `<div class="cq">${h.q}</div><div class="cw">${h.why ? h.why.replace(/<[^>]+>/g, "") : ""}</div>`; d.onclick = () => this.restore(h.i); c.appendChild(d); });
