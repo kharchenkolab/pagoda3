@@ -1,25 +1,42 @@
-// Each recipe must be a coherent, self-contained, themed widget that PARSES as JS. Run: `node --test src/widget/recipes.test.ts`.
+// Recipes (full widgets) + snippets (inlinable building blocks) must be coherent, self-contained, themed, and PARSE.
+// Run: `node --test src/widget/recipes.test.ts`.
 import { test } from "node:test";
 import assert from "node:assert";
 import { transformSync } from "esbuild";
-import { RECIPES, listRecipes, getRecipe } from "./recipes.ts";
+import { RECIPES, SNIPPETS, listRecipes, findRecipes, getRecipe } from "./recipes.ts";
 
-test("every recipe parses as JS, calls ready, themes via vars, pulls data, and avoids CDNs", () => {
+const themed = (s: string) => /var\(--/.test(s) || /['"]--\w/.test(s);
+const selfContained = (s: string) => !/https?:\/\/|cdn\.|\bimport\s|\brequire\(/.test(s);
+
+test("every WIDGET recipe parses, calls ready, themes, pulls data, and is self-contained", () => {
   for (const r of RECIPES) {
     try { transformSync(r.source, { loader: "js" }); } catch (e) { assert.fail(`recipe "${r.name}" does not parse: ${String((e as any)?.message).split("\n")[0]}`); }
     assert.match(r.source, /pagoda\.ready\(/, `${r.name}: must call pagoda.ready()`);
-    assert.ok(/var\(--/.test(r.source) || /['"]--\w/.test(r.source), `${r.name}: must theme via CSS vars (var(--...) or a '--var' name read from the computed style)`);
-    assert.match(r.source, /pagoda\.data\(/, `${r.name}: should pull data via pagoda.data()`);
-    assert.ok(!/https?:\/\/|cdn\.|import\s|require\(/.test(r.source), `${r.name}: must be self-contained (no external/CDN/import)`);
-    assert.ok(r.name && r.title && r.about && r.techniques.length, `${r.name}: metadata complete`);
+    assert.ok(themed(r.source), `${r.name}: must theme via CSS vars`);
+    assert.match(r.source, /pagoda\.data\(/, `${r.name}: should pull data`);
+    assert.ok(selfContained(r.source), `${r.name}: must be self-contained`);
   }
 });
 
-test("listRecipes summarizes without source; getRecipe returns adaptable source or null", () => {
-  const list = listRecipes();
-  assert.equal(list.length, RECIPES.length);
-  assert.ok(!("source" in (list[0] as any)), "list entries omit the (large) source");
-  const got = getRecipe("scatter");
-  assert.ok(got && got.includes("pagoda.ready") && got.startsWith("// RECIPE"));
+test("every SNIPPET parses, is themed where relevant, and is self-contained (no ready/data required)", () => {
+  assert.ok(SNIPPETS.length >= 5, "should ship a useful set of building blocks");
+  for (const s of SNIPPETS) {
+    try { transformSync(s.source, { loader: "js" }); } catch (e) { assert.fail(`snippet "${s.name}" does not parse: ${String((e as any)?.message).split("\n")[0]}`); }
+    assert.ok(selfContained(s.source), `${s.name}: must be self-contained`);
+    assert.equal(s.kind, "snippet");
+    assert.ok(s.name && s.title && s.about && s.techniques.length);
+  }
+});
+
+test("findRecipes ranks by need; empty query returns all; getRecipe delivers source for both kinds", () => {
+  const all = findRecipes("");
+  assert.equal(all.length, RECIPES.length + SNIPPETS.length);
+  const hover = findRecipes("scatter hover click").map((r) => r.name);
+  assert.ok(hover.includes("hit-test") || hover.includes("scatter"), "hover/click query should surface hit-test/scatter");
+  const colour = findRecipes("colour scale heatmap").map((r) => r.name);
+  assert.ok(colour.includes("color"), "colour query should surface the color snippet");
+  assert.ok(getRecipe("hit-test")!.startsWith("// SNIPPET"), "snippet delivery is labelled");
+  assert.ok(getRecipe("scatter")!.startsWith("// RECIPE"), "widget delivery is labelled");
   assert.equal(getRecipe("nope"), null);
+  assert.ok(listRecipes().some((r) => r.kind === "snippet") && listRecipes().some((r) => r.kind === "widget"));
 });

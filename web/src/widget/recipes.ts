@@ -5,7 +5,9 @@
 // escaped \`...\` template; build dynamic markup with string concatenation (no ${} interpolation); colours ONLY via
 // var(--*) so they theme. SVG for vector charts, <canvas> for dense scatter. No external/CDN code.
 
-export interface WidgetRecipe { name: string; title: string; about: string; techniques: string[]; source: string; }
+// kind 'widget' = a complete runnable widget to adapt; 'snippet' = reusable building-block functions to paste in
+// (the "plot library", delivered as inlinable code rather than a bundled dependency — keeps widgets self-contained).
+export interface WidgetRecipe { name: string; title: string; about: string; techniques: string[]; source: string; kind?: "widget" | "snippet"; }
 
 // ---- ranked horizontal bars of a categorical field (composition); click a bar to select; cross-filters on selection ----
 const RANKED_BARS = `// Ranked composition bars for a categorical field. Click a bar to select that category.
@@ -160,6 +162,57 @@ pagoda.on('coord', draw);
 pagoda.ready({ title: 'Selection breakdown' });
 `;
 
+// ---- reusable building-block SNIPPETS (the "plot kit", delivered as inlinable functions) ----
+const SNIP_SCALES = `// scales + nice ticks — paste in, then use for axes/positions.
+function scaleLinear(d0, d1, r0, r1) { const m = (r1 - r0) / ((d1 - d0) || 1); return (v) => r0 + (v - d0) * m; }
+function niceTicks(min, max, n) { n = n || 5; const span = (max - min) || 1, step0 = span / n, mag = Math.pow(10, Math.floor(Math.log10(step0))), norm = step0 / mag; const step = (norm >= 5 ? 10 : norm >= 2 ? 5 : norm >= 1 ? 2 : 1) * mag; const lo = Math.ceil(min / step) * step, out = []; for (let v = lo; v <= max + 1e-9; v += step) out.push(+v.toFixed(6)); return out; }
+`;
+const SNIP_CANVAS_POINTS = `// paint points on a <canvas> (DPR-correct, auto-scaled). Returns {sx,sy,x0,x1,y0,y1} so you can hit-test + draw axes.
+// opt: { color?, sel?:Set<number>, selColor?, size? }
+function paintPoints(canvas, xs, ys, opt) { opt = opt || {}; const dpr = window.devicePixelRatio || 1, W = canvas.clientWidth, H = canvas.clientHeight;
+  canvas.width = W * dpr; canvas.height = H * dpr; const g = canvas.getContext('2d'); g.scale(dpr, dpr); g.clearRect(0, 0, W, H);
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity; for (let i = 0; i < xs.length; i++) { if (xs[i] < x0) x0 = xs[i]; if (xs[i] > x1) x1 = xs[i]; if (ys[i] < y0) y0 = ys[i]; if (ys[i] > y1) y1 = ys[i]; }
+  const sx = (v) => 6 + (v - x0) / ((x1 - x0) || 1) * (W - 12), sy = (v) => H - 6 - (v - y0) / ((y1 - y0) || 1) * (H - 12);
+  const cv = getComputedStyle(document.documentElement), sz = opt.size || 2;
+  g.globalAlpha = opt.sel ? 0.25 : 0.6; g.fillStyle = opt.color || cv.getPropertyValue('--cyan').trim() || '#5cc8ff';
+  for (let i = 0; i < xs.length; i++) { if (opt.sel && opt.sel.has(i)) continue; g.fillRect(sx(xs[i]), sy(ys[i]), sz, sz); }
+  if (opt.sel) { g.globalAlpha = 0.95; g.fillStyle = opt.selColor || cv.getPropertyValue('--amber').trim() || '#e0a458'; opt.sel.forEach((i) => { if (i < xs.length) g.fillRect(sx(xs[i]) - 0.5, sy(ys[i]) - 0.5, sz + 1, sz + 1); }); }
+  return { sx, sy, x0, x1, y0, y1 };
+}
+`;
+const SNIP_HITTEST = `// nearest-point pick for canvas hover/click (sx,sy from paintPoints). Returns the cell index or -1.
+function nearestPoint(xs, ys, sx, sy, px, py, maxPx) { maxPx = maxPx || 8; let best = -1, bd = maxPx * maxPx; for (let i = 0; i < xs.length; i++) { const dx = sx(xs[i]) - px, dy = sy(ys[i]) - py, d = dx * dx + dy * dy; if (d < bd) { bd = d; best = i; } } return best; }
+// wire it: canvas.onmousemove = (e) => { const r = canvas.getBoundingClientRect(), i = nearestPoint(xs, ys, S.sx, S.sy, e.clientX - r.left, e.clientY - r.top); pagoda.setHint(i >= 0 ? { cells: [i] } : null); };
+//          canvas.onclick     = (e) => { const r = canvas.getBoundingClientRect(), i = nearestPoint(xs, ys, S.sx, S.sy, e.clientX - r.left, e.clientY - r.top); if (i >= 0) pagoda.setSelection({ cells: [i] }); };
+`;
+const SNIP_COLOR = `// theme-aware colour helpers. seqRamp(t in 0..1) -> 'rgb(...)' for heat scales; catColor(i) -> a CSS var() for categories.
+function seqRamp(t) { t = Math.max(0, Math.min(1, t)); const a = [20, 28, 40], b = [92, 200, 255]; return 'rgb(' + a.map((c, i) => Math.round(c + (b[i] - c) * t)).join(',') + ')'; }
+const CAT_VARS = ['--cyan', '--amber', '--good', '--bad', '--teal', '--ct2', '--ct0', '--ct3'];
+function catColor(i) { return 'var(' + CAT_VARS[i % CAT_VARS.length] + ')'; }
+`;
+const SNIP_SVG_AXES = `// draw x/y axes with nice ticks into an <svg> (needs scaleLinear + niceTicks above). Returns {sx,sy} mapping data->px.
+function drawAxes(svg, x0, x1, y0, y1, w, h, pad) { pad = pad || { l: 36, b: 18, t: 6, r: 8 };
+  const sx = scaleLinear(x0, x1, pad.l, w - pad.r), sy = scaleLinear(y0, y1, h - pad.b, pad.t);
+  let s = '<line x1="' + pad.l + '" y1="' + (h - pad.b) + '" x2="' + (w - pad.r) + '" y2="' + (h - pad.b) + '" stroke="var(--line)"/>'
+        + '<line x1="' + pad.l + '" y1="' + pad.t + '" x2="' + pad.l + '" y2="' + (h - pad.b) + '" stroke="var(--line)"/>';
+  niceTicks(x0, x1, 5).forEach((t) => { s += '<text x="' + sx(t) + '" y="' + (h - 5) + '" text-anchor="middle" font-size="9" font-family="var(--mono)" fill="var(--faint)">' + t + '</text>'; });
+  niceTicks(y0, y1, 4).forEach((t) => { s += '<text x="' + (pad.l - 4) + '" y="' + (sy(t) + 3) + '" text-anchor="end" font-size="9" font-family="var(--mono)" fill="var(--faint)">' + t + '</text>'; });
+  svg.insertAdjacentHTML('beforeend', s); return { sx, sy };
+}
+`;
+const SNIP_BINS = `// bin values into n bins → {counts, edges, min, max}. Pair with SVG rects for a histogram.
+function histogramBins(values, n) { n = n || 28; let mn = Infinity, mx = -Infinity; for (const v of values) { if (v < mn) mn = v; if (v > mx) mx = v; } const span = (mx - mn) || 1, counts = new Array(n).fill(0); for (const v of values) { let b = Math.floor((v - mn) / span * n); if (b < 0) b = 0; if (b >= n) b = n - 1; counts[b]++; } const edges = []; for (let i = 0; i <= n; i++) edges.push(mn + i / n * span); return { counts, edges, min: mn, max: mx }; }
+`;
+
+export const SNIPPETS: WidgetRecipe[] = [
+  { name: "scales", title: "Scales + nice ticks", about: "scaleLinear(domain→range) and niceTicks(min,max,n) — the basis of any axis or positioned chart.", techniques: ["scale", "axis", "ticks", "linear", "log alternative"], source: SNIP_SCALES, kind: "snippet" },
+  { name: "canvas-points", title: "Canvas point cloud", about: "paintPoints(canvas,xs,ys,opt): DPR-correct, auto-scaled scatter painting with optional selection highlight; returns the scales for hit-testing.", techniques: ["canvas", "scatter", "DPR", "autoscale", "selection highlight"], source: SNIP_CANVAS_POINTS, kind: "snippet" },
+  { name: "hit-test", title: "Nearest-point hit test", about: "nearestPoint(...) + the onmousemove/onclick wiring to turn a canvas scatter into point-level hover (setHint) and click (setSelection) — hover/click like a native panel.", techniques: ["hit test", "hover", "click", "setHint", "setSelection", "nearest"], source: SNIP_HITTEST, kind: "snippet" },
+  { name: "color", title: "Theme colour helpers", about: "seqRamp(t) for sequential heat scales and catColor(i) for categorical series — both read the theme palette.", techniques: ["colour", "ramp", "palette", "heatmap", "categorical", "theme"], source: SNIP_COLOR, kind: "snippet" },
+  { name: "svg-axes", title: "SVG axes", about: "drawAxes(svg,...) renders themed x/y axes with nice ticks into an SVG and returns data→pixel scales (needs the scales snippet).", techniques: ["svg", "axis", "ticks", "labels"], source: SNIP_SVG_AXES, kind: "snippet" },
+  { name: "bins", title: "Histogram binning", about: "histogramBins(values,n) → counts/edges/min/max for a histogram or density.", techniques: ["histogram", "bins", "distribution", "density"], source: SNIP_BINS, kind: "snippet" },
+];
+
 export const RECIPES: WidgetRecipe[] = [
   { name: "ranked-bars", title: "Ranked composition bars", about: "Horizontal bars of a categorical field's composition; click a bar to select; highlights the active selection.", techniques: ["SVG bars", "data('categories')", "click → setSelection", "react to coord"], source: RANKED_BARS },
   { name: "histogram", title: "Histogram + brush", about: "Binned distribution of a numeric field; drag a range to select the cells in it.", techniques: ["SVG histogram", "data('numeric')", "drag-brush", "range → setSelection(cells)"], source: HISTOGRAM },
@@ -169,10 +222,32 @@ export const RECIPES: WidgetRecipe[] = [
   { name: "selection-breakdown", title: "Selection breakdown", about: "Live analytic: breaks the CURRENT selection down by a chosen field — reacts to selections from any panel.", techniques: ["data('selectedCells')", "tally by category", "react to coord"], source: SELECTION_BREAKDOWN },
 ];
 
-export function listRecipes(): { name: string; title: string; about: string; techniques: string[] }[] {
-  return RECIPES.map((r) => ({ name: r.name, title: r.title, about: r.about, techniques: r.techniques }));
+// The full registry: complete widgets to adapt + reusable snippets to inline.
+const ALL: WidgetRecipe[] = RECIPES.map((r) => ({ ...r, kind: r.kind || "widget" })).concat(SNIPPETS);
+
+type RecipeMeta = { name: string; kind: "widget" | "snippet"; title: string; about: string; techniques: string[] };
+const meta = (r: WidgetRecipe): RecipeMeta => ({ name: r.name, kind: (r.kind || "widget") as "widget" | "snippet", title: r.title, about: r.about, techniques: r.techniques });
+
+export function listRecipes(): RecipeMeta[] { return ALL.map(meta); }
+
+// LOOK UP recipes/snippets by free-text need (e.g. "scatter hover", "colour scale", "histogram") — ranked by token
+// overlap with name/title/about/techniques. Returns metadata; call getRecipe(name) to DELIVER the source to inline.
+export function findRecipes(query: string, limit = 6): RecipeMeta[] {
+  const toks = String(query || "").toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length > 1);
+  if (!toks.length) return ALL.map(meta);
+  const scored = ALL.map((r) => {
+    const hay = (r.name + " " + r.title + " " + r.about + " " + r.techniques.join(" ")).toLowerCase();
+    let s = 0; for (const t of toks) { if (r.name.toLowerCase().includes(t)) s += 3; else if (hay.includes(t)) s += 1; }
+    return { r, s };
+  }).filter((x) => x.s > 0).sort((a, b) => b.s - a.s);
+  return scored.slice(0, limit).map((x) => meta(x.r));
 }
+
 export function getRecipe(name: string): string | null {
-  const r = RECIPES.find((x) => x.name === (name || "").trim());
-  return r ? `// RECIPE "${r.name}" — ${r.title}: ${r.about}\n// Techniques: ${r.techniques.join(", ")}\n// Adapt freely (fields/genes/styling); keep it self-contained + themed via var(--*).\n${r.source}` : null;
+  const r = ALL.find((x) => x.name === (name || "").trim());
+  if (!r) return null;
+  const head = (r.kind === "snippet")
+    ? `// SNIPPET "${r.name}" — ${r.title}: ${r.about}\n// Paste these helpers into your widget and call them; self-contained + themed.\n`
+    : `// RECIPE "${r.name}" — ${r.title}: ${r.about}\n// Techniques: ${r.techniques.join(", ")}\n// Adapt freely (fields/genes/styling); keep it self-contained + themed via var(--*).\n`;
+  return head + r.source;
 }
