@@ -799,7 +799,7 @@ export class App {
   async runCompute(input: { stat?: string; A?: CellSet; B?: CellSet; toCanvas?: boolean; title?: string }): Promise<{ ok?: string; error?: string }> {
     const ctx = this.ctx;
     if (input.stat !== "de" && input.stat !== "overdispersion") return { error: `unknown stat "${input.stat}" — use "de" or "overdispersion"` };
-    if (!input.A) return { error: "A (a cell set) is required" };
+    if (!input.A) { if (input.stat === "overdispersion") input.A = { all: true } as CellSet; else return { error: "A (a cell set) is required" }; }   // global variable genes when no scope given
     const world: CellWorld = { categoricals: ctx.categoricalFields(), valuesOf: (f) => ctx.categoricalValues(f), hasSelection: ctx.selectedCells().length > 0, hasFocus: !!ctx.coord.state.focus };
     const eA = validateCellSet(input.A, world, "A"); if (eA) return { error: eA };
     const Bexpr: CellSet | undefined = input.stat === "de" ? (input.B ?? ({ complement: input.A } as CellSet)) : undefined;
@@ -1056,7 +1056,8 @@ export class App {
     { t: "Colour cells by IL6", q: "show il6", ic: "◐" },
     { t: "Colour by cell type", q: "colour by cell type", ic: "◐" },
     { t: "What are the markers of this cluster?", q: "what genes changed", ic: "≢" },
-    { t: "Show overdispersed gene programs", q: "show overdispersed programs", ic: "▤" },
+    { t: "Most variable genes (per-gene HVG)", q: "show most variable genes", ic: "≢" },
+    { t: "Show overdispersed gene programs", q: "show overdispersed gene programs", ic: "▤" },
     { t: "Show composition across samples", q: "show composition", ic: "▥" },
     { t: "Help me interpret a finding", q: "help me interpret this", ic: "✦" },
     { t: "Set everything up to compare conditions", q: "set everything up to compare conditions", ic: "⚙" },
