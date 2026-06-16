@@ -124,15 +124,19 @@ export async function previewWidget(source: string, host: WidgetHost, timeoutMs 
     const poll = setInterval(() => { if (h.lastError()) { clearInterval(poll); fin(false); } }, 60);
     setTimeout(() => { clearInterval(poll); fin(!!h.manifest()); }, timeoutMs);
   });
-  // If a probe is running, wait for it to signal done (it may be async — e.g. awaiting data) before snapshotting.
+  // If a probe is running, wait for it to signal done (it may be async — e.g. awaiting data OR a loadLib + render) before
+  // snapshotting. Resolves EARLY on the done sentinel, so a generous cap (8s) only costs time when a lib genuinely loads.
   if (ready && probe) {
     await new Promise<void>((res) => {
       const t0 = Date.now();
       const poll = setInterval(() => {
         const done = h.logs().some((l) => l.args.some((a) => a === PROBE_DONE));
-        if (done || h.lastError() || Date.now() - t0 > Math.max(2000, timeoutMs)) { clearInterval(poll); res(); }
+        if (done || h.lastError() || Date.now() - t0 > Math.max(8000, timeoutMs)) { clearInterval(poll); res(); }
       }, 60);
     });
+    // grace window: async lib init / a render callback can throw AFTER the probe returns — catch those errors+logs
+    // (which otherwise land after the iframe is destroyed and are lost) before we collect.
+    await new Promise<void>((res) => setTimeout(res, 500));
   }
   const text = ready ? await h.snapshot(1200) : "";
   // Make the failure reason actionable: a caught error wins; otherwise a no-manifest result means it timed out

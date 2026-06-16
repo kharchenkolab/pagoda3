@@ -120,6 +120,9 @@ export const WIDGET_BOOTSTRAP = `
 (function(){
   var pending={}, reqId=0, coord=null, theme=null, hint=null, loadedLibs={}, listeners={coord:[],theme:[],control:[],hint:[]}, parentWin=window.parent;
   function post(m){ try{ parentWin.postMessage(m,'*'); }catch(e){} }
+  // serialize a console arg so it's USEFUL to the agent: an Error JSON.stringifies to "{}" (message/stack are
+  // non-enumerable), so pull them out explicitly; for other objects that stringify to "{}" fall back to String(x).
+  function ser(x){ if(x instanceof Error){ return (x.name||'Error')+': '+(x.message||String(x))+(x.stack?(' | '+String(x.stack).split('\\n').slice(0,3).join(' / ')):''); } if(typeof x==='string') return x; if(x==null) return String(x); try{ var s=JSON.stringify(x); return (s===undefined||s==='{}')?String(x):s; }catch(e){ return String(x); } }
   function fire(ev,arg){ (listeners[ev]||[]).forEach(function(f){ try{ f(arg); }catch(err){ reportError(err); } }); }
   function reportError(err){ post({t:'error', message:String(err&&err.message?err.message:err), stack: err&&err.stack ? String(err.stack) : undefined }); }
   function applyTheme(t){ if(!t) return; var s=document.getElementById('pg-theme'); if(!s){ s=document.createElement('style'); s.id='pg-theme'; document.head.appendChild(s); } var v=t.vars||{}; s.textContent=':root{'+Object.keys(v).map(function(k){return k+':'+v[k];}).join(';')+'}'; document.documentElement.setAttribute('data-theme', t.dark?'dark':'light'); }
@@ -144,7 +147,7 @@ export const WIDGET_BOOTSTRAP = `
     else if(m.t==='extData'){ var pe=pending[m.reqId]; if(pe){ delete pending[m.reqId]; m.ok ? pe.resolve(m.payload) : pe.reject(new Error(m.error||'external fetch error')); } }
     else if(m.t==='libResult'){ var pl=pending[m.reqId]; if(pl){ delete pending[m.reqId]; if(m.ok){ try{ var sc=document.createElement('script'); sc.textContent=m.source; document.head.appendChild(sc); pl.resolve(true); }catch(le){ pl.reject(le); } } else pl.reject(new Error(m.error||'loadLib error')); } }
   });
-  ['log','warn','error'].forEach(function(lv){ var orig=console[lv]; console[lv]=function(){ try{ post({t:'log', level:lv, args:[].map.call(arguments, function(x){ try{return typeof x==='string'?x:JSON.stringify(x);}catch(e){return String(x);} })}); }catch(e){} try{ orig.apply(console, arguments); }catch(e){} }; });
+  ['log','warn','error'].forEach(function(lv){ var orig=console[lv]; console[lv]=function(){ try{ post({t:'log', level:lv, args:[].map.call(arguments, ser)}); }catch(e){} try{ orig.apply(console, arguments); }catch(e){} }; });
   window.onerror=function(msg,src,ln,col,err){ reportError(err||msg); return false; };
   window.addEventListener('unhandledrejection', function(e){ reportError(e.reason||'unhandled rejection'); });
   var ro=null;

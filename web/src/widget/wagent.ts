@@ -53,7 +53,7 @@ export function createWidgetAgent(opts: { host: WidgetHost; onSave: (source: str
     if (name === "get_widget_template") return getWidgetTemplate(input?.kind);
     const roHost = { ...opts.host, apply: () => { /* preview is side-effect-free — don't mutate the host's coord/selection */ } };
     const runPreview = async (probe?: any, applied?: string[]) => {
-      const r = await previewWidget(lastSource, roHost as any, 4000, probe ? String(probe) : undefined);
+      const r = await previewWidget(lastSource, roHost as any, 6000, probe ? String(probe) : undefined);
       return JSON.stringify({ ok: r.ok, error: r.error, logs: r.logs.slice(-8), manifest: r.manifest, renderedText: (r.text || "").slice(0, 400), applied });
     };
     if (name === "preview_widget") {

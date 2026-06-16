@@ -146,7 +146,7 @@ async function execTool(app: App, name: string, input: any): Promise<string> {
       if (input?.from) { const s = recipeSource(String(input.from)); if (!s) return JSON.stringify({ ok: false, error: "no recipe/snippet '" + input.from + "'" }); lastWidgetSource = s; }
       else if (input?.source != null) lastWidgetSource = String(input.source);   // omit both to re-preview the current widget without re-emitting it
       if (!lastWidgetSource) return JSON.stringify({ ok: false, error: "no source — pass `from` (a recipe) or the full `source` the first time" });
-      const r = await previewWidget(lastWidgetSource, readonlyHost(app.widgetHost()), 4000, input?.probe ? String(input.probe) : undefined);
+      const r = await previewWidget(lastWidgetSource, readonlyHost(app.widgetHost()), 6000, input?.probe ? String(input.probe) : undefined);
       return JSON.stringify({ ok: r.ok, error: r.error, logs: r.logs.slice(-8), manifest: r.manifest, renderedText: (r.text || "").slice(0, 400) });
     }
     case "edit_widget": {
@@ -155,7 +155,7 @@ async function execTool(app: App, name: string, input: any): Promise<string> {
       const res = applyEdits(lastWidgetSource, Array.isArray(input?.edits) ? input.edits : []);
       if (!res.ok) return JSON.stringify({ ok: false, error: "edits did not apply (source unchanged) — make each 'old' match the CURRENT source exactly + uniquely, or preview_widget the full corrected source to resync", failed: res.failed });
       lastWidgetSource = res.source;
-      const r = await previewWidget(lastWidgetSource, readonlyHost(app.widgetHost()), 4000, input?.probe ? String(input.probe) : undefined);
+      const r = await previewWidget(lastWidgetSource, readonlyHost(app.widgetHost()), 6000, input?.probe ? String(input.probe) : undefined);
       return JSON.stringify({ ok: r.ok, error: r.error, logs: r.logs.slice(-8), manifest: r.manifest, renderedText: (r.text || "").slice(0, 400), applied: res.applied });
     }
     case "save_widget": { const src = String(input?.source || lastWidgetSource); if (!src.trim()) return "save_widget: no source — preview_widget first, then save (omit source to reuse it)"; const id = app.addWidgetPanel(src, input?.title); return `mounted widget panel #${id} on the workbench`; }
