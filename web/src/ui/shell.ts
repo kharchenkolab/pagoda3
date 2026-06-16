@@ -1087,13 +1087,13 @@ export class App {
       <div class="acsec"><div class="aclabel">THEME</div>
         <div class="acseg"><button data-a="dark" class="${light ? "" : "on"}">Dark</button><button data-a="light" class="${light ? "on" : ""}">Light</button></div></div>
       <div class="acsec"><div class="aclabel">CUSTOM WIDGETS · ${this.widgetLib.length}</div><div class="acwidgets">${widgets}</div></div>
-      <div class="acsec"><div class="aclabel">SESSION</div><button class="acbtn" data-a="clear">Clear saved session</button></div>`;
+      <div class="acsec"><div class="aclabel">SESSION</div><button class="acbtn" data-a="reset">Reset layout &amp; reload</button></div>`;
     const b = this.$("acctBtn").getBoundingClientRect();
     c.style.left = Math.max(8, Math.min(b.right - 280, innerWidth - 288)) + "px"; c.style.top = (b.bottom + 6) + "px"; c.classList.add("show");
     c.querySelectorAll<HTMLElement>("[data-a]").forEach((el) => el.onclick = () => { const a = el.dataset.a!;
       if (a === "signin") { this.toast("Sign-in is coming soon — your session + widgets are saved locally for now.", null); c.classList.remove("show"); }
       else if (a === "dark" || a === "light") { this.applyTheme(a as "dark" | "light"); this.openAccountMenu(); }   // re-render to move the highlight
-      else if (a === "clear") { try { localStorage.removeItem(SESSION_KEY); } catch { /* */ } this.toast("Saved session cleared — this layout stays until reload.", null); c.classList.remove("show"); } });
+      else if (a === "reset") { try { localStorage.removeItem(SESSION_KEY); } catch { /* */ } location.reload(); } });   // clear the saved layout AND reboot to the dataset's default (recovers a stuck view; keeps the widget library + theme)
     c.querySelectorAll<HTMLElement>("[data-add]").forEach((el) => el.onclick = () => { const w = this.widgetLib.find((x) => x.id === el.dataset.add); if (w) { this.addWidgetPanel(w.source, w.name, w.controls); this.toast(`Added widget “${w.name}”`, null); } c.classList.remove("show"); });
     c.querySelectorAll<HTMLElement>("[data-del]").forEach((el) => el.onclick = (e) => { e.stopPropagation(); this.deleteWidgetFromLibrary(el.dataset.del!); this.openAccountMenu(); });   // re-render the list in place
   }
