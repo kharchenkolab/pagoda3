@@ -51,7 +51,8 @@ export function createWidgetAgent(opts: { host: WidgetHost; onSave: (source: str
     if (name === "get_widget_template") return getWidgetTemplate(input?.kind);
     if (name === "preview_widget") {
       lastSource = String(input?.source || "");
-      const r = await previewWidget(lastSource, opts.host, 4000, input?.probe ? String(input.probe) : undefined);
+      const roHost = { ...opts.host, apply: () => { /* preview is side-effect-free — don't mutate the host's coord/selection */ } };
+      const r = await previewWidget(lastSource, roHost as any, 4000, input?.probe ? String(input.probe) : undefined);
       return JSON.stringify({ ok: r.ok, error: r.error, logs: r.logs.slice(-8), manifest: r.manifest, renderedText: (r.text || "").slice(0, 400) });
     }
     if (name === "save_widget") { lastSource = String(input?.source || lastSource); opts.onSave(lastSource, input?.title); return "saved + mounted on the workbench"; }

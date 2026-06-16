@@ -76,8 +76,9 @@ const host: WidgetHost = {
       return v;
     }
     if (kind === "numeric") {
+      let sd = 0; for (const ch of String(args.field)) sd += ch.charCodeAt(0);   // field-seeded so different fields differ (a 2-field scatter is a cloud, not a line)
       const v = new Float32Array(N); let mn = Infinity, mx = -Infinity;
-      for (let i = 0; i < N; i++) { const a = (Math.sin(i * 7.13 + 1.3) * 9301 % 1 + 1) % 1, b = (Math.sin(i * 3.71 + 9.2) * 4929 % 1 + 1) % 1; const x = (a + b) * 4 + 1; v[i] = x; if (x < mn) mn = x; if (x > mx) mx = x; }   // ~bell-shaped
+      for (let i = 0; i < N; i++) { const a = (Math.sin(i * 7.13 + 1.3 + sd) * 9301 % 1 + 1) % 1, b = (Math.sin(i * 3.71 + 9.2 + sd * 0.7) * 4929 % 1 + 1) % 1; const x = (a + b) * 4 + 1; v[i] = x; if (x < mn) mn = x; if (x > mx) mx = x; }   // ~bell-shaped
       return { values: Array.from(v), min: mn, max: mx };
     }
     if (kind === "selectedCells") return selectedIds.slice();
