@@ -66,8 +66,20 @@ const host: WidgetHost = {
     if (kind === "categories") { const cats = CATS[args.field] || []; const codes = codesFor(args.field); const counts = cats.map((_, k) => { let c = 0; for (let i = 0; i < N; i++) if (codes[i] === k) c++; return c; }); return { categories: cats, counts }; }
     if (kind === "category") return { categories: CATS[args.field] || [], codes: Array.from(codesFor(args.field)) };
     if (kind === "cellsOf") { const cats = CATS[args.field] || []; const k = cats.indexOf(args.value); const codes = codesFor(args.field); const ids: number[] = []; for (let i = 0; i < N; i++) if (codes[i] === k) ids.push(i); return ids; }
-    if (kind === "expr") { const v = new Float32Array(N); let seed = 0; for (const ch of String(args.gene)) seed += ch.charCodeAt(0); for (let i = 0; i < N; i++) v[i] = Math.max(0, Math.sin(i * 0.13 + seed) * 2 + 1.5); return v; }
-    if (kind === "numeric") { const v = new Float32Array(N); for (let i = 0; i < N; i++) v[i] = (i % 100) / 10; return { values: Array.from(v), min: 0, max: 9.9 }; }
+    if (kind === "expr") {
+      // realistic-ish: a gene "marks" one/two cell types (high there, low elsewhere) + per-cell noise → a structured
+      // co-expression cloud (double-pos blob, single-pos arms, double-neg), NOT a sine curve.
+      let seed = 0; for (const ch of String(args.gene)) seed += ch.charCodeAt(0);
+      const codes = codesFor("cell_type"), k = CATS.cell_type.length, hot = seed % k, hot2 = (seed * 7 + 3) % k;
+      const v = new Float32Array(N);
+      for (let i = 0; i < N; i++) { const c = codes[i]; const base = (c === hot || c === hot2) ? 2.6 : 0.35; const noise = (Math.sin(i * 12.9898 + seed * 1.7) * 43758.5453 % 1 + 1) % 1; v[i] = Math.max(0, base + (noise - 0.5) * 1.3); }
+      return v;
+    }
+    if (kind === "numeric") {
+      const v = new Float32Array(N); let mn = Infinity, mx = -Infinity;
+      for (let i = 0; i < N; i++) { const a = (Math.sin(i * 7.13 + 1.3) * 9301 % 1 + 1) % 1, b = (Math.sin(i * 3.71 + 9.2) * 4929 % 1 + 1) % 1; const x = (a + b) * 4 + 1; v[i] = x; if (x < mn) mn = x; if (x > mx) mx = x; }   // ~bell-shaped
+      return { values: Array.from(v), min: mn, max: mx };
+    }
     if (kind === "selectedCells") return selectedIds.slice();
     throw new Error("unknown data kind: " + kind);
   },
