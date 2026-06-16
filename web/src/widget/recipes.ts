@@ -169,6 +169,7 @@ function niceTicks(min, max, n) { n = n || 5; const span = (max - min) || 1, ste
 `;
 const SNIP_CANVAS_POINTS = `// paint points on a <canvas> (DPR-correct, auto-scaled). Returns {sx,sy,x0,x1,y0,y1} so you can hit-test + draw axes.
 // opt: { color?, sel?:Set<number>, selColor?, size? }
+// Call this from inside the 'responsive' onSized(canvas.parentElement, ...) so it repaints at the right size + on resize.
 function paintPoints(canvas, xs, ys, opt) { opt = opt || {}; const dpr = window.devicePixelRatio || 1;
   const W = canvas.clientWidth || (canvas.parentElement && canvas.parentElement.clientWidth) || 400, H = canvas.clientHeight || (canvas.parentElement && canvas.parentElement.clientHeight) || 260;   // guard a transient 0 size (measured before first layout) — repaint on a ResizeObserver to refine
   canvas.width = W * dpr; canvas.height = H * dpr; const g = canvas.getContext('2d'); g.scale(dpr, dpr); g.clearRect(0, 0, W, H);
@@ -192,6 +193,8 @@ const CAT_VARS = ['--cyan', '--amber', '--good', '--bad', '--teal', '--ct2', '--
 function catColor(i) { return 'var(' + CAT_VARS[i % CAT_VARS.length] + ')'; }
 `;
 const SNIP_SVG_AXES = `// draw x/y axes with nice ticks into an <svg> (needs scaleLinear + niceTicks above). Returns {sx,sy} mapping data->px.
+// IMPORTANT: measure the container's size with the 'responsive' snippet (onSized) and draw inside it — a chart that
+// reads clientWidth at init renders at 0×0 before first layout. Pass the w,h from onSized as the svg/plot dimensions.
 function drawAxes(svg, x0, x1, y0, y1, w, h, pad) { pad = pad || { l: 36, b: 18, t: 6, r: 8 };
   const sx = scaleLinear(x0, x1, pad.l, w - pad.r), sy = scaleLinear(y0, y1, h - pad.b, pad.t);
   let s = '<line x1="' + pad.l + '" y1="' + (h - pad.b) + '" x2="' + (w - pad.r) + '" y2="' + (h - pad.b) + '" stroke="var(--line)"/>'
@@ -224,7 +227,20 @@ function brushRegion(canvas, getState, onSelect) {
 //        brushRegion(canvas, () => STATE, (ids) => pagoda.setSelection({ cells: ids }));
 `;
 
+const SNIP_RESPONSIVE = `// Draw ONLY once the container has a real size, and REDRAW when it changes — avoids the "drew at 0×0 before layout"
+// trap (an element's clientWidth is 0 until the first layout pass, so charts that measure at init render blank).
+// onSized(el, draw): calls draw(width,height) as soon as el is non-zero, and again whenever it resizes.
+function onSized(el, draw) {
+  let last = '';
+  const tick = () => { const w = el.clientWidth, h = el.clientHeight; if (!w || !h) return; const k = w + 'x' + h; if (k === last) return; last = k; draw(w, h); };
+  if (typeof ResizeObserver !== 'undefined') new ResizeObserver(tick).observe(el); else addEventListener('resize', tick);
+  tick(); requestAnimationFrame(tick);   // try now + next frame too
+}
+// usage: onSized(wrap, (w, h) => { svg.setAttribute('width', w); svg.setAttribute('height', h); /* ...draw with w,h... */ });
+`;
+
 export const SNIPPETS: WidgetRecipe[] = [
+  { name: "responsive", title: "Size-aware draw / redraw", about: "onSized(el, draw): run your draw(width,height) once the container has a real size and again on resize — the antidote to a chart rendering at 0×0 before first layout (SVG or canvas). Wrap any chart's draw in this.", techniques: ["responsive", "resize", "ResizeObserver", "layout", "clientWidth", "redraw", "size", "draw"], source: SNIP_RESPONSIVE, kind: "snippet" },
   { name: "scales", title: "Scales + nice ticks", about: "scaleLinear(domain→range) and niceTicks(min,max,n) — the basis of any axis or positioned chart.", techniques: ["scale", "axis", "ticks", "linear", "log alternative"], source: SNIP_SCALES, kind: "snippet" },
   { name: "canvas-points", title: "Canvas point cloud", about: "paintPoints(canvas,xs,ys,opt): DPR-correct, auto-scaled scatter painting with optional selection highlight; returns the scales for hit-testing.", techniques: ["canvas", "scatter", "DPR", "autoscale", "selection highlight"], source: SNIP_CANVAS_POINTS, kind: "snippet" },
   { name: "hit-test", title: "Nearest-point hit test", about: "nearestPoint(...) + the onmousemove/onclick wiring to turn a canvas scatter into point-level hover (setHint) and click (setSelection) — hover/click like a native panel.", techniques: ["hit test", "hover", "click", "setHint", "setSelection", "nearest"], source: SNIP_HITTEST, kind: "snippet" },

@@ -14,7 +14,7 @@ export interface TranscriptReport {
 }
 
 // Sentences in agent narration that betray friction with the substrate (not the task).
-const FRICTION_RE = /(before .{0,30}(complete|ready|load|draw|settle))|(only shows?)|(\brace\b)|work[- ]?around|fall[- ]?back|head ?less|isn'?t (text|extract|captured)|not a function|\bundefined\b|\bNaN\b|\b0 ?(circle|point|cell|width|height|×|x ?0)|client(Width|Height).{0,8}0|can'?t (see|tell|read|measure)|no way to/i;
+const FRICTION_RE = /(before .{0,30}(complete|ready|load|draw|settle))|(only shows?)|(\brace condition\b)|work[- ]?around|head ?less|isn'?t (text|extract|captured)|not a function|\bundefined\b|\bNaN\b|\b0 ?(circle|point|cell|width|height|×|x ?0)|client(Width|Height).{0,8}0|can'?t (see|tell|read|measure)|no way to/i;
 const sentences = (t: string) => t.split(/(?<=[.!?\n])\s+/).map((s) => s.trim()).filter(Boolean);
 
 function summarizeInput(name: string, input: any): string | undefined {
