@@ -201,13 +201,18 @@ export function normalizeViewPatch(patch: RawViewPatch, w: World): NormResult {
   }
 
   // ---- facet: split one panel into aligned copies that differ ONLY in scope ----
-  if (patch.facet && typeof patch.facet === "object") {
-    const f = patch.facet; const by = typeof f.by === "string" ? f.by : "";
-    if (!by || !w.categoricals.includes(by)) {
-      rejected.push(`facet: unknown field "${by}" (have: ${w.categoricals.join(", ") || "—"})`);
+  // Lenient: accept facet:"condition" (string) or {by|field|grouping:"condition"} — models reach for both shapes.
+  const facetRaw: any = patch.facet;
+  if (facetRaw != null && facetRaw !== "") {
+    const f: any = typeof facetRaw === "string" ? { by: facetRaw } : (typeof facetRaw === "object" && !Array.isArray(facetRaw)) ? facetRaw : null;
+    const by = f ? (typeof f.by === "string" ? f.by : typeof f.field === "string" ? f.field : typeof f.grouping === "string" ? f.grouping : "") : "";
+    if (!f) {
+      rejected.push(`facet: must be {by:"<field>"} or a field-name string (got ${typeof facetRaw})`);
+    } else if (!by || !w.categoricals.includes(by)) {
+      rejected.push(`facet: unknown field "${by}" — give {by:"<field>"} with one of: ${w.categoricals.join(", ") || "—"}`);
     } else {
       const allVals = w.valuesOf(by);
-      const asked = Array.isArray(f.values) ? f.values.map(String) : [];
+      const asked: string[] = Array.isArray(f.values) ? f.values.map((x: any) => String(x)) : [];
       const bad = asked.filter((v) => !allVals.includes(v));
       if (bad.length) notes.push(`facet: ignored unknown ${by} value(s) ${bad.join(", ")}`);
       let values = (asked.length ? asked.filter((v) => allVals.includes(v)) : allVals);
@@ -223,10 +228,13 @@ export function normalizeViewPatch(patch: RawViewPatch, w: World): NormResult {
   }
 
   // ---- arrange: place EXISTING panels into the 2-column grid (pure reposition, never recreates) ----
-  if (patch.arrange && typeof patch.arrange === "object") {
-    const a = patch.arrange;
-    const mode = Array.isArray(a.rows) ? "rows" : Array.isArray(a.columns) ? "columns" : null;
-    const grid = (mode === "rows" ? a.rows : a.columns) as number[][] | undefined;
+  // Lenient: accept arrange:{rows|columns}, arrange:[[…],…] (an array → rows), or top-level rows/columns.
+  const arrRaw: any = patch.arrange;
+  const aRows = Array.isArray(arrRaw) ? arrRaw : (arrRaw?.rows ?? (patch as any).rows);
+  const aCols = arrRaw?.columns ?? (patch as any).columns;
+  if (arrRaw != null || Array.isArray(aRows) || Array.isArray(aCols)) {
+    const mode = Array.isArray(aRows) ? "rows" : Array.isArray(aCols) ? "columns" : null;
+    const grid = (mode === "rows" ? aRows : aCols) as number[][] | undefined;
     if (!mode || !grid) rejected.push("arrange: give rows:[[id,id],…] (each inner array is a grid ROW) or columns:[[…],[…]] (one array per COLUMN)");
     else {
       const flat = grid.flat();
@@ -255,5 +263,10 @@ export function normalizeViewPatch(patch: RawViewPatch, w: World): NormResult {
     }
   }
 
+  // never leave the agent with a silent no-op: if nothing was recognized, say what it passed and what's valid
+  if (!ops.length && !rejected.length && !notes.length) {
+    const keys = Object.keys(patch || {}).filter((k) => (patch as any)[k] != null);
+    rejected.push(`no recognized changes${keys.length ? ` in {${keys.join(", ")}}` : " (empty patch)"}. Valid fields: color, focus{dim,value}/clearFocus, select{dim,value}/clearSelect, display{labels,legend,alpha,winsor}, panels[{id|add|remove,…}], facet{by}, arrange{rows|columns}.`);
+  }
   return { ops, rejected, notes };
 }
