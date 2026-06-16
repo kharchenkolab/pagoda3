@@ -330,9 +330,10 @@ async function facetsBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltB
   const activeField = () => { const cb = ctx.coord.state.colorBy; return cb.startsWith("meta:") ? cb.slice(5) : cb.startsWith("qc:") ? cb.slice(3) : ""; };
   const GROUPS: [string, string][] = [["annotation", "annotation & clusters"], ["design", "experimental design"], ["covariate", "technical covariates"]];
 
-  const valuesEl = (f: any, sel: any, selCells: Int32Array | null) => {
+  const valuesEl = (f: any, sel: any, selCells: Int32Array | null, vq: string) => {
     const G = meta.get(f.name); if (!G) return mk("div");
     let order = valueStats(f.name);                              // count-sorted (stable order)
+    if (vq) order = order.filter((r: any) => r.value.toLowerCase().includes(vq));   // search matched VALUES (field name didn't match) → show only those
     if (sortMode === "name") order = [...order].sort((a: any, b: any) => a.value.localeCompare(b.value, undefined, { numeric: true }));
     const act = activeField();
     const F = (act && act !== f.name && meta.has(act)) ? meta.get(act) : null;   // crosstab vs the active colour-by (categorical only)
@@ -343,7 +344,7 @@ async function facetsBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltB
     const wrap = mk("div", "facetvals");
     wrap.innerHTML = order.map((r: any) => {
       const gi = idx.get(r.value)!; const cnt = t.counts[gi]; const self = `rgb(${catColor(r.ci).join(",")})`;
-      const seg = (F && cnt > 0) ? F.categories.map((_: any, fi: number) => { const s = t.seg![gi][fi]; return s ? `<i style="width:${(s / cnt * 100).toFixed(2)}%;background:${Fcol![fi]}"></i>` : ""; }).join("")
+      const seg = (F && cnt > 0) ? F.categories.map((_: any, fi: number) => { const s = t.seg![gi][fi]; return s ? `<i style="width:${(s / cnt * 100).toFixed(2)}%;background:${Fcol![fi]}" title="${esc(r.value)} › ${esc(F.categories[fi])}: ${s.toLocaleString()} (${(s / cnt * 100).toFixed(0)}%)"></i>` : ""; }).join("")
                                  : (cnt > 0 ? `<i style="width:100%;background:${self}"></i>` : "");
       const selfOn = sel && sel.kind === "category" && sel.grouping === f.name && sel.value === r.value;
       return `<div class="facetv${selfOn ? " on" : ""}${selCells && !cnt ? " dim" : ""}" data-v="${esc(r.value)}" title="${esc(r.value)} · ${cnt.toLocaleString()} cells · click to select, ⌘-click to add, ⊙ to focus">
@@ -423,7 +424,9 @@ async function facetsBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltB
     row.appendChild(drop);
     row.onclick = (e) => { if ((e.target as HTMLElement).closest(".fdrop,.fcomp")) return; if (open.has(f.name)) open.delete(f.name); else open.add(f.name); render(); };
     box.appendChild(row);
-    if (isOpen) box.appendChild(f.kind === "categorical" ? valuesEl(f, sel, selCells) : numericEl(f, selCells));
+    // if the search matched VALUES (not the field name), filter the shown values to the query
+    const vq = q && !f.name.toLowerCase().includes(q) ? q : "";
+    if (isOpen) box.appendChild(f.kind === "categorical" ? valuesEl(f, sel, selCells, vq) : numericEl(f, selCells));
     return box;
   };
 
@@ -439,8 +442,11 @@ async function facetsBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltB
       host.appendChild(banner);
     }
     const allFields = ctx.metadataFields();   // recompute each render → newly created derived categories appear
+    // a field matches the search if its NAME matches OR (categorical) any of its VALUE names match (so "cd4" surfaces
+    // the cell_type facet showing its CD4 rows). Value-matched fields auto-expand and show only the matching values.
+    const matchField = (f: any) => { if (!q) return true; if (f.name.toLowerCase().includes(q)) return true; const m = meta.get(f.name); return !!m && m.categories.some((c: string) => c.toLowerCase().includes(q)); };
     for (const [g, label] of GROUPS) {
-      const fs = allFields.filter((f) => f.group === g && (!q || f.name.toLowerCase().includes(q)));
+      const fs = allFields.filter((f) => f.group === g && matchField(f));
       if (!fs.length) continue;
       host.appendChild(mk("div", "facetsub", label));
       for (const f of fs) host.appendChild(fieldEl(f, act, sel, selCells, q));
