@@ -6,6 +6,7 @@ import { WidgetHost, previewWidget } from "./runtime.ts";
 import { WIDGET_API_DOC } from "./contract.ts";
 import { getWidgetTemplate, KITCHEN_SINK } from "./template.ts";
 import { listRecipes, findRecipes, getRecipe } from "./recipes.ts";
+import { applyEdits } from "./edits.ts";
 
 const PROXY = "/api/agent/stream";
 
@@ -15,7 +16,8 @@ const TOOLS = [
   { name: "find_widget_recipe", description: "LOOK UP recipes + snippets by free-text need (e.g. 'scatter hover', 'colour scale', 'histogram bins', 'axes'). Returns ranked matches — kind 'widget' = a complete widget to adapt; kind 'snippet' = inlinable building-block functions (the plot kit: scales, nice-ticks, canvas point cloud, nearest-point hit-test for hover/click, colour ramps, SVG axes, binning). This is how you get a plotting library while staying self-contained. For chart/viz/interaction work, look here FIRST.", input_schema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } },
   { name: "get_widget_recipe", description: "DELIVER a recipe/snippet's full SOURCE by name (from find/list) — a widget to adapt, or snippet helpers to paste in. Compose snippets + glue, then preview.", input_schema: { type: "object", properties: { name: { type: "string" } }, required: ["name"] } },
   { name: "get_widget_template", description: "Return a starter widget source to adapt. kind='kitchen' (default — demonstrates every capability) or 'blank' (minimal). Prefer find_widget_recipe for viz.", input_schema: { type: "object", properties: { kind: { type: "string" } } } },
-  { name: "preview_widget", description: "Render the widget SOURCE in a sandbox and return {ok, error, logs, manifest, renderedText}. This is your TEST/DEBUG loop — call it after each draft, read the error/logs/renderedText, and FIX until ok:true before saving. NOTE: by default this only exercises the INITIAL render. To test interactive logic (button handlers, computed output, setSelection, etc.) pass `probe`: JS that runs after mount IN THE WIDGET'S OWN SCOPE — it can call your widget's top-level functions and set input values, e.g. \"document.querySelector('#ga').value='CD3E'; document.querySelector('#gb').value='CD19'; await compute();\". console.log inside the probe to inspect values; renderedText reflects the post-probe DOM and includes a [viz: …] summary of any SVG/canvas content (element counts + sizes, e.g. 'svg 440x120 (36 circle)'), so you can confirm a CHART drew WITHOUT a DOM-counting probe (data-driven draws are async — if a probe shows 0 elements, `await` a moment first).", input_schema: { type: "object", properties: { source: { type: "string", description: "the full widget source" }, probe: { type: "string", description: "optional JS run after mount in the widget's scope to exercise interactions; can be async (use await)" } }, required: ["source"] } },
+  { name: "preview_widget", description: "Render the widget SOURCE in a sandbox and return {ok, error, logs, manifest, renderedText}. Your TEST/DEBUG loop. Pass the FULL `source` the FIRST time; after that OMIT source to re-preview the current widget (e.g. with a different probe) without re-emitting it. To FIX a widget, prefer edit_widget (small patches) over re-sending the whole source. To test interactive logic pass `probe`: JS run after mount IN THE WIDGET'S OWN SCOPE — call your top-level functions / set inputs, e.g. \"document.querySelector('#g').value='CD3E'; await compute();\" — prefer ONE preview WITH a probe over preview-then-probe. renderedText includes a [viz: …] summary of SVG/canvas content (element counts + sizes) so you can confirm a CHART drew WITHOUT a DOM-counting probe (data-driven draws are async — if a probe shows 0 elements, `await` a moment first).", input_schema: { type: "object", properties: { source: { type: "string", description: "full source (first time); omit to reuse the current source" }, probe: { type: "string", description: "optional JS run after mount to exercise interactions; can be async" } } } },
+  { name: "edit_widget", description: "FIX the current widget with small SEARCH/REPLACE edits instead of re-emitting the whole source (far fewer tokens + faster) — then it previews automatically. `edits` is an array of {old,new}: each `old` must match the CURRENT source EXACTLY and UNIQUELY (include surrounding lines to disambiguate); `new` replaces it. Atomic — if any edit doesn't match, nothing changes and you get the failures back to correct. Use this for every fix after the first preview. Pass `probe` to also exercise interactions.", input_schema: { type: "object", properties: { edits: { type: "array", items: { type: "object", properties: { old: { type: "string" }, new: { type: "string" } }, required: ["old", "new"] } }, probe: { type: "string" } }, required: ["edits"] } },
   { name: "save_widget", description: "Mount the finished widget as the live panel. Only call once preview_widget returned ok:true. OMIT `source` to save EXACTLY the source you last previewed (the default + much faster — don't re-emit it); pass `source` only if you changed it since the last preview.", input_schema: { type: "object", properties: { source: { type: "string", description: "optional — omit to reuse the last previewed source" }, title: { type: "string" } } } },
 ];
 
@@ -24,7 +26,7 @@ const SYSTEM =
   "You are the widget-authoring agent for the pagoda single-cell browser. You write small, self-contained interactive " +
   "widgets that run in a sandboxed iframe and coordinate with the app through the `pagoda` global.\n\n" +
   "WORKFLOW: (1) for chart/viz/interaction work, find_widget_recipe('what you need') first — it returns whole widgets to adapt AND inlinable snippets (the plot kit: scales, axes, canvas point cloud, nearest-point hit-test for hover/click, colour ramps, binning); get_widget_recipe each hit and compose them. Otherwise start from get_widget_template (the kitchen sink shows every capability); (2) adapt it to the request —" +
-  "keep it minimal and focused; (3) preview_widget to TEST — read ok/error/logs/renderedText and FIX until ok:true. " +
+  "keep it minimal and focused; (3) preview_widget (full source ONCE) to TEST — read ok/error/logs/renderedText, then FIX with edit_widget (small search/replace patches — do NOT re-send the whole source) until ok:true; save_widget with NO source (reuses what you last previewed). " +
   "preview only renders the INITIAL state, so whenever the widget has interactive logic (a button, a computed result, " +
   "setSelection, a search box), preview AGAIN with a `probe` that drives it (set input values, call your handler, then " +
   "inspect renderedText/logs) — don't ship interactive logic you haven't exercised; " +
@@ -49,11 +51,22 @@ export function createWidgetAgent(opts: { host: WidgetHost; onSave: (source: str
     if (name === "find_widget_recipe") { const hits = findRecipes(String(input?.query || "")); return hits.length ? JSON.stringify(hits) : "no matches — " + JSON.stringify(listRecipes().map((r) => r.name)); }
     if (name === "get_widget_recipe") { const src = getRecipe(String(input?.name || "")); return src || "no recipe/snippet '" + input?.name + "'"; }
     if (name === "get_widget_template") return getWidgetTemplate(input?.kind);
+    const roHost = { ...opts.host, apply: () => { /* preview is side-effect-free — don't mutate the host's coord/selection */ } };
+    const runPreview = async (probe?: any, applied?: string[]) => {
+      const r = await previewWidget(lastSource, roHost as any, 4000, probe ? String(probe) : undefined);
+      return JSON.stringify({ ok: r.ok, error: r.error, logs: r.logs.slice(-8), manifest: r.manifest, renderedText: (r.text || "").slice(0, 400), applied });
+    };
     if (name === "preview_widget") {
-      lastSource = String(input?.source || "");
-      const roHost = { ...opts.host, apply: () => { /* preview is side-effect-free — don't mutate the host's coord/selection */ } };
-      const r = await previewWidget(lastSource, roHost as any, 4000, input?.probe ? String(input.probe) : undefined);
-      return JSON.stringify({ ok: r.ok, error: r.error, logs: r.logs.slice(-8), manifest: r.manifest, renderedText: (r.text || "").slice(0, 400) });
+      if (input?.source != null) lastSource = String(input.source);   // omit source to re-preview the current widget (e.g. with a probe) without re-emitting it
+      if (!lastSource) return JSON.stringify({ ok: false, error: "no source — pass the full source the first time" });
+      return runPreview(input?.probe);
+    }
+    if (name === "edit_widget") {
+      if (!lastSource) return JSON.stringify({ ok: false, error: "no widget yet — preview_widget with the full source first" });
+      const res = applyEdits(lastSource, Array.isArray(input?.edits) ? input.edits : []);
+      if (!res.ok) return JSON.stringify({ ok: false, error: "edits did not apply (source unchanged) — make each 'old' match the CURRENT source exactly + uniquely, or preview_widget the full corrected source to resync", failed: res.failed });
+      lastSource = res.source;
+      return runPreview(input?.probe, res.applied);
     }
     if (name === "save_widget") { lastSource = String(input?.source || lastSource); opts.onSave(lastSource, input?.title); return "saved + mounted on the workbench"; }
     return `unknown tool ${name}`;
