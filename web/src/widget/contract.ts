@@ -118,7 +118,17 @@ export const WIDGET_BOOTSTRAP = `
     else if(m.t==='hint'){ hint=m.hint||null; fire('hint',hint); }
     else if(m.t==='theme'){ theme=m.theme; applyTheme(theme); fire('theme',theme); }
     else if(m.t==='control'){ fire('control', m.id); }
-    else if(m.t==='snapshot'){ post({t:'snapshotResult', text:(document.body.innerText||'').replace(/\\s+/g,' ').trim().slice(0,3000)}); }
+    else if(m.t==='snapshot'){
+      // text alone is blind to SVG/canvas charts (no innerText) — so also summarize the VISUAL content (element counts +
+      // sizes) so a preview can tell whether a chart actually drew, without the author writing a DOM-counting probe.
+      var viz=[];
+      var svgs=document.querySelectorAll('svg'); for(var i=0;i<svgs.length;i++){ var s=svgs[i], r=s.getBoundingClientRect();
+        var parts=['circle','rect','path','line','text'].map(function(t){ var n=s.querySelectorAll(t).length; return n? n+' '+t : null; }).filter(Boolean);
+        viz.push('svg '+Math.round(r.width)+'x'+Math.round(r.height)+(parts.length? ' ('+parts.join(', ')+')' : ' (empty)')); }
+      var cans=document.querySelectorAll('canvas'); for(var j=0;j<cans.length;j++){ var cr=cans[j].getBoundingClientRect(); viz.push('canvas '+Math.round(cr.width)+'x'+Math.round(cr.height)); }
+      var txt=(document.body.innerText||'').replace(/\\s+/g,' ').trim();
+      post({t:'snapshotResult', text:((viz.length? '[viz: '+viz.join(' · ')+']\\n' : '')+txt).slice(0,3000)});
+    }
     else if(m.t==='data'){ var p=pending[m.reqId]; if(p){ delete pending[m.reqId]; m.ok ? p.resolve(m.payload) : p.reject(new Error(m.error||'data error')); } }
   });
   ['log','warn','error'].forEach(function(lv){ var orig=console[lv]; console[lv]=function(){ try{ post({t:'log', level:lv, args:[].map.call(arguments, function(x){ try{return typeof x==='string'?x:JSON.stringify(x);}catch(e){return String(x);} })}); }catch(e){} try{ orig.apply(console, arguments); }catch(e){} }; });
