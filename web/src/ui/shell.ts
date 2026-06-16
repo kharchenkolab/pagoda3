@@ -98,9 +98,9 @@ export class App {
         <div class="spacer"></div>
         <div class="tb pip" id="askBtn"><span class="dot"></span>Ask<span class="kbd">⌘K</span></div>
         <div class="tb" id="lockBtn">🔓 Layout</div>
-        <div class="tb" id="themeBtn" title="toggle light / dark theme">☾</div>
         <div class="tb" id="convoBtn" title="show / hide the Chat column">Chat</div>
         <div class="tb" id="railBtn" title="show / hide the Answers column">Answers</div>
+        <div class="tb acct" id="acctBtn" title="account, theme & custom widgets"><span class="acdot">G</span></div>
       </div>
       <div class="stage">
         <div class="convo" id="convo"></div>
@@ -117,7 +117,7 @@ export class App {
     // overlays
     for (const html of [`<div class="scrim" id="scrim"></div>`,
       `<div class="palette" id="palette"><div class="scope" id="scope" style="display:none"></div><input id="pin" placeholder="Ask, or describe what you want to see…"><div class="sugs" id="sugs"></div></div>`,
-      `<div class="selpop" id="selpop"></div>`, `<div class="ctx" id="ctx"></div>`, `<div class="toasts" id="toasts"></div>`]) {
+      `<div class="selpop" id="selpop"></div>`, `<div class="ctx" id="ctx"></div>`, `<div class="acmenu" id="acct"></div>`, `<div class="toasts" id="toasts"></div>`]) {
       const d = document.createElement("div"); d.innerHTML = html; document.body.appendChild(d.firstElementChild!);
     }
     this.wire();
@@ -1054,6 +1054,32 @@ export class App {
       else if (a === "del") { delete this.WS[n]; this.wsOrder = this.wsOrder.filter((z) => z !== n); if (this.currentWS === n) this.switchWS(this.wsOrder[0], false); else this.renderWS(); } });
   }
 
+  // The right-side ACCOUNT menu: sign-in (placeholder), the light/dark theme selector, the custom-widget library
+  // (re-add / delete authored widgets), and session management. Anchored under the avatar button.
+  openAccountMenu() {
+    const c = this.$("acct"); const light = document.documentElement.classList.contains("light");
+    const esc = (s: string) => String(s).replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]!));
+    const widgets = this.widgetLib.length
+      ? this.widgetLib.map((w) => `<div class="acwrow"><span class="acwname" title="${esc(w.name)}">${esc(w.name)}</span><span class="acwadd" data-add="${w.id}" title="add to workbench">add</span><span class="acwdel" data-del="${w.id}" title="delete from library">✕</span></div>`).join("")
+      : `<div class="acempty">No saved widgets yet — ask the agent to build one, or describe it in ⌘K.</div>`;
+    c.innerHTML = `
+      <div class="acsec"><div class="aclabel">ACCOUNT</div>
+        <div class="acrow"><span class="acava">G</span><div><div class="acname">Guest</div><div class="acsub">Local session · not signed in</div></div></div>
+        <button class="acbtn" data-a="signin">Sign in</button></div>
+      <div class="acsec"><div class="aclabel">THEME</div>
+        <div class="acseg"><button data-a="dark" class="${light ? "" : "on"}">Dark</button><button data-a="light" class="${light ? "on" : ""}">Light</button></div></div>
+      <div class="acsec"><div class="aclabel">CUSTOM WIDGETS · ${this.widgetLib.length}</div><div class="acwidgets">${widgets}</div></div>
+      <div class="acsec"><div class="aclabel">SESSION</div><button class="acbtn" data-a="clear">Clear saved session</button></div>`;
+    const b = this.$("acctBtn").getBoundingClientRect();
+    c.style.left = Math.max(8, Math.min(b.right - 280, innerWidth - 288)) + "px"; c.style.top = (b.bottom + 6) + "px"; c.classList.add("show");
+    c.querySelectorAll<HTMLElement>("[data-a]").forEach((el) => el.onclick = () => { const a = el.dataset.a!;
+      if (a === "signin") { this.toast("Sign-in is coming soon — your session + widgets are saved locally for now.", null); c.classList.remove("show"); }
+      else if (a === "dark" || a === "light") { this.applyTheme(a as "dark" | "light"); this.openAccountMenu(); }   // re-render to move the highlight
+      else if (a === "clear") { try { localStorage.removeItem(SESSION_KEY); } catch { /* */ } this.toast("Saved session cleared — this layout stays until reload.", null); c.classList.remove("show"); } });
+    c.querySelectorAll<HTMLElement>("[data-add]").forEach((el) => el.onclick = () => { const w = this.widgetLib.find((x) => x.id === el.dataset.add); if (w) { this.addWidgetPanel(w.source, w.name, w.controls); this.toast(`Added widget “${w.name}”`, null); } c.classList.remove("show"); });
+    c.querySelectorAll<HTMLElement>("[data-del]").forEach((el) => el.onclick = (e) => { e.stopPropagation(); this.deleteWidgetFromLibrary(el.dataset.del!); this.openAccountMenu(); });   // re-render the list in place
+  }
+
   // ---------- checkpoints ----------
   snap() { return { colorBy: this.coord.state.colorBy, focus: this.coord.state.focus, ws: this.currentWS, canvas: JSON.parse(JSON.stringify(this.canvas)), rail: JSON.parse(JSON.stringify(this.rail)) }; }
   checkpoint(q: string, why: string, opts?: { kind?: "ask" | "act"; exchange?: any }) { this.history.push({ i: this.history.length, q, why, state: this.snap(), kind: opts?.kind || "act", exchange: opts?.exchange }); this.viewing = -1; this.renderSpine(); if (this.threadDocked) this.renderThread(); this.scheduleSave(); }
@@ -1167,7 +1193,7 @@ export class App {
   wire() {
     this.$("askBtn").onclick = () => { if (this.nudgePending) this.agent.openNudge(); else this.openPalette(); };
     this.$("lockBtn").onclick = () => { this.locked = !this.locked; this.$("lockBtn").classList.toggle("on", this.locked); this.$("lockBtn").textContent = this.locked ? "🔒 Layout" : "🔓 Layout"; this.toast(this.locked ? "Layout locked" : "Layout unlocked", this.locked ? "The agent will route bigger changes to the rail instead of touching your workbench." : null); };
-    this.$("themeBtn").onclick = () => this.applyTheme(document.documentElement.classList.contains("light") ? "dark" : "light");
+    this.$("acctBtn").onclick = (e) => { e.stopPropagation(); const c = this.$("acct"); if (c.classList.contains("show")) c.classList.remove("show"); else this.openAccountMenu(); };
     this.applyTheme((localStorage.getItem("p2-theme") as "light" | "dark") || "dark");   // restore the saved preference
     this.$("railBtn").onclick = () => this.setRail(!this.$("rail").classList.contains("open"));
     this.$("railX").onclick = () => this.setRail(false);
@@ -1186,7 +1212,7 @@ export class App {
       else if (e.key === "ArrowUp") { this.hot = Math.max(this.hot - 1, 0); this.renderSugs(); e.preventDefault(); }
       else if (e.key === "Enter") { const s = this.filtered[this.hot]; if (s) { this.closePalette(); this.agent.ask(s.q, this.scope); } }
     });
-    document.addEventListener("click", (e) => { if (!this.$("selpop").contains(e.target as Node)) this.hideSelpop(); if (!this.$("ctx").contains(e.target as Node)) this.$("ctx").classList.remove("show"); });
+    document.addEventListener("click", (e) => { if (!this.$("selpop").contains(e.target as Node)) this.hideSelpop(); if (!this.$("ctx").contains(e.target as Node)) this.$("ctx").classList.remove("show"); const ac = this.$("acct"); if (!ac.contains(e.target as Node) && (e.target as HTMLElement).id !== "acctBtn" && !this.$("acctBtn").contains(e.target as Node)) ac.classList.remove("show"); });
     document.addEventListener("keydown", (e) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); this.openPalette(); }
       else if (e.key === "Escape") { this.closePalette(); this.hideSelpop(); this.$("ctx").classList.remove("show"); }

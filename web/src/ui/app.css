@@ -289,6 +289,27 @@ button{font-family:inherit}
 .selpop .head{padding:8px 11px;font-family:var(--mono);font-size:11px;color:var(--cyan);border-bottom:1px solid var(--line2)}
 .selpop .it,.ctx .it{padding:8px 11px;font-size:12.5px;cursor:pointer;display:flex;gap:8px;align-items:center}
 .selpop .it:hover,.ctx .it:hover{background:var(--inset)} .selpop .it .ic{color:var(--faint);font-family:var(--mono);width:14px;text-align:center}
+/* account / session menu (top-bar avatar) */
+.tb.acct{padding:5px 7px}
+.acdot{display:inline-flex;width:20px;height:20px;border-radius:50%;background:var(--cyan);color:var(--on-accent);align-items:center;justify-content:center;font-size:11px;font-weight:700;line-height:1}
+.acmenu{position:fixed;z-index:56;width:280px;background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:0 14px 40px rgba(0,0,0,.5);display:none;overflow:hidden}
+.acmenu.show{display:block;animation:pop .14s ease}
+.acsec{padding:10px 13px;border-top:1px solid var(--line2)} .acsec:first-child{border-top:0}
+.aclabel{font:10px var(--mono);letter-spacing:1px;color:var(--faint);margin-bottom:7px}
+.acrow{display:flex;gap:9px;align-items:center}
+.acava{flex:none;width:30px;height:30px;border-radius:50%;background:var(--inset);color:var(--text);display:flex;align-items:center;justify-content:center;font-weight:600;font-size:13px}
+.acname{font-size:12.5px;color:var(--text)} .acsub{font-size:11px;color:var(--faint)}
+.acbtn{margin-top:9px;width:100%;font:inherit;font-size:12px;color:var(--text);background:var(--inset);border:1px solid var(--line);border-radius:7px;padding:6px;cursor:pointer}
+.acbtn:hover{border-color:var(--cyan);color:var(--cyan)}
+.acseg{display:flex;gap:6px}
+.acseg button{flex:1;font:inherit;font-size:12px;color:var(--dim);background:var(--inset);border:1px solid var(--line);border-radius:7px;padding:6px;cursor:pointer}
+.acseg button.on{color:var(--on-accent);background:var(--cyan);border-color:var(--cyan)}
+.acwidgets{display:flex;flex-direction:column;gap:2px;max-height:180px;overflow:auto}
+.acwrow{display:flex;gap:8px;align-items:center;font-size:12px}
+.acwname{flex:1;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.acwadd{color:var(--cyan);cursor:pointer;font-size:11.5px} .acwadd:hover{text-decoration:underline}
+.acwdel{color:var(--faint);cursor:pointer;width:14px;text-align:center} .acwdel:hover{color:var(--bad)}
+.acempty{font-size:11.5px;color:var(--faint);line-height:1.5}
 
 /* toasts */
 .toasts{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:70;display:flex;flex-direction:column;gap:8px;align-items:center}
