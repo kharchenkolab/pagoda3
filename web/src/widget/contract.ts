@@ -56,7 +56,7 @@ export function validateManifest(m: any): WidgetManifest {
 }
 
 // The data kinds a widget may request (host resolves them). Documented so the agent + the host stay in step.
-export const DATA_KINDS = ["n", "fields", "categories", "category", "cellsOf", "expr", "numeric", "selectedCells"] as const;
+export const DATA_KINDS = ["n", "fields", "categories", "category", "cellsOf", "expr", "numeric", "selectedCells", "groupStats"] as const;
 
 // Agent-facing reference — what the widget code can do. Kept next to the protocol so they can't drift (mirrors
 // codeapi.CODE_API_DOC). Surfaced via the read_widget_contract tool + injected into the authoring prompt.
@@ -78,7 +78,9 @@ export const WIDGET_API_DOC =
   "`await pagoda.data(kind, args)` to pull data on demand — kinds: " +
   "'n' (cell count), 'fields' (→ {categorical:[names], numeric:[names]}), 'categories' (args:{field} → {categories,counts}), 'category' (args:{field} → {codes,categories}), " +
   "'cellsOf' (args:{field,value} → number[]), 'expr' (args:{gene} → Float32Array of log-norm expression), " +
-  "'numeric' (args:{field} → {values,min,max}), 'selectedCells' (→ number[] of the currently selected cell indices). " +
+  "'numeric' (args:{field} → {values,min,max}), 'selectedCells' (→ number[] of the currently selected cell indices), " +
+  "'groupStats' (args:{field, genes:[...]} → {groups, genes, mean:[gene][group], frac:[gene][group]}) — per-group MEAN expression + " +
+  "FRACTION expressing for each gene in one call; use it for dot-plots/heatmaps/violins instead of looping raw expr. " +
   "Errors/console are forwarded to the host for debugging; an uncaught " +
   "throw shows an error state. Header `controls` you declare are rendered by the host in the standard panel chrome; " +
   "a click arrives as pagoda.on('control', id => …). Keep it self-contained — no external network/CDN.";

@@ -109,6 +109,21 @@ export function makeWidgetHost(app: App): WidgetHost {
           return { values: m.values, min: m.min, max: m.max };
         }
         case "selectedCells": return Array.from(ctx.selectedCells());
+        case "groupStats": {
+          const m = await ctx.metaOf(String(a.field)) as any;
+          if (m.kind !== "categorical") throw new Error(`'${a.field}' is not categorical`);
+          const G = m.categories.length, codes = m.codes as Int32Array, genes: string[] = Array.isArray(a.genes) ? a.genes.map(String) : [];
+          const mean: number[][] = [], frac: number[][] = [];
+          for (const g of genes) {
+            let vals: Float32Array | null = null;
+            try { vals = (await ctx.view.geneExpression(g)).values; } catch { mean.push(new Array(G).fill(0)); frac.push(new Array(G).fill(0)); continue; }
+            const sum = new Array(G).fill(0), pos = new Array(G).fill(0), cnt = new Array(G).fill(0);
+            for (let i = 0; i < codes.length; i++) { const c = codes[i]; if (c >= 0) { const v = vals[i]; sum[c] += v; if (v > 0) pos[c]++; cnt[c]++; } }
+            mean.push(sum.map((s, j) => cnt[j] ? s / cnt[j] : 0));
+            frac.push(pos.map((p, j) => cnt[j] ? p / cnt[j] : 0));
+          }
+          return { groups: m.categories, genes, mean, frac };
+        }
         default: throw new Error("unknown data kind: " + kind);
       }
     },

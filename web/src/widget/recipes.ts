@@ -169,7 +169,8 @@ function niceTicks(min, max, n) { n = n || 5; const span = (max - min) || 1, ste
 `;
 const SNIP_CANVAS_POINTS = `// paint points on a <canvas> (DPR-correct, auto-scaled). Returns {sx,sy,x0,x1,y0,y1} so you can hit-test + draw axes.
 // opt: { color?, sel?:Set<number>, selColor?, size? }
-function paintPoints(canvas, xs, ys, opt) { opt = opt || {}; const dpr = window.devicePixelRatio || 1, W = canvas.clientWidth, H = canvas.clientHeight;
+function paintPoints(canvas, xs, ys, opt) { opt = opt || {}; const dpr = window.devicePixelRatio || 1;
+  const W = canvas.clientWidth || (canvas.parentElement && canvas.parentElement.clientWidth) || 400, H = canvas.clientHeight || (canvas.parentElement && canvas.parentElement.clientHeight) || 260;   // guard a transient 0 size (measured before first layout) — repaint on a ResizeObserver to refine
   canvas.width = W * dpr; canvas.height = H * dpr; const g = canvas.getContext('2d'); g.scale(dpr, dpr); g.clearRect(0, 0, W, H);
   let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity; for (let i = 0; i < xs.length; i++) { if (xs[i] < x0) x0 = xs[i]; if (xs[i] > x1) x1 = xs[i]; if (ys[i] < y0) y0 = ys[i]; if (ys[i] > y1) y1 = ys[i]; }
   const sx = (v) => 6 + (v - x0) / ((x1 - x0) || 1) * (W - 12), sy = (v) => H - 6 - (v - y0) / ((y1 - y0) || 1) * (H - 12);
@@ -204,10 +205,30 @@ const SNIP_BINS = `// bin values into n bins → {counts, edges, min, max}. Pair
 function histogramBins(values, n) { n = n || 28; let mn = Infinity, mx = -Infinity; for (const v of values) { if (v < mn) mn = v; if (v > mx) mx = v; } const span = (mx - mn) || 1, counts = new Array(n).fill(0); for (const v of values) { let b = Math.floor((v - mn) / span * n); if (b < 0) b = 0; if (b >= n) b = n - 1; counts[b]++; } const edges = []; for (let i = 0; i <= n; i++) edges.push(mn + i / n * span); return { counts, edges, min: mn, max: mx }; }
 `;
 
+const SNIP_REGION_BRUSH = `// drag a RECTANGLE on a canvas scatter to select the cells inside (region → setSelection). Uses a <div> overlay so
+// the box survives canvas repaints. brushRegion(canvas, getState, onSelect): getState()->{xs,ys,S} (S from paintPoints,
+// has sx,sy); onSelect(ids:number[]).
+function brushRegion(canvas, getState, onSelect) {
+  const box = document.createElement('div'); box.style.cssText = 'position:absolute;border:1px solid var(--cyan);background:rgba(92,200,255,.12);pointer-events:none;display:none';
+  (canvas.parentElement || document.body).appendChild(box);
+  let x0 = 0, y0 = 0, dragging = false;
+  const rel = (e) => { const r = canvas.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+  canvas.addEventListener('mousedown', (e) => { dragging = true; [x0, y0] = rel(e); Object.assign(box.style, { display: '', left: (canvas.offsetLeft + x0) + 'px', top: (canvas.offsetTop + y0) + 'px', width: '0px', height: '0px' }); });
+  window.addEventListener('mousemove', (e) => { if (!dragging) return; const [x, y] = rel(e); Object.assign(box.style, { left: (canvas.offsetLeft + Math.min(x0, x)) + 'px', top: (canvas.offsetTop + Math.min(y0, y)) + 'px', width: Math.abs(x - x0) + 'px', height: Math.abs(y - y0) + 'px' }); });
+  window.addEventListener('mouseup', (e) => { if (!dragging) return; dragging = false; box.style.display = 'none'; const [x, y] = rel(e), st = getState(); if (!st || !st.S) return;
+    const ax = Math.min(x0, x), bx = Math.max(x0, x), ay = Math.min(y0, y), by = Math.max(y0, y); if (bx - ax < 3 && by - ay < 3) return;
+    const ids = []; for (let i = 0; i < st.xs.length; i++) { const sx = st.S.sx(st.xs[i]), sy = st.S.sy(st.ys[i]); if (sx >= ax && sx <= bx && sy >= ay && sy <= by) ids.push(i); }
+    onSelect(ids); });
+}
+// usage: const STATE = { xs, ys, S: null }; /* after each paint: */ STATE.S = paintPoints(canvas, xs, ys, opt);
+//        brushRegion(canvas, () => STATE, (ids) => pagoda.setSelection({ cells: ids }));
+`;
+
 export const SNIPPETS: WidgetRecipe[] = [
   { name: "scales", title: "Scales + nice ticks", about: "scaleLinear(domain→range) and niceTicks(min,max,n) — the basis of any axis or positioned chart.", techniques: ["scale", "axis", "ticks", "linear", "log alternative"], source: SNIP_SCALES, kind: "snippet" },
   { name: "canvas-points", title: "Canvas point cloud", about: "paintPoints(canvas,xs,ys,opt): DPR-correct, auto-scaled scatter painting with optional selection highlight; returns the scales for hit-testing.", techniques: ["canvas", "scatter", "DPR", "autoscale", "selection highlight"], source: SNIP_CANVAS_POINTS, kind: "snippet" },
   { name: "hit-test", title: "Nearest-point hit test", about: "nearestPoint(...) + the onmousemove/onclick wiring to turn a canvas scatter into point-level hover (setHint) and click (setSelection) — hover/click like a native panel.", techniques: ["hit test", "hover", "click", "setHint", "setSelection", "nearest"], source: SNIP_HITTEST, kind: "snippet" },
+  { name: "region-brush", title: "Rectangle region brush", about: "brushRegion(...): drag a rectangle on a canvas scatter to select the cells inside (region → setSelection); div overlay survives repaints.", techniques: ["brush", "region", "rectangle", "gating", "select", "setSelection", "drag"], source: SNIP_REGION_BRUSH, kind: "snippet" },
   { name: "color", title: "Theme colour helpers", about: "seqRamp(t) for sequential heat scales and catColor(i) for categorical series — both read the theme palette.", techniques: ["colour", "ramp", "palette", "heatmap", "categorical", "theme"], source: SNIP_COLOR, kind: "snippet" },
   { name: "svg-axes", title: "SVG axes", about: "drawAxes(svg,...) renders themed x/y axes with nice ticks into an SVG and returns data→pixel scales (needs the scales snippet).", techniques: ["svg", "axis", "ticks", "labels"], source: SNIP_SVG_AXES, kind: "snippet" },
   { name: "bins", title: "Histogram binning", about: "histogramBins(values,n) → counts/edges/min/max for a histogram or density.", techniques: ["histogram", "bins", "distribution", "density"], source: SNIP_BINS, kind: "snippet" },

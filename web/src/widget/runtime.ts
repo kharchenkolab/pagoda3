@@ -98,10 +98,14 @@ function withProbe(source: string, probe: string): string {
 // values to exercise interactive logic the initial render never reaches; its console output + the post-probe DOM are returned.
 export async function previewWidget(source: string, host: WidgetHost, timeoutMs = 4000, probe?: string):
     Promise<{ ok: boolean; manifest: WidgetManifest | null; error: string | null; logs: { level: string; args: string[] }[]; text: string }> {
+  // Offscreen but FULLY LAID OUT at a real size (not visibility:hidden, and the iframe sized in px below) — so canvas
+  // widgets measure non-zero clientWidth/Height during preview, matching prod. Otherwise the agent burns an iteration
+  // working around a 0×0 canvas that only exists in the headless preview.
   const off = document.createElement("div");
-  off.style.cssText = "position:absolute;left:-9999px;top:0;width:480px;height:360px;visibility:hidden";
+  off.style.cssText = "position:absolute;left:-9999px;top:0;width:480px;height:360px;overflow:hidden";
   document.body.appendChild(off);
   const h = mountWidget(off, probe ? withProbe(source, probe) : source, host);
+  h.iframe.style.width = "480px"; h.iframe.style.height = "360px";
   const ready = await new Promise<boolean>((res) => {
     let done = false; const fin = (v: boolean) => { if (!done) { done = true; res(v); } };
     h.onManifest(() => fin(true));

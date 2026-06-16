@@ -81,6 +81,18 @@ const host: WidgetHost = {
       return { values: Array.from(v), min: mn, max: mx };
     }
     if (kind === "selectedCells") return selectedIds.slice();
+    if (kind === "groupStats") {
+      const field = String(args.field), genes = Array.isArray(args.genes) ? args.genes.map(String) : [];
+      const cats = CATS[field] || [], codes = codesFor(field), G = cats.length, ct = codesFor("cell_type"), k = CATS.cell_type.length;
+      const mean: number[][] = [], frac: number[][] = [];
+      for (const g of genes) {
+        let seed = 0; for (const ch of g) seed += ch.charCodeAt(0); const hot = seed % k, hot2 = (seed * 7 + 3) % k;
+        const sum = new Array(G).fill(0), pos = new Array(G).fill(0), cnt = new Array(G).fill(0);
+        for (let i = 0; i < N; i++) { const base = (ct[i] === hot || ct[i] === hot2) ? 2.6 : 0.35, noise = (Math.sin(i * 12.9898 + seed * 1.7) * 43758.5453 % 1 + 1) % 1, v = Math.max(0, base + (noise - 0.5) * 1.3); const gc = codes[i]; if (gc >= 0) { sum[gc] += v; if (v > 0) pos[gc]++; cnt[gc]++; } }
+        mean.push(sum.map((s, j) => cnt[j] ? s / cnt[j] : 0)); frac.push(pos.map((p, j) => cnt[j] ? p / cnt[j] : 0));
+      }
+      return { groups: cats, genes, mean, frac };
+    }
     throw new Error("unknown data kind: " + kind);
   },
 };
