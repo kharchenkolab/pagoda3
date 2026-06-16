@@ -3,6 +3,9 @@
 // thread (the live tip), interruptible. Falls back to the mock planner if unreachable.
 import type { App } from "../ui/shell.ts";
 import { CODE_API_DOC } from "./codeapi.ts";
+import { WIDGET_API_DOC } from "../widget/contract.ts";
+import { getWidgetTemplate } from "../widget/template.ts";
+import { previewWidget } from "../widget/runtime.ts";
 
 const PROXY = "/api/agent/stream";
 
@@ -51,6 +54,11 @@ const TOOLS: Tool[] = [
   { name: "concordance_panel", description: "Per-donor MARKER concordance for one cell type — the companion to a within-type compute(stat:de). Takes that cell type's top markers and shows their mean expression split by donor (a gene × donor heat). Markers reading the SAME across donors confirm a genuinely merged population; divergent ones are suspect. scopeGrouping/scopeValue = the cell type (e.g. cell_type, \"CD8+ T cells\"); splitField = the donor/batch field (sample). Adds the panel to the workbench.", input_schema: { type: "object", properties: { scopeGrouping: { type: "string" }, scopeValue: { type: "string" }, splitField: { type: "string" } }, required: ["scopeGrouping", "scopeValue", "splitField"] } },
   // ---- escape hatch: sandboxed ad-hoc computation when the primitives above can't express it ----
   { name: "compute_code", description: "ESCAPE HATCH — run a short SANDBOXED JS computation when neither update_view (config) nor compute (de/overdispersion over cell sets) can express what you need: custom signature scores, ad-hoc per-cell metrics, bespoke filters, simple correlations. Prefer the dedicated tools when they fit; reach here only for the long tail. " + CODE_API_DOC + " Declare every gene your code reads in `genes`. The result lands in the disposable rail (or set toCanvas); it carries an 'unvalidated custom code' caveat.", input_schema: { type: "object", properties: { code: { type: "string", description: "async function BODY that returns a typed result (see above)" }, genes: { type: "array", items: { type: "string" }, description: "exact HGNC symbols the code reads via api.expr" }, grouping: { type: "string", description: "optional: expose api.stats (mean/frac) for this grouping" }, title: { type: "string" }, toCanvas: { type: "boolean" } }, required: ["code"] } },
+  // ---- custom widgets (generative UI): author a bespoke interactive panel the built-ins don't provide ----
+  { name: "read_widget_contract", description: "Return the full WIDGET authoring contract — the `pagoda` API a widget uses, the data kinds it can pull, and the theming + coordination rules. Read it the first time you author a widget in a session.", input_schema: { type: "object", properties: {} } },
+  { name: "get_widget_template", description: "Return a starter widget SOURCE to adapt. kind='kitchen' (default — demonstrates every capability: read coord, setColor/setSelection, pull data, a header control, an SVG) or 'blank' (minimal).", input_schema: { type: "object", properties: { kind: { type: "string" } } } },
+  { name: "preview_widget", description: "Render a widget SOURCE in a sandbox and return {ok, error, logs, manifest, renderedText} — your TEST/DEBUG loop: call after each draft, read error/logs/renderedText and FIX until ok:true before saving. NOTE it only exercises the INITIAL render; to test interactive logic (a button, computed output, setSelection) pass `probe`: JS run after mount IN THE WIDGET'S OWN SCOPE — it can call the widget's functions and set inputs, e.g. \"document.querySelector('#g').value='CD3E'; await compute();\"; console.log to inspect.", input_schema: { type: "object", properties: { source: { type: "string", description: "the full widget source" }, probe: { type: "string", description: "optional JS run after mount to exercise interactions (can be async)" } }, required: ["source"] } },
+  { name: "save_widget", description: "Mount the finished widget as a Widget PANEL on the workbench. Call only once preview_widget returned ok:true. The widget reads/writes the same coordination space (selection/colour) as other panels and themes automatically.", input_schema: { type: "object", properties: { source: { type: "string" }, title: { type: "string" } }, required: ["source"] } },
   // ---- annotation: build a clean cell-type labeling by reconciling sources (see the Annotate workspace) ----
   { name: "run_annotation", description: "Compute an annotation SOURCE by running a cell-typing method in-browser, added as a layer to reconcile against others. method='sctype' scores each cluster against a bundled marker DB (no server). Then read get_reconciliation and compare in the Annotate workspace's Reconcile panel.", input_schema: { type: "object", properties: { method: { type: "string", enum: ["sctype"] }, base: { type: "string", description: "clustering to label (default leiden)" } }, required: ["method"] } },
   { name: "annotate", description: "Write a cell-type LABEL onto a cell set in the WORKING annotation draft (last-write-wins; the draft auto-creates and is non-destructive — clusters stay intact). A is a CELL-SET expression, same algebra as compute ({category:{grouping,value}}, {selection:true}, {intersect:[…]}, {union:[…]}, …). Use this to resolve the reconciliation — e.g. accept a cell type for a cluster, or merge/split by labeling the exact cells. The working draft becomes the default grouping and colours every panel.", input_schema: { type: "object", properties: { label: { type: "string" }, A: { type: "object", description: "the cells to label (cell-set expression)" } }, required: ["label", "A"] } },
@@ -73,6 +81,7 @@ PRINCIPLE OF RESTRAINT — always prefer the SMALLEST change that answers the qu
 - a disposable answer in the rail (compute for DE/overdispersion over any cell set, get_markers, get_composition, get_overdispersion, add_note), or add a Heatmap panel via update_view, when a new view is needed;
 - a workspace proposal (propose_workspace) only for a deliberate layout change — and it is a PROPOSAL the human confirms.
 - compute_code is the ESCAPE HATCH — sandboxed ad-hoc JS (declare the genes it reads) for the long tail only (custom signature scores, bespoke per-cell metrics/filters). Try update_view and compute FIRST; its results carry an "unvalidated" caveat.
+- CUSTOM WIDGETS (generative UI) are the UI escape hatch: when the user wants a bespoke interactive panel the built-ins don't provide (a custom chart, control, calculator, mini-tool), AUTHOR one — read_widget_contract (first time) → get_widget_template → write source → preview_widget to test (pass a 'probe' to exercise interactive logic) until ok:true → save_widget to mount it. A widget reads/writes the SAME coordination space (selection/colour) and themes automatically. Prefer the built-in panels when they fit; author a widget for the genuine long tail.
 ANNOTATION (the Annotate workspace): reconcile candidate labelings into one clean cell-type annotation. run_annotation adds a SOURCE (e.g. sctype); get_reconciliation reads how sources compare per cluster + where they differ; adopt_source sets the whole working draft to a source's labeling in one step; annotate writes a label onto a cell set in the WORKING draft (last-write-wins, non-destructive). Typical flow: run_annotation → adopt_source the best one → fix the few wrong clusters with annotate → name + document the labels with propose_label. SUGGESTING is the main way you help here: propose_label writes a proposed CAP record (clean name via the 'name' field, fullName, parent category, Cell-Ontology term, canonical markers, marker-grounded rationale) onto a working label, populating the record card for the user to review/edit. PROACTIVELY offer it — after adopt_source/annotate, suggest naming the clusters (e.g. 'want me to name and document these from their markers?') and, when asked or when clusters are still cluster-ids/vague, call propose_label per cluster grounded in each one's top markers. Advise and explain (markers + the confusion matrix) — cross-source string differences are often just vocabulary, not real conflicts. When a labeling does NOT map 1:1 to clusters (a source SPLITS a cluster, or two sources disagree at sub-cluster resolution), reconcile by INTERSECTION rather than per-cluster: annotate the exact disagreeing cells, e.g. A={intersect:[{category:{grouping:"scType",value:"CD14+ monocyte"}},{category:{grouping:"annotation",value:"NK"}}]} labels just the cells scType calls monocyte but the draft calls NK. The confusion matrix's off-diagonal counts are exactly these intersections. HIERARCHY: annotations are often multi-level. The working draft is the FINEST level; coarser levels are derived from each label's category lineage path (coarse›fine, e.g. 'Lymphoid › T cell' for leaf 'CD8 T effector'). Coarser annotation is usually easier — when asked, propose the lineage for each label (set the category field to the path) so the user gets L1/L2 rollups to colour/group by; keep it optional (blank = flat).
 The change itself is visible, so keep your prose to ONE short sentence. Never narrate state the user can already see.
 
@@ -113,6 +122,13 @@ async function execTool(app: App, name: string, input: any): Promise<string> {
     }
     case "compute": { const { ok, error } = await app.runCompute(input); return error ? `error: ${error}` : ok!; }
     case "compute_code": { const { ok, error } = await app.runComputeCode(input); return error ? `error: ${error}` : ok!; }
+    case "read_widget_contract": return WIDGET_API_DOC;
+    case "get_widget_template": return getWidgetTemplate(input?.kind);
+    case "preview_widget": {
+      const r = await previewWidget(String(input?.source || ""), app.widgetHost(), 4000, input?.probe ? String(input.probe) : undefined);
+      return JSON.stringify({ ok: r.ok, error: r.error, logs: r.logs.slice(-8), manifest: r.manifest, renderedText: (r.text || "").slice(0, 400) });
+    }
+    case "save_widget": { const src = String(input?.source || ""); if (!src.trim()) return "save_widget: 'source' is required"; const id = app.addWidgetPanel(src, input?.title); return `mounted widget panel #${id} on the workbench`; }
     case "run_annotation": { const method = String(input.method || "sctype").toLowerCase(); if (method !== "sctype") return `unknown method "${method}" — available: sctype`; const { ok, error } = await app.runScType({ base: input.base }); return error ? `error: ${error}` : ok!; }
     case "annotate": {
       if (!input.label) return "annotate: 'label' is required"; if (!input.A) return "annotate: 'A' (a cell set) is required";
@@ -163,9 +179,9 @@ export async function runLive(app: App, userText: string, abort: AbortSignal): P
   ag.renderThread(); app.setPip("working", "thinking");
   const sys = await systemPrompt(app);
 
-  for (let turn = 0; turn < 8; turn++) {
+  for (let turn = 0; turn < 12; turn++) {   // headroom for multi-step flows like widget authoring (template → preview → fix → save)
     if (abort.aborted) break;
-    const res = await fetch(PROXY, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ system: sys, messages, tools: TOOLS, model: "claude-opus-4-8", max_tokens: 4096 }), signal: abort });
+    const res = await fetch(PROXY, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ system: sys, messages, tools: TOOLS, model: "claude-opus-4-8", max_tokens: 8192 }), signal: abort });
     if (!res.ok || !res.body) { app.thread.entries.push({ role: "agent", text: "(agent unreachable — using local fallback)" }); ag.renderThread(); throw new Error("live unreachable"); }
     const assistant: any[] = []; let curText = ""; let curTool: any = null; let curJson = ""; let textEntry: any = null; let stop = "";
     const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = "";
@@ -238,6 +254,10 @@ function toolLabel(tu: any): string {
   if (tu.name === "rename_label") return `rename · ${i.from}→${i.to}`;
   if (tu.name === "propose_label") return `suggest · ${i.name || i.label}`;
   if (tu.name === "propose_labels") return `suggest · ${(i.proposals || []).length} labels`;
+  if (tu.name === "read_widget_contract") return "widget contract";
+  if (tu.name === "get_widget_template") return "widget template";
+  if (tu.name === "preview_widget") return "preview widget";
+  if (tu.name === "save_widget") return `widget · ${i.title || "custom"}`;
   if (tu.name === "get_reconciliation") return "reconciliation";
   if (tu.name === "concordance_panel") return `concordance · ${i.scopeValue}`;
   if (tu.name === "propose_workspace") return `propose workspace · ${i.name}`;
