@@ -11,6 +11,8 @@ import { validateComputeResult, runInWorker } from "../agent/codeapi.ts";
 import { setCodeValues, setConfValues, invalidateColor } from "../render/colors.ts";
 import { setThemeColors } from "../render/theme.ts";
 import { installOverflow } from "./overflow.ts";
+import { makeWidgetHost } from "../widget/apphost.ts";
+import type { WidgetHost } from "../widget/runtime.ts";
 import { paletteNames, normalizePalette } from "../render/palettes.ts";
 import { AnnotationLayer, seedLayer, setLabel, reconcile, compact, hierarchyDepth, rollupToLevel } from "../anno/model.ts";
 import { PBMC_MARKERS, MarkerDB } from "../anno/markerdb.ts";
@@ -38,6 +40,8 @@ export class App {
   embeddings: EmbeddingView[] = [];
   compReactors: CompReactor[] = [];   // vocabulary-bound panels that highlight a category on a coord hint
   coordSubs: (() => void)[] = [];     // managed coord subscriptions (panels' onCoord) — unsubscribed each fullRender
+  teardowns: (() => void)[] = [];     // per-panel cleanup (e.g. a widget iframe + its host subscription) — run each fullRender
+  themeSubs = new Set<() => void>();  // theme-change listeners (widgets re-theme their iframes); fired in applyTheme
   private lastSel: any;               // last selection dispatched to reactors — skip re-dispatch on colour-only repaints
   private reactorsStale = true;       // set when reactors are rebuilt (fullRender) → force one dispatch
   geneHoverSinks: ((sym: string | null) => void)[] = [];   // panels that highlight a gene's row on a coord geneHint
@@ -123,6 +127,12 @@ export class App {
   }
 
   $(id: string) { return document.getElementById(id)!; }
+
+  // Theme-change subscription for widget iframes (re-push CSS vars on a light/dark flip). Returns an unsubscribe.
+  onTheme(cb: () => void): () => void { this.themeSubs.add(cb); return () => this.themeSubs.delete(cb); }
+  // The shared WidgetHost bridge (coord/ctx/theme) — built once, reused by every widget panel + the preview tool.
+  private _widgetHost?: WidgetHost;
+  widgetHost(): WidgetHost { return (this._widgetHost ||= makeWidgetHost(this)); }
 
   // ---------- workbench ----------
   hooks(): PanelHooks {
@@ -1076,6 +1086,7 @@ export class App {
     try { localStorage.setItem("p2-theme", theme); } catch {}
     const b = this.$("themeBtn"); if (b) { b.textContent = light ? "☀" : "☾"; b.title = light ? "switch to dark theme" : "switch to light theme"; }
     if (this.embeddings.length) this.repaint();   // recolour the embeddings with the theme's dim colour
+    this.themeSubs.forEach((f) => { try { f(); } catch { /* a widget host re-push must not break the toggle */ } });   // re-theme widget iframes
   }
   // The global FOCUS chip in the top bar — the inter-panel "restricted to this subpopulation" indicator AND
   // its release control (clicking "show all" clears focus everywhere). Visible whenever a focus is set.
