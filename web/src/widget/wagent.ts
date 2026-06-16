@@ -63,12 +63,17 @@ export function createWidgetAgent(opts: { host: WidgetHost; onSave: (source: str
     messages.push({ role: "user", content: text });
     opts.onEvent({ type: "user", text });
     try {
+      let emptyRetries = 0;
       for (let turn = 0; turn < 12; turn++) {
         if (abort?.aborted) break;
         const res = await fetch(PROXY, { method: "POST", signal: abort, headers: { "content-type": "application/json" },
           body: JSON.stringify({ system: SYSTEM, messages, tools: TOOLS, model: "claude-opus-4-8", max_tokens: 8192 }) });
         if (!res.ok || !res.body) { opts.onEvent({ type: "error", text: `agent unreachable (${res.status})` }); return; }
         const { assistant, stop, finalText } = await streamTurn(res.body, opts.onEvent);
+        // A 200 with NO content (no tool_use, no text) is a transient API hiccup — retry the turn instead of silently
+        // ending (which looks like a clean finish and abandons an in-progress widget). Don't append the empty turn.
+        if (!assistant.length && !(finalText || "").trim()) { if (emptyRetries++ < 2) { turn--; continue; } opts.onEvent({ type: "error", text: "empty response from the model (after retries)" }); return; }
+        emptyRetries = 0;
         messages.push({ role: "assistant", content: assistant.length ? assistant : [{ type: "text", text: finalText || "" }] });
         const toolUses = assistant.filter((b: any) => b.type === "tool_use");
         if (!toolUses.length || stop !== "tool_use") { opts.onEvent({ type: "done", text: finalText }); return; }

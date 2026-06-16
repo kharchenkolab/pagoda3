@@ -202,6 +202,7 @@ export async function runLive(app: App, userText: string, abort: AbortSignal): P
   ag.renderThread(); app.setPip("working", "thinking");
   const sys = await systemPrompt(app);
 
+  let emptyRetries = 0;
   for (let turn = 0; turn < 12; turn++) {   // headroom for multi-step flows like widget authoring (template → preview → fix → save)
     if (abort.aborted) break;
     const res = await fetch(PROXY, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ system: sys, messages, tools: TOOLS, model: "claude-opus-4-8", max_tokens: 8192 }), signal: abort });
@@ -221,6 +222,10 @@ export async function runLive(app: App, userText: string, abort: AbortSignal): P
         else if (ev.type === "message_delta") { if (ev.delta?.stop_reason) stop = ev.delta.stop_reason; }
       }
     }
+    // A 200 with no content (no tool_use, no text) is a transient API hiccup — retry the turn rather than silently
+    // ending mid-task (which abandons an in-progress action and looks like a clean finish).
+    if (!assistant.length && !(curText || "").trim()) { if (emptyRetries++ < 2) { turn--; continue; } break; }
+    emptyRetries = 0;
     messages.push({ role: "assistant", content: assistant.length ? assistant : [{ type: "text", text: curText || "" }] });
     const toolUses = assistant.filter((b) => b.type === "tool_use");
     if (!toolUses.length || stop !== "tool_use") break;
