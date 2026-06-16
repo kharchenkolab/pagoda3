@@ -7,6 +7,7 @@ import { catColor } from "../data/view.ts";
 import type { EntityRef } from "../data/coord.ts";
 import { reconcile, crosstab, ReconRow, AnnotationLayer, CapRecord, labelChain } from "../anno/model.ts";
 import { olsLookup } from "../anno/ols.ts";
+import { mountWidget, WidgetHost, WidgetHandle } from "../widget/runtime.ts";
 
 // Per-panel view spec — the agent's deep-control surface (configure_panel). Each property overrides the
 // GLOBAL coord default for THIS panel only; the shared bus (selection/hint) stays global. See docs/deep-view-control.md.
@@ -28,6 +29,8 @@ export interface Panel {
   view?: PanelView;
   split?: { levels: string[]; genes: string[]; means: number[][] };   // gene × donor concordance matrix (SplitHeat)
   rows?: { gene?: number; symbol: string; lfc?: number; padj?: number; score?: number; meanA?: number; meanB?: number }[];
+  source?: string;                    // Widget panel: the author-written widget source (runs in a sandboxed iframe)
+  controls?: { id: string; label: string }[];   // Widget panel: header controls the widget declared (folded into ⋯)
 }
 
 export interface PanelHooks {
@@ -51,6 +54,8 @@ export interface PanelHooks {
   proposeRecord: (layerName: string, label: string) => void;  // ask the agent to suggest a CAP record for one label
   proposeAllNames: (layerName: string) => void;               // ask the agent to name+explain all working clusters
   splitLabel: (label: string) => void;                        // isolate a working label's cells to split it (brush a subset)
+  widgetHost: () => WidgetHost;                                // the coord/ctx/theme bridge a Widget panel's iframe talks to
+  onTeardown: (fn: () => void) => void;                        // register cleanup (e.g. destroy a widget iframe) run on the next fullRender
 }
 
 // A vocabulary-bound panel that reacts to the two tiers, distinctly: `setSelect` is the committed selection
@@ -60,7 +65,7 @@ export interface CompReactor { grouping: string; setSelect: (values: Set<string>
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
 
-export interface BuiltBody { el: HTMLElement; afterAttach?: () => void; headerControls?: HTMLElement; }   // a control the body puts in the panel header (e.g. a gene filter)
+export interface BuiltBody { el: HTMLElement; afterAttach?: () => void; headerControls?: HTMLElement; widget?: WidgetHandle; }   // headerControls: a control the body puts in the panel header (e.g. a gene filter). widget: a mounted widget iframe (panelEl wires its folding toolbar controls).
 
 export async function bodyFor(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltBody> {
   switch (p.type) {
@@ -76,9 +81,25 @@ export async function bodyFor(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bu
     case "AnnoRecord": return annoRecordBody(p, ctx, hooks);
     case "SplitHeat": return splitHeatBody(p);
     case "GeneList": return geneListBody(p, hooks);
+    case "Widget": return widgetBody(p, ctx, hooks);
     case "Note": { const d = mk("div", "notebody"); d.innerHTML = p.text || ""; d.style.cssText = "font-size:12.5px;line-height:1.5"; return { el: d }; }
     default: return { el: mk("div", undefined, p.type) };
   }
+}
+
+// A Widget panel hosts an author-written widget in a sandboxed iframe, bridged to coord/ctx/theme via the WidgetHost.
+// Mount is DEFERRED to afterAttach (like the coord/reactor registrations) so a superseded fullRender build never
+// leaves an orphan iframe + host subscription. panelEl reads built.widget to wire the folding toolbar controls.
+function widgetBody(p: Panel, ctx: Ctx, hooks: PanelHooks): BuiltBody {
+  const wrap = mk("div"); wrap.style.cssText = "position:absolute;inset:0;overflow:auto;background:transparent";
+  const built: BuiltBody = { el: wrap };
+  built.afterAttach = () => {
+    const handle = mountWidget(wrap, p.source || "pagoda.ready({title:'(empty widget)'});", hooks.widgetHost());
+    handle.iframe.style.height = "100%";
+    hooks.onTeardown(() => handle.destroy());   // torn down (iframe + host subscription) on the next fullRender
+    built.widget = handle;
+  };
+  return built;
 }
 
 function embeddingBody(p: Panel, ctx: Ctx, hooks: PanelHooks): BuiltBody {

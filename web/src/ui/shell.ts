@@ -157,6 +157,8 @@ export class App {
       proposeRecord: (layerName, label) => { this.proposeRecord(label, layerName); },
       proposeAllNames: (layerName) => { this.proposeAllNames(layerName); },
       splitLabel: (label) => { this.splitLabel(label); },
+      widgetHost: () => this.widgetHost(),
+      onTeardown: (fn) => { this.teardowns.push(fn); },   // run + cleared each fullRender (like coordSubs) — no iframe leak
     };
   }
 
@@ -186,6 +188,7 @@ export class App {
     for (const p of this.canvas) built.push(await this.panelEl(p));   // build off-DOM first; old panels stay visible meanwhile
     if (token !== this.renderToken) return;   // superseded by a newer fullRender → it owns pointerEvents; discard this build
     this.coordSubs.forEach((u) => u()); this.coordSubs = [];   // tear down old panels' coord subscriptions before rebuilding
+    this.teardowns.forEach((f) => { try { f(); } catch { /* a widget iframe destroy must not abort the render */ } }); this.teardowns = [];   // destroy old widget iframes + their host subscriptions
     this.embeddings = []; this.compReactors = []; this.geneHoverSinks = []; this.reactorsStale = true;   // new reactors → repaint must dispatch the selection to them once
     wb.innerHTML = "";
     const afters: (() => void)[] = [];
@@ -206,7 +209,7 @@ export class App {
   async panelEl(p: Panel): Promise<{ dom: HTMLElement; afterAttach?: () => void }> {
     // a lone panel fills the canvas (no point keeping it in one half of a 2-col grid)
     const isFull = p.full || this.canvas.length === 1;
-    const d = mk("div", "panel" + (isFull ? " full" : "") + (p.type === "Embedding" ? " embpanel" : ""));
+    const d = mk("div", "panel" + (isFull ? " full" : "") + (p.type === "Embedding" ? " embpanel" : "") + (p.type === "Widget" ? " wpanel" : ""));
     d.dataset.pid = String(p.id);
     const h = mk("div", "ph");
     const grip = mk("span", "grip", "⠿"); h.appendChild(grip);
@@ -296,7 +299,26 @@ export class App {
       const col = d.dataset.col === "1" ? 1 : d.dataset.col === "0" ? 0 : undefined;                          // join the target's column
       this.reorderTo((this as any)._drag, p.id, after, col); });
     d.oncontextmenu = (e) => { e.preventDefault(); this.openCtx(e.clientX, e.clientY, p); };
-    return { dom: d, afterAttach: () => { built.afterAttach?.(); installOverflow(h, sp); } };   // fold header controls into a ⋯ menu when the panel is too narrow
+    return { dom: d, afterAttach: () => {
+      built.afterAttach?.();
+      if (p.type === "Widget" && built.widget) this.wireWidgetControls(p, h, sp, span, built.widget);   // the widget's declared toolbar controls (fold like the rest)
+      installOverflow(h, sp);
+    } };   // fold header controls into a ⋯ menu when the panel is too narrow
+  }
+
+  // Render a Widget panel's declared header controls as standard mini buttons (before the maximize button so they
+  // fold from the end like every panel's controls). Controls known from a prior render appear synchronously (managed
+  // by installOverflow); ones that arrive later (the iframe's first manifest) are added via _ovfAdd so they fold too.
+  private wireWidgetControls(p: Panel, h: HTMLElement, sp: HTMLElement, beforeEl: HTMLElement, handle: { sendControl: (id: string) => void; onManifest: (cb: (m: any) => void) => void }) {
+    const rendered = new Set<string>();
+    const addBtn = (c: { id: string; label: string }, late: boolean) => {
+      if (!c || !c.id || rendered.has(c.id)) return; rendered.add(c.id);
+      const btn = Object.assign(mk("button", "mini", c.label), { title: c.label }) as HTMLButtonElement;
+      btn.dataset.wcid = c.id; btn.onclick = () => handle.sendControl(c.id);
+      if (late) (h as any)._ovfAdd?.(btn, beforeEl); else sp.insertBefore(btn, beforeEl);
+    };
+    (p.controls || []).forEach((c) => addBtn(c, false));   // before installOverflow → managed normally
+    handle.onManifest((m) => { p.controls = (m?.controls || []); p.controls.forEach((c) => addBtn(c, true)); });   // first/updated manifest
   }
 
   // Place the canvas into a two-column grid. Default is row-major (panel i → column i%2); a panel's `col` pins it
@@ -912,7 +934,7 @@ export class App {
     return cv;
   }
 
-  newPanel(p: Partial<Panel>): Panel { return { id: ++this.uid, type: p.type!, title: p.title || p.type!, cap: p.cap, full: p.full, col: p.col, bind: p.bind, text: p.text, q: p.q, group: p.group, gene: p.gene, aLabel: p.aLabel, bLabel: p.bLabel, heatMode: p.heatMode, genes: p.genes, view: p.view, split: p.split, rows: p.rows }; }
+  newPanel(p: Partial<Panel>): Panel { return { id: ++this.uid, type: p.type!, title: p.title || p.type!, cap: p.cap, full: p.full, col: p.col, bind: p.bind, text: p.text, q: p.q, group: p.group, gene: p.gene, aLabel: p.aLabel, bLabel: p.bLabel, heatMode: p.heatMode, genes: p.genes, view: p.view, split: p.split, rows: p.rows, source: p.source, controls: p.controls }; }
 
   // Add a configured panel to the canvas — the composition atom (the agent's add_panel). Additive and
   // checkpointed (so it's non-disorienting and reversible); returns the new id so it can be configure_panel'd.
@@ -978,7 +1000,13 @@ export class App {
     if (user) { this.toast("Switched to " + name, "A workspace is a named, reversible layout — your previous one is a step back in History."); this.checkpoint("workspace → " + name, "Deliberate workspace switch."); }
   }
 
-  captureLayout(): Partial<Panel>[] { return this.canvas.map((p) => ({ type: p.type, title: p.title, cap: p.cap, full: p.full, col: p.col, bind: p.bind, group: p.group, gene: p.gene, heatMode: p.heatMode, genes: p.genes, view: p.view ? JSON.parse(JSON.stringify(p.view)) : undefined })); }
+  captureLayout(): Partial<Panel>[] { return this.canvas.map((p) => ({ type: p.type, title: p.title, cap: p.cap, full: p.full, col: p.col, bind: p.bind, group: p.group, gene: p.gene, heatMode: p.heatMode, genes: p.genes, view: p.view ? JSON.parse(JSON.stringify(p.view)) : undefined, source: p.source, controls: p.controls ? JSON.parse(JSON.stringify(p.controls)) : undefined })); }
+
+  // Add an author-written widget as a Widget panel on the workbench. Used by the agent's save_widget tool and the
+  // custom-widget library menu. The iframe mounts via widgetBody; controls (if known) render in the header.
+  addWidgetPanel(source: string, title?: string, controls?: { id: string; label: string }[]): number {
+    return this.addPanel({ type: "Widget", title: title || "Widget", source, controls, bind: "widget:custom" });
+  }
   startSaveWS() {
     const t = this.$("wstabs"); const inp = document.createElement("input"); inp.className = "wsinput"; inp.placeholder = "name workspace…"; t.appendChild(inp); inp.focus();
     let done = false; const commit = (ok: boolean) => { if (done) return; done = true; const name = inp.value.trim(); if (ok && name && !this.WS[name]) { this.WS[name] = { colorBy: this.coord.state.colorBy, panels: this.captureLayout() }; this.wsOrder.push(name); this.currentWS = name; this.renderWS(); this.checkpoint("save workspace · " + name, "You saved your current layout as a named workspace."); this.toast("Saved workspace “" + name + "”", null); } else this.renderWS(); };
