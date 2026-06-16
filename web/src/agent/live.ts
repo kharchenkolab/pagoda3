@@ -6,6 +6,7 @@ import { CODE_API_DOC } from "./codeapi.ts";
 import { WIDGET_API_DOC } from "../widget/contract.ts";
 import { getWidgetTemplate } from "../widget/template.ts";
 import { previewWidget } from "../widget/runtime.ts";
+import { readonlyHost } from "../widget/apphost.ts";
 import { listRecipes, getRecipe } from "../widget/recipes.ts";
 
 const PROXY = "/api/agent/stream";
@@ -134,7 +135,7 @@ async function execTool(app: App, name: string, input: any): Promise<string> {
     case "fetch_url": return await fetchUrlText(String(input?.url || ""));
     case "inspect_widget": return await app.inspectWidget(input?.panelId != null ? Number(input.panelId) : undefined);
     case "preview_widget": {
-      const r = await previewWidget(String(input?.source || ""), app.widgetHost(), 4000, input?.probe ? String(input.probe) : undefined);
+      const r = await previewWidget(String(input?.source || ""), readonlyHost(app.widgetHost()), 4000, input?.probe ? String(input.probe) : undefined);
       return JSON.stringify({ ok: r.ok, error: r.error, logs: r.logs.slice(-8), manifest: r.manifest, renderedText: (r.text || "").slice(0, 400) });
     }
     case "save_widget": { const src = String(input?.source || ""); if (!src.trim()) return "save_widget: 'source' is required"; const id = app.addWidgetPanel(src, input?.title); return `mounted widget panel #${id} on the workbench`; }

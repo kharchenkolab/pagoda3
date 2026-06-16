@@ -37,6 +37,13 @@ export function fieldsInfo(fields: { name: string; kind: "categorical" | "numeri
   return { categorical: fields.filter((f) => f.kind === "categorical").map((f) => f.name), numeric: fields.filter((f) => f.kind === "numeric").map((f) => f.name) };
 }
 
+// A READ-ONLY wrapper for preview_widget: data/theme/coord still resolve against the real app (so a preview renders
+// with real data + the current selection), but the widget's WRITES (setSelection/setColor/updateView) are swallowed —
+// previewing/probing a widget must NOT mutate the user's live session.
+export function readonlyHost(h: WidgetHost): WidgetHost {
+  return { theme: h.theme, coord: h.coord, subscribe: h.subscribe, data: h.data, apply: () => { /* preview is side-effect-free */ } };
+}
+
 export function makeWidgetHost(app: App): WidgetHost {
   const ctx = app.ctx, coord = app.coord;
   const countOf = (r: EntityRef) => app.ctx.refToCells(r).length;
