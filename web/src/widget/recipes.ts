@@ -249,7 +249,18 @@ async function examples(id) {
 }
 `;
 
+const SNIP_LOAD_LIB = `// Load an ALLOWLISTED, host-pinned JS library at runtime — the host injects it; you never load remote code yourself.
+// After the promise resolves, the library's global is ready. Registry (grows host-side): '3dmol' -> window.$3Dmol, 'd3' -> window.d3.
+async function useLib() {
+  await pagoda.loadLib('d3');        // then use the d3 global
+  await pagoda.loadLib('3dmol');     // then use the $3Dmol global (molecular structures)
+}
+// Pair with pagoda.fetchExternal to feed the library real data (a structure file, a record, …), and use the library's
+// own documented API. If unsure of that API, fetch_url its docs at author time, then write the calls inline.
+`;
+
 export const SNIPPETS: WidgetRecipe[] = [
+  { name: "load-lib", title: "Load a host-pinned library", about: "pagoda.loadLib(name) loads an allowlisted, version-pinned JS library at runtime (the host injects it) for capabilities the snippets don't cover — a 3D viewer, a heavy chart/graph lib. Registry: '3dmol'→$3Dmol, 'd3'→d3. Use the library's own API after it resolves.", techniques: ["library", "loadLib", "3D", "viewer", "webgl", "structure", "molecule", "molstar", "3dmol", "d3", "graph", "network", "external code"], source: SNIP_LOAD_LIB, kind: "snippet" },
   { name: "ext-fetch", title: "External data fetch", about: "pagoda.fetchExternal(url,{as}) pulls ALLOWLISTED external biodata (PDB/RCSB, UniProt, Ensembl, NCBI, AlphaFold, STRING, Reactome) through the host — for fetching a structure, a protein record, gene annotations, etc. Never fetch() directly.", techniques: ["external", "fetch", "PDB", "RCSB", "UniProt", "Ensembl", "NCBI", "AlphaFold", "API", "protein", "structure", "annotation"], source: SNIP_EXT_FETCH, kind: "snippet" },
   { name: "responsive", title: "Size-aware draw / redraw", about: "onSized(el, draw): run your draw(width,height) once the container has a real size and again on resize — the antidote to a chart rendering at 0×0 before first layout (SVG or canvas). Wrap any chart's draw in this.", techniques: ["responsive", "resize", "ResizeObserver", "layout", "clientWidth", "redraw", "size", "draw"], source: SNIP_RESPONSIVE, kind: "snippet" },
   { name: "scales", title: "Scales + nice ticks", about: "scaleLinear(domain→range) and niceTicks(min,max,n) — the basis of any axis or positioned chart.", techniques: ["scale", "axis", "ticks", "linear", "log alternative"], source: SNIP_SCALES, kind: "snippet" },

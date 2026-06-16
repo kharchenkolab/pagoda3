@@ -31,6 +31,7 @@ export type HostMsg =
   | { t: "control"; id: string }                                  // a host-rendered header control was clicked
   | { t: "data"; reqId: number; ok: boolean; payload?: any; error?: string }   // reply to a requestData
   | { t: "extData"; reqId: number; ok: boolean; payload?: any; error?: string }   // reply to a fetchExternal
+  | { t: "libResult"; reqId: number; ok: boolean; source?: string; error?: string }   // reply to a loadLib (the pinned library JS source)
   | { t: "snapshot" };                                            // ask the widget to report its rendered text (preview feedback)
 
 // widget → host
@@ -42,6 +43,7 @@ export type WidgetMsg =
   | { t: "updateView"; patch: any }
   | { t: "requestData"; reqId: number; kind: string; args?: any }
   | { t: "fetchExternal"; reqId: number; url: string; as?: string }   // host-mediated, allowlisted external data fetch
+  | { t: "loadLib"; reqId: number; name: string }                 // request an allowlisted, host-pinned library
   | { t: "resize"; height: number }
   | { t: "snapshotResult"; text: string }
   | { t: "log"; level: string; args: string[] }
@@ -87,6 +89,9 @@ export const WIDGET_API_DOC =
   "CORS) from an ALLOWLIST — PDB/RCSB, UniProt, Ensembl, NCBI, AlphaFold, STRING, Reactome (e.g. " +
   "data.rcsb.org/rest/v1/core/entry/4HHB, rest.uniprot.org, rest.ensembl.org). NEVER call fetch()/XHR or load a CDN " +
   "directly — the iframe is sandboxed; route every network request through pagoda.fetchExternal (data) or the data() kinds. " +
+  "`await pagoda.loadLib(name)` loads an ALLOWLISTED, host-pinned JS LIBRARY at runtime (the host injects it; you never " +
+  "touch a CDN) — for capabilities the snippets don't cover, e.g. a 3D viewer or a heavy chart lib. Available: '3dmol' " +
+  "(then use the $3Dmol global — molecular structures) and 'd3' (the d3 global); after it resolves the global is ready. " +
   "Errors/console are forwarded to the host for debugging; an uncaught " +
   "throw shows an error state. Header `controls` you declare are rendered by the host in the standard panel chrome; " +
   "a click arrives as pagoda.on('control', id => …). Keep it self-contained — no external network/CDN.";
@@ -113,7 +118,7 @@ a{color:var(--cyan,#1f7faf)}
 // postMessage, applies theme vars, forwards console/errors, auto-resizes. A string (no app import).
 export const WIDGET_BOOTSTRAP = `
 (function(){
-  var pending={}, reqId=0, coord=null, theme=null, hint=null, listeners={coord:[],theme:[],control:[],hint:[]}, parentWin=window.parent;
+  var pending={}, reqId=0, coord=null, theme=null, hint=null, loadedLibs={}, listeners={coord:[],theme:[],control:[],hint:[]}, parentWin=window.parent;
   function post(m){ try{ parentWin.postMessage(m,'*'); }catch(e){} }
   function fire(ev,arg){ (listeners[ev]||[]).forEach(function(f){ try{ f(arg); }catch(err){ reportError(err); } }); }
   function reportError(err){ post({t:'error', message:String(err&&err.message?err.message:err), stack: err&&err.stack ? String(err.stack) : undefined }); }
@@ -137,6 +142,7 @@ export const WIDGET_BOOTSTRAP = `
     }
     else if(m.t==='data'){ var p=pending[m.reqId]; if(p){ delete pending[m.reqId]; m.ok ? p.resolve(m.payload) : p.reject(new Error(m.error||'data error')); } }
     else if(m.t==='extData'){ var pe=pending[m.reqId]; if(pe){ delete pending[m.reqId]; m.ok ? pe.resolve(m.payload) : pe.reject(new Error(m.error||'external fetch error')); } }
+    else if(m.t==='libResult'){ var pl=pending[m.reqId]; if(pl){ delete pending[m.reqId]; if(m.ok){ try{ var sc=document.createElement('script'); sc.textContent=m.source; document.head.appendChild(sc); pl.resolve(true); }catch(le){ pl.reject(le); } } else pl.reject(new Error(m.error||'loadLib error')); } }
   });
   ['log','warn','error'].forEach(function(lv){ var orig=console[lv]; console[lv]=function(){ try{ post({t:'log', level:lv, args:[].map.call(arguments, function(x){ try{return typeof x==='string'?x:JSON.stringify(x);}catch(e){return String(x);} })}); }catch(e){} try{ orig.apply(console, arguments); }catch(e){} }; });
   window.onerror=function(msg,src,ln,col,err){ reportError(err||msg); return false; };
@@ -153,6 +159,7 @@ export const WIDGET_BOOTSTRAP = `
     updateView:function(p){ post({t:'updateView', patch: p||{}}); },
     data:function(kind,args){ var id=++reqId; return new Promise(function(res,rej){ pending[id]={resolve:res,reject:rej}; post({t:'requestData', reqId:id, kind:String(kind), args:args||{}}); }); },
     fetchExternal:function(url,opts){ var id=++reqId; return new Promise(function(res,rej){ pending[id]={resolve:res,reject:rej}; post({t:'fetchExternal', reqId:id, url:String(url), as:(opts&&opts.as)||null}); }); },
+    loadLib:function(name){ name=String(name); if(loadedLibs[name]) return loadedLibs[name]; var id=++reqId; loadedLibs[name]=new Promise(function(res,rej){ pending[id]={resolve:res,reject:function(e){ delete loadedLibs[name]; rej(e); }}; post({t:'loadLib', reqId:id, name:name}); }); return loadedLibs[name]; },
     cssVar:function(name){ try{ return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }catch(e){ return ''; } }
   };
 })();

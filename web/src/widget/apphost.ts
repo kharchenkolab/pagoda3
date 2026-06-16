@@ -48,7 +48,7 @@ export function fieldsInfo(fields: { name: string; kind: "categorical" | "numeri
 // with real data + the current selection), but the widget's WRITES (setSelection/setColor/updateView) are swallowed —
 // previewing/probing a widget must NOT mutate the user's live session.
 export function readonlyHost(h: WidgetHost): WidgetHost {
-  return { theme: h.theme, coord: h.coord, hint: h.hint, subscribe: h.subscribe, data: h.data, fetchExternal: h.fetchExternal, apply: () => { /* preview is side-effect-free */ } };
+  return { theme: h.theme, coord: h.coord, hint: h.hint, subscribe: h.subscribe, data: h.data, fetchExternal: h.fetchExternal, loadLib: h.loadLib, apply: () => { /* preview is side-effect-free */ } };
 }
 
 export function makeWidgetHost(app: App): WidgetHost {
@@ -134,6 +134,11 @@ export function makeWidgetHost(app: App): WidgetHost {
       if (as === "text") return r.text();
       if (as === "arrayBuffer") return r.arrayBuffer();
       if (as === "json" || /json/.test(ct)) return r.json();
+      return r.text();
+    },
+    loadLib: async (name) => {
+      const r = await fetch("/api/lib?name=" + encodeURIComponent(String(name)));
+      if (!r.ok) throw new Error(`library "${name}" not available: ` + (await r.text()).slice(0, 120));
       return r.text();
     },
   };

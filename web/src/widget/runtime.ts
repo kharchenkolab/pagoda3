@@ -12,6 +12,7 @@ export interface WidgetHost {
   apply(msg: WidgetMsg): void;                                    // host acts on setSelection/setColor/setHint/updateView
   data(kind: string, args: any): Promise<any>;                   // resolve a pagoda.data(kind,args) request
   fetchExternal?(url: string, opts?: { as?: string }): Promise<any>;   // host-mediated allowlisted external fetch (optional)
+  loadLib?(name: string): Promise<string>;                       // returns an allowlisted, host-pinned library's JS source (optional)
 }
 
 export interface WidgetHandle {
@@ -60,6 +61,11 @@ export function mountWidget(container: HTMLElement, source: string, host: Widget
         (host.fetchExternal ? host.fetchExternal(m.url, { as: m.as }) : Promise.reject(new Error("external fetch not available in this host"))).then(
           (payload) => post({ t: "extData", reqId: m.reqId, ok: true, payload }),
           (err) => post({ t: "extData", reqId: m.reqId, ok: false, error: String(err?.message || err) }));
+        break;
+      case "loadLib":
+        (host.loadLib ? host.loadLib(m.name) : Promise.reject(new Error("loadLib not available in this host"))).then(
+          (source) => post({ t: "libResult", reqId: m.reqId, ok: true, source }),
+          (err) => post({ t: "libResult", reqId: m.reqId, ok: false, error: String(err?.message || err) }));
         break;
       case "setSelection": case "setColor": case "setHint": case "updateView": host.apply(m); break;
     }

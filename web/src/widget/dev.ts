@@ -105,6 +105,11 @@ const host: WidgetHost = {
     if (as === "json" || /json/.test(ct)) return r.json();
     return r.text();
   },
+  loadLib: async (name: string) => {
+    const r = await fetch("/api/lib?name=" + encodeURIComponent(String(name)));
+    if (!r.ok) throw new Error('library "' + name + '" not available: ' + (await r.text()).slice(0, 120));
+    return r.text();
+  },
 };
 
 // ---- UI ----

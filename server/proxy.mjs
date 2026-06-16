@@ -8,6 +8,7 @@
 //                                  relays Anthropic SSE; injects the CC system marker.
 import http from "node:http";
 import fs from "node:fs";
+import crypto from "node:crypto";
 
 const PORT = Number(process.env.PROXY_PORT || 8786);
 const OAUTH_STORE = `${process.env.HOME}/.aba/oauth.json`;
@@ -33,6 +34,15 @@ function blockedHost(h) {
 const EXT_ALLOW = ["rcsb.org", "ebi.ac.uk", "ensembl.org", "uniprot.org", "ncbi.nlm.nih.gov", "alphafold.ebi.ac.uk", "string-db.org", "reactome.org"];
 function extAllowed(host) { host = (host || "").toLowerCase(); return EXT_ALLOW.some((d) => host === d || host.endsWith("." + d)); }
 const extCache = new Map();   // tiny response cache (url -> {ct, body}) so preview/probe re-runs don't re-hit the API
+
+// LIBRARY REGISTRY for pagoda.loadLib(name): a curated, version-PINNED allowlist of JS libraries widgets may load.
+// The host fetches the pinned build once (optionally SHA-384-verified), caches it, and serves it; the widget never
+// touches a CDN itself. Adding a library = one entry here (the general extension point). global = the window symbol.
+const LIB_REGISTRY = {
+  "3dmol": { url: "https://cdn.jsdelivr.net/npm/3dmol@2.4.2/build/3Dmol-min.js", global: "$3Dmol", integrity: "sha384-zxWwO8usW1MzUHquSL3foT+Cw2ndelPQ5bNzHVYdKGiJ0vqvqQ8Y9XeKLmotffmQ" },
+  "d3": { url: "https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js", global: "d3", integrity: "sha384-CjloA8y00+1SDAUkjs099PVfnY2KmDC2BZnws9kh8D/lX1s46w6EPhpXdqMfjK6i" },
+};
+const libCache = new Map();
 function htmlToText(h) {
   return h.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<!--[\s\S]*?-->/g, " ")
     .replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
@@ -152,6 +162,25 @@ const server = http.createServer(async (req, res) => {
       res.setHeader("content-type", ct); res.setHeader("access-control-allow-origin", "*");
       return res.end(buf);
     } catch (e) { clearTimeout(to); res.statusCode = 502; return res.end("ext fetch failed: " + String(e && e.message || e)); }
+  }
+  if (url.pathname === "/api/lib" && req.method === "GET") {
+    const name = url.searchParams.get("name") || "";
+    if (!name) { res.setHeader("content-type", "application/json"); return res.end(JSON.stringify(Object.keys(LIB_REGISTRY).map((k) => ({ name: k, global: LIB_REGISTRY[k].global })))); }   // no name → list the registry
+    const lib = LIB_REGISTRY[name];
+    if (!lib) { res.statusCode = 404; return res.end("unknown library '" + name + "' (registry: " + Object.keys(LIB_REGISTRY).join(", ") + ")"); }
+    const hit = libCache.get(name);
+    if (hit) { res.setHeader("content-type", "application/javascript"); res.setHeader("access-control-allow-origin", "*"); return res.end(hit); }
+    const ac = new AbortController(); const to = setTimeout(() => ac.abort(), 20000);
+    try {
+      const up = await fetch(lib.url, { signal: ac.signal, redirect: "follow" });
+      clearTimeout(to);
+      if (!up.ok) { res.statusCode = 502; return res.end("lib upstream " + up.status); }
+      const src = Buffer.from(await up.arrayBuffer());
+      if (lib.integrity) { const h = "sha384-" + crypto.createHash("sha384").update(src).digest("base64"); if (h !== lib.integrity) { res.statusCode = 502; return res.end("integrity mismatch for " + name); } }
+      libCache.set(name, src);
+      res.setHeader("content-type", "application/javascript"); res.setHeader("access-control-allow-origin", "*");
+      return res.end(src);
+    } catch (e) { clearTimeout(to); res.statusCode = 502; return res.end("lib fetch failed: " + String(e && e.message || e)); }
   }
   res.statusCode = 404; res.end("not found");
 });
