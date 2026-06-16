@@ -78,22 +78,49 @@ export function mountWidget(container: HTMLElement, source: string, host: Widget
   };
 }
 
+// A preview-only sentinel: the probe wrapper logs this when it finishes, so previewWidget knows the (possibly async)
+// interaction is done before it snapshots.
+const PROBE_DONE = "__pg_probe_done__";
+
+// Wrap an interaction probe so it runs in the widget's OWN scope (it's concatenated into the same <script> try-block,
+// so it can call the widget's top-level functions/vars), catches its own errors, and signals completion.
+function withProbe(source: string, probe: string): string {
+  return source + `\n;(async function(){ try{ ${probe} \n}catch(__pe){ console.error("probe error: "+((__pe&&__pe.message)||__pe)); } finally{ console.log(${JSON.stringify(PROBE_DONE)}); } })();`;
+}
+
 // The agent's feedback channel: render a widget offscreen, wait for ready (or error/timeout), and report what
 // happened — ok, manifest, any error, console logs, and the rendered text. This is what the preview_widget tool returns.
-export async function previewWidget(source: string, host: WidgetHost, timeoutMs = 4000):
+// `probe` (optional) is JS run in the widget's scope after mount — it can call the widget's functions and set input
+// values to exercise interactive logic the initial render never reaches; its console output + the post-probe DOM are returned.
+export async function previewWidget(source: string, host: WidgetHost, timeoutMs = 4000, probe?: string):
     Promise<{ ok: boolean; manifest: WidgetManifest | null; error: string | null; logs: { level: string; args: string[] }[]; text: string }> {
   const off = document.createElement("div");
   off.style.cssText = "position:absolute;left:-9999px;top:0;width:480px;height:360px;visibility:hidden";
   document.body.appendChild(off);
-  const h = mountWidget(off, source, host);
+  const h = mountWidget(off, probe ? withProbe(source, probe) : source, host);
   const ready = await new Promise<boolean>((res) => {
     let done = false; const fin = (v: boolean) => { if (!done) { done = true; res(v); } };
     h.onManifest(() => fin(true));
     const poll = setInterval(() => { if (h.lastError()) { clearInterval(poll); fin(false); } }, 60);
     setTimeout(() => { clearInterval(poll); fin(!!h.manifest()); }, timeoutMs);
   });
+  // If a probe is running, wait for it to signal done (it may be async — e.g. awaiting data) before snapshotting.
+  if (ready && probe) {
+    await new Promise<void>((res) => {
+      const t0 = Date.now();
+      const poll = setInterval(() => {
+        const done = h.logs().some((l) => l.args.some((a) => a === PROBE_DONE));
+        if (done || h.lastError() || Date.now() - t0 > Math.max(2000, timeoutMs)) { clearInterval(poll); res(); }
+      }, 60);
+    });
+  }
   const text = ready ? await h.snapshot(1200) : "";
-  const out = { ok: ready && !h.lastError(), manifest: h.manifest(), error: h.lastError()?.message || null, logs: h.logs(), text };
+  // Make the failure reason actionable: a caught error wins; otherwise a no-manifest result means it timed out
+  // (the widget never called pagoda.ready()) — say so explicitly instead of returning a null error.
+  const error = h.lastError()?.message
+    || (!h.manifest() ? `widget did not call pagoda.ready() within ${timeoutMs}ms (it timed out — call pagoda.ready({title}) once your UI is set up, and check for a script error above it)` : null);
+  const logs = h.logs().filter((l) => !l.args.some((a) => a === PROBE_DONE));   // hide the internal sentinel
+  const out = { ok: ready && !h.lastError(), manifest: h.manifest(), error, logs, text };
   h.destroy(); off.remove();
   return out;
 }

@@ -12,7 +12,7 @@ const PROXY = "/api/agent/stream";
 const TOOLS = [
   { name: "read_widget_contract", description: "Return the full widget authoring contract (the pagoda API, data kinds, theming rules). Read it before writing if unsure.", input_schema: { type: "object", properties: {} } },
   { name: "get_widget_template", description: "Return a starter widget source to adapt. kind='kitchen' (default — demonstrates every capability) or 'blank' (minimal).", input_schema: { type: "object", properties: { kind: { type: "string" } } } },
-  { name: "preview_widget", description: "Render the widget SOURCE in a sandbox and return {ok, error, logs, manifest, renderedText}. This is your TEST/DEBUG loop — call it after each draft, read the error/logs/renderedText, and FIX until ok:true before saving.", input_schema: { type: "object", properties: { source: { type: "string", description: "the full widget source" } }, required: ["source"] } },
+  { name: "preview_widget", description: "Render the widget SOURCE in a sandbox and return {ok, error, logs, manifest, renderedText}. This is your TEST/DEBUG loop — call it after each draft, read the error/logs/renderedText, and FIX until ok:true before saving. NOTE: by default this only exercises the INITIAL render. To test interactive logic (button handlers, computed output, setSelection, etc.) pass `probe`: JS that runs after mount IN THE WIDGET'S OWN SCOPE — it can call your widget's top-level functions and set input values, e.g. \"document.querySelector('#ga').value='CD3E'; document.querySelector('#gb').value='CD19'; await compute();\". console.log inside the probe to inspect values; renderedText reflects the post-probe DOM.", input_schema: { type: "object", properties: { source: { type: "string", description: "the full widget source" }, probe: { type: "string", description: "optional JS run after mount in the widget's scope to exercise interactions; can be async (use await)" } }, required: ["source"] } },
   { name: "save_widget", description: "Mount the finished widget as the live panel. Only call once preview_widget returned ok:true.", input_schema: { type: "object", properties: { source: { type: "string" }, title: { type: "string" } }, required: ["source"] } },
 ];
 
@@ -21,7 +21,10 @@ const SYSTEM =
   "You are the widget-authoring agent for the pagoda single-cell browser. You write small, self-contained interactive " +
   "widgets that run in a sandboxed iframe and coordinate with the app through the `pagoda` global.\n\n" +
   "WORKFLOW: (1) start from get_widget_template (the kitchen sink shows every capability); (2) adapt it to the request — " +
-  "keep it minimal and focused; (3) preview_widget to TEST — read ok/error/logs/renderedText and FIX until ok:true; " +
+  "keep it minimal and focused; (3) preview_widget to TEST — read ok/error/logs/renderedText and FIX until ok:true. " +
+  "preview only renders the INITIAL state, so whenever the widget has interactive logic (a button, a computed result, " +
+  "setSelection, a search box), preview AGAIN with a `probe` that drives it (set input values, call your handler, then " +
+  "inspect renderedText/logs) — don't ship interactive logic you haven't exercised; " +
   "(4) save_widget to mount it. Never save before a clean preview.\n\n" +
   "RULES: theme only via the injected CSS variables (var(--text), --dim, --faint, --panel, --inset, --line, --cyan, " +
   "--amber, --bad, --good, --sans, --mono) — never hardcode colours. Pull only the data you need via pagoda.data(...). " +
@@ -43,7 +46,7 @@ export function createWidgetAgent(opts: { host: WidgetHost; onSave: (source: str
     if (name === "get_widget_template") return getWidgetTemplate(input?.kind);
     if (name === "preview_widget") {
       lastSource = String(input?.source || "");
-      const r = await previewWidget(lastSource, opts.host);
+      const r = await previewWidget(lastSource, opts.host, 4000, input?.probe ? String(input.probe) : undefined);
       return JSON.stringify({ ok: r.ok, error: r.error, logs: r.logs.slice(-8), manifest: r.manifest, renderedText: (r.text || "").slice(0, 400) });
     }
     if (name === "save_widget") { lastSource = String(input?.source || lastSource); opts.onSave(lastSource, input?.title); return "saved + mounted on the workbench"; }
