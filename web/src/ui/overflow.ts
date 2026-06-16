@@ -42,6 +42,14 @@ export function installOverflow(row: HTMLElement, bucket: HTMLElement): void {
   // toggling visible/hidden (the colour-map / winsor pickers appear only for numeric colourings). A ResizeObserver
   // alone misses that (the row's box is unchanged), so the now-visible control would overflow-clip instead of folding.
   (row as any)._ovfSchedule = schedule;
+  // Register a control added AFTER install (e.g. a widget's toolbar buttons, which arrive when the iframe reports
+  // its manifest) so it folds like the rest. `before` (a known control, e.g. the maximize button) positions it.
+  (row as any)._ovfAdd = (el: HTMLElement, before?: HTMLElement) => {
+    const ri = before ? controls.indexOf(before) : -1;
+    if (ri >= 0) controls.splice(ri, 0, el); else controls.push(el);
+    bucket.insertBefore(el, before && before.parentElement === bucket ? before : more);
+    schedule();
+  };
   new ResizeObserver(schedule).observe(row);
   schedule();
 }

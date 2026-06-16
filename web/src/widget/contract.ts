@@ -7,7 +7,13 @@
 // the protocol + manifest validation. The DOM side lives in runtime.ts.
 
 export interface ThemeInfo { dark: boolean; vars: Record<string, string>; }   // CSS custom-property snapshot
-export interface CoordInfo { colorBy: string; selection: any; focus: { label: string } | null; }
+// Selection is a lightweight DESCRIPTOR — never the (potentially 100k-long) cell-id array, which would be costly to
+// postMessage on every change. A widget that needs the actual ids pulls them on demand via data('selectedCells').
+export type SelectionInfo =
+  | null
+  | { kind: "cells"; count: number }
+  | { kind: "category"; grouping: string; value: string; count: number };
+export interface CoordInfo { colorBy: string; selection: SelectionInfo; focus: { label: string } | null; }
 
 // A widget's self-declared metadata. controls become standard header buttons the HOST renders (uniform ⋯/toolbar
 // policy); a click comes back as a {t:"control"} message. height lets a widget request its natural body height.
@@ -46,7 +52,7 @@ export function validateManifest(m: any): WidgetManifest {
 }
 
 // The data kinds a widget may request (host resolves them). Documented so the agent + the host stay in step.
-export const DATA_KINDS = ["n", "fields", "categories", "category", "cellsOf", "expr", "numeric"] as const;
+export const DATA_KINDS = ["n", "fields", "categories", "category", "cellsOf", "expr", "numeric", "selectedCells"] as const;
 
 // Agent-facing reference — what the widget code can do. Kept next to the protocol so they can't drift (mirrors
 // codeapi.CODE_API_DOC). Surfaced via the read_widget_contract tool + injected into the authoring prompt.
@@ -55,14 +61,17 @@ export const WIDGET_API_DOC =
   "Draw into document.body; call pagoda.ready({title, controls?, height?}) once you've set up. THEME: never hardcode " +
   "colours — use the injected CSS variables (var(--text), --dim, --faint, --panel, --inset, --line, --cyan, --amber, " +
   "--bad, --good, --sans, --mono); they flip with the app theme automatically. API: " +
-  "`pagoda.coord` (current {colorBy, selection, focus}); `pagoda.theme` ({dark, vars}); " +
+  "`pagoda.coord` (current {colorBy, selection, focus}); selection is a small descriptor — null, {kind:'cells',count} or " +
+  "{kind:'category',grouping,value,count} — NOT the cell ids (pull those with data('selectedCells') when you need them); " +
+  "`pagoda.theme` ({dark, vars}); " +
   "`pagoda.on('coord'|'theme'|'control', cb)` → subscribe (returns an unsubscribe fn); " +
   "`pagoda.setSelection({cells:[...]}|{category:{grouping,value}}|null)`, `pagoda.setColor('gene:CD3E'|'meta:cell_type'|'qc:mito')`, " +
   "`pagoda.setHint(ref)`, `pagoda.updateView(patch)` (same patch shape as the update_view tool); " +
   "`await pagoda.data(kind, args)` to pull data on demand — kinds: " +
   "'n' (cell count), 'fields' (→ {categorical:[names], numeric:[names]}), 'categories' (args:{field} → {categories,counts}), 'category' (args:{field} → {codes,categories}), " +
   "'cellsOf' (args:{field,value} → number[]), 'expr' (args:{gene} → Float32Array of log-norm expression), " +
-  "'numeric' (args:{field} → {values,min,max}). Errors/console are forwarded to the host for debugging; an uncaught " +
+  "'numeric' (args:{field} → {values,min,max}), 'selectedCells' (→ number[] of the currently selected cell indices). " +
+  "Errors/console are forwarded to the host for debugging; an uncaught " +
   "throw shows an error state. Header `controls` you declare are rendered by the host in the standard panel chrome; " +
   "a click arrives as pagoda.on('control', id => …). Keep it self-contained — no external network/CDN.";
 

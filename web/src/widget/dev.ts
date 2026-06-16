@@ -26,6 +26,15 @@ let dark = false;
 const subs: ((what: "coord" | "theme") => void)[] = [];
 const coord: CoordInfo = { colorBy: "meta:cell_type", selection: null, focus: null };
 const notify = (what: "coord" | "theme") => subs.forEach((f) => f(what));
+// mirror the app host: a selection is a small descriptor; the actual ids are kept here and served via 'selectedCells'
+let selectedIds: number[] = [];
+const cellsOfCat = (field: string, value: string) => { const codes = codesFor(field); const k = (CATS[field] || []).indexOf(value); const ids: number[] = []; for (let i = 0; i < N; i++) if (codes[i] === k) ids.push(i); return ids; };
+const toSelInfo = (sel: any): CoordInfo["selection"] => {
+  if (!sel) { selectedIds = []; return null; }
+  if (sel.category) { const { grouping, value } = sel.category; selectedIds = cellsOfCat(grouping, value); return { kind: "category", grouping, value, count: selectedIds.length }; }
+  if (sel.cells) { selectedIds = sel.cells.slice(); return { kind: "cells", count: selectedIds.length }; }
+  selectedIds = []; return null;
+};
 
 let logEl: HTMLElement;
 const log = (dir: "→" | "←", m: any) => {
@@ -43,7 +52,7 @@ const host: WidgetHost = {
   apply: (m: WidgetMsg) => {
     log("→", m);
     if (m.t === "setColor") coord.colorBy = m.handle;
-    else if (m.t === "setSelection") coord.selection = m.sel as any;
+    else if (m.t === "setSelection") coord.selection = toSelInfo(m.sel);
     if (m.t === "setColor" || m.t === "setSelection") notify("coord");   // reflect the widget's own write back (realistic)
   },
   data: async (kind, args) => {
@@ -55,6 +64,7 @@ const host: WidgetHost = {
     if (kind === "cellsOf") { const cats = CATS[args.field] || []; const k = cats.indexOf(args.value); const codes = codesFor(args.field); const ids: number[] = []; for (let i = 0; i < N; i++) if (codes[i] === k) ids.push(i); return ids; }
     if (kind === "expr") { const v = new Float32Array(N); let seed = 0; for (const ch of String(args.gene)) seed += ch.charCodeAt(0); for (let i = 0; i < N; i++) v[i] = Math.max(0, Math.sin(i * 0.13 + seed) * 2 + 1.5); return v; }
     if (kind === "numeric") { const v = new Float32Array(N); for (let i = 0; i < N; i++) v[i] = (i % 100) / 10; return { values: Array.from(v), min: 0, max: 9.9 }; }
+    if (kind === "selectedCells") return selectedIds.slice();
     throw new Error("unknown data kind: " + kind);
   },
 };
@@ -98,7 +108,7 @@ const mount = () => {
 };
 document.getElementById("run")!.onclick = mount;
 document.getElementById("theme")!.onclick = () => { dark = !dark; setPageTheme(); notify("theme"); };
-document.getElementById("extsel")!.onclick = () => { coord.selection = { category: { grouping: "cell_type", value: "NK" } }; notify("coord"); log("←", { t: "coord" }); };
+document.getElementById("extsel")!.onclick = () => { coord.selection = toSelInfo({ category: { grouping: "cell_type", value: "NK" } }); notify("coord"); log("←", { t: "coord" }); };
 document.getElementById("ctl")!.onclick = () => handle?.sendControl("reset");
 document.getElementById("check")!.onclick = async () => {
   const out = await previewWidget(srcEl.value, host);

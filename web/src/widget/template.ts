@@ -56,7 +56,7 @@ let field = 'cell_type', firstValue = null;
 
 // --- react to coordination changes (also fires once on init) ---
 pagoda.on('coord', (c) => {
-  const sel = c.selection ? (c.selection.value || (c.selection.ids ? c.selection.ids.length + ' cells' : 'set')) : 'none';
+  const sel = c.selection ? (c.selection.value || (c.selection.count != null ? c.selection.count + ' cells' : 'set')) : 'none';
   root.querySelector('#cur').textContent = 'colour: ' + c.colorBy + ' · selection: ' + sel;
   const cb = root.querySelector('#cb'); if ([...cb.options].some(o => o.value === c.colorBy)) cb.value = c.colorBy;
 });
