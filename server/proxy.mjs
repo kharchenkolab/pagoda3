@@ -19,6 +19,21 @@ const CC_MARKER = { type: "text", text: "You are a Claude agent, built on Anthro
 
 function loadStore() { try { return JSON.parse(fs.readFileSync(OAUTH_STORE, "utf8")); } catch { return null; } }
 
+// ---- web fetch (for the agent's fetch_url tool: consult an external viz/technique reference) ----
+// SSRF guard: only http(s), and refuse loopback / link-local / private-range hosts so the tool can't be steered at
+// internal services. (Literal-host checks only — adequate for a local single-user dev tool.)
+function blockedHost(h) {
+  h = (h || "").toLowerCase().replace(/^\[|\]$/g, "");
+  if (!h || h === "localhost" || h === "0.0.0.0" || h === "::1" || h === "127.0.0.1" || h.endsWith(".local") || h.endsWith(".internal")) return true;
+  if (/^127\./.test(h) || /^10\./.test(h) || /^192\.168\./.test(h) || /^169\.254\./.test(h) || /^172\.(1[6-9]|2\d|3[01])\./.test(h) || /^fe80:|^fc|^fd/.test(h)) return true;
+  return false;
+}
+function htmlToText(h) {
+  return h.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+    .replace(/&#39;|&apos;/g, "'").replace(/&quot;/g, '"').replace(/\s+/g, " ").trim();
+}
+
 async function refresh(store) {
   const r = await fetch(TOKEN_URL, {
     method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" },
@@ -97,6 +112,21 @@ const server = http.createServer(async (req, res) => {
       pump().catch(() => res.end());
     });
     return;
+  }
+  if (url.pathname === "/api/web/fetch" && req.method === "GET") {
+    let u; try { u = new URL(url.searchParams.get("url") || ""); } catch { res.statusCode = 400; return res.end("bad url"); }
+    if (!/^https?:$/.test(u.protocol)) { res.statusCode = 400; return res.end("only http(s) URLs are allowed"); }
+    if (blockedHost(u.hostname)) { res.statusCode = 403; return res.end("blocked host (loopback/private ranges are not fetchable)"); }
+    const ac = new AbortController(); const to = setTimeout(() => ac.abort(), 8000);
+    try {
+      const up = await fetch(u.href, { signal: ac.signal, redirect: "follow", headers: { "user-agent": "pagoda-widget-agent", "accept": "text/html,text/plain,*/*" } });
+      clearTimeout(to);
+      const ct = up.headers.get("content-type") || "";
+      let body = await up.text(); if (body.length > 400000) body = body.slice(0, 400000);
+      const text = (/html/i.test(ct) || /^\s*</.test(body) ? htmlToText(body) : body).slice(0, 16000);
+      res.setHeader("content-type", "text/plain; charset=utf-8");
+      return res.end(text || "(empty response)");
+    } catch (e) { clearTimeout(to); res.statusCode = 502; return res.end("fetch failed: " + String(e && e.message || e)); }
   }
   res.statusCode = 404; res.end("not found");
 });

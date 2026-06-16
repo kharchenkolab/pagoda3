@@ -6,6 +6,7 @@ import { CODE_API_DOC } from "./codeapi.ts";
 import { WIDGET_API_DOC } from "../widget/contract.ts";
 import { getWidgetTemplate } from "../widget/template.ts";
 import { previewWidget } from "../widget/runtime.ts";
+import { listRecipes, getRecipe } from "../widget/recipes.ts";
 
 const PROXY = "/api/agent/stream";
 
@@ -57,8 +58,12 @@ const TOOLS: Tool[] = [
   // ---- custom widgets (generative UI): author a bespoke interactive panel the built-ins don't provide ----
   { name: "read_widget_contract", description: "Return the full WIDGET authoring contract — the `pagoda` API a widget uses, the data kinds it can pull, and the theming + coordination rules. Read it the first time you author a widget in a session.", input_schema: { type: "object", properties: {} } },
   { name: "get_widget_template", description: "Return a starter widget SOURCE to adapt. kind='kitchen' (default — demonstrates every capability: read coord, setColor/setSelection, pull data, a header control, an SVG) or 'blank' (minimal).", input_schema: { type: "object", properties: { kind: { type: "string" } } } },
+  { name: "list_widget_recipes", description: "List the built-in WIDGET RECIPES — complete, themed, data-bound viz widgets (ranked bars, histogram+brush, canvas scatter, expression heatmap, donut, selection-breakdown). For anything chart/viz-shaped, START here: pick the closest recipe, get it, and adapt — far more reliable than writing a chart from scratch.", input_schema: { type: "object", properties: {} } },
+  { name: "get_widget_recipe", description: "Return a recipe's full adaptable SOURCE (from list_widget_recipes) — a working, self-contained, themed widget you then tweak (swap the field/gene, restyle, combine techniques) and preview_widget before saving.", input_schema: { type: "object", properties: { name: { type: "string", description: "recipe name, e.g. 'scatter'" } }, required: ["name"] } },
+  { name: "fetch_url", description: "Fetch the TEXT of a web page (server-side, so no CORS) to consult an external viz/data technique or doc when the recipes don't cover it — e.g. a charting-pattern or algorithm reference. Returns truncated text. The widget itself must stay SELF-CONTAINED (no remote code/CDN at runtime); use this only to learn a technique, then write the code inline.", input_schema: { type: "object", properties: { url: { type: "string", description: "an https:// page URL" } }, required: ["url"] } },
   { name: "preview_widget", description: "Render a widget SOURCE in a sandbox and return {ok, error, logs, manifest, renderedText} — your TEST/DEBUG loop: call after each draft, read error/logs/renderedText and FIX until ok:true before saving. NOTE it only exercises the INITIAL render; to test interactive logic (a button, computed output, setSelection) pass `probe`: JS run after mount IN THE WIDGET'S OWN SCOPE — it can call the widget's functions and set inputs, e.g. \"document.querySelector('#g').value='CD3E'; await compute();\"; console.log to inspect.", input_schema: { type: "object", properties: { source: { type: "string", description: "the full widget source" }, probe: { type: "string", description: "optional JS run after mount to exercise interactions (can be async)" } }, required: ["source"] } },
   { name: "save_widget", description: "Mount the finished widget as a Widget PANEL on the workbench. Call only once preview_widget returned ok:true. The widget reads/writes the same coordination space (selection/colour) as other panels and themes automatically.", input_schema: { type: "object", properties: { source: { type: "string" }, title: { type: "string" } }, required: ["source"] } },
+  { name: "inspect_widget", description: "CHECK A WIDGET'S LIVE USE after it's mounted — returns its current rendered text, recent console logs, any runtime error, and manifest, captured from the actual running panel (with real data + the user's current selection). Use it to confirm a widget you saved is actually working, or to debug one the user says is misbehaving, then fix it (re-author + save_widget). Omit panelId if there's only one widget; otherwise pass it (LAYOUT lists Widget panel ids).", input_schema: { type: "object", properties: { panelId: { type: "number" } } } },
   // ---- annotation: build a clean cell-type labeling by reconciling sources (see the Annotate workspace) ----
   { name: "run_annotation", description: "Compute an annotation SOURCE by running a cell-typing method in-browser, added as a layer to reconcile against others. method='sctype' scores each cluster against a bundled marker DB (no server). Then read get_reconciliation and compare in the Annotate workspace's Reconcile panel.", input_schema: { type: "object", properties: { method: { type: "string", enum: ["sctype"] }, base: { type: "string", description: "clustering to label (default leiden)" } }, required: ["method"] } },
   { name: "annotate", description: "Write a cell-type LABEL onto a cell set in the WORKING annotation draft (last-write-wins; the draft auto-creates and is non-destructive — clusters stay intact). A is a CELL-SET expression, same algebra as compute ({category:{grouping,value}}, {selection:true}, {intersect:[…]}, {union:[…]}, …). Use this to resolve the reconciliation — e.g. accept a cell type for a cluster, or merge/split by labeling the exact cells. The working draft becomes the default grouping and colours every panel.", input_schema: { type: "object", properties: { label: { type: "string" }, A: { type: "object", description: "the cells to label (cell-set expression)" } }, required: ["label", "A"] } },
@@ -81,7 +86,7 @@ PRINCIPLE OF RESTRAINT — always prefer the SMALLEST change that answers the qu
 - a disposable answer in the rail (compute for DE/overdispersion over any cell set, get_markers, get_composition, get_overdispersion, add_note), or add a Heatmap panel via update_view, when a new view is needed;
 - a workspace proposal (propose_workspace) only for a deliberate layout change — and it is a PROPOSAL the human confirms.
 - compute_code is the ESCAPE HATCH — sandboxed ad-hoc JS (declare the genes it reads) for the long tail only (custom signature scores, bespoke per-cell metrics/filters). Try update_view and compute FIRST; its results carry an "unvalidated" caveat.
-- CUSTOM WIDGETS (generative UI) are the UI escape hatch: when the user wants a bespoke interactive panel the built-ins don't provide (a custom chart, control, calculator, mini-tool), AUTHOR one — read_widget_contract (first time) → get_widget_template → write source → preview_widget to test (pass a 'probe' to exercise interactive logic) until ok:true → save_widget to mount it. A widget reads/writes the SAME coordination space (selection/colour) and themes automatically. Prefer the built-in panels when they fit; author a widget for the genuine long tail.
+- CUSTOM WIDGETS (generative UI) are the UI escape hatch: when the user wants a bespoke interactive panel the built-ins don't provide (a custom chart, control, calculator, mini-tool), AUTHOR one. For anything CHART/VIZ-shaped, START from a RECIPE: list_widget_recipes → get_widget_recipe (a complete, themed, data-bound widget — bars, histogram+brush, canvas scatter, expression heatmap, donut, selection-breakdown) → adapt it; otherwise get_widget_template (kitchen sink) or read_widget_contract for the full API. Then preview_widget to test (pass a 'probe' to exercise interactive logic — and self-test computations) until ok:true → save_widget to mount. After saving (or when the user says a widget misbehaves), inspect_widget to CHECK its live use — its rendered text/logs/errors against real data + the current selection — and fix if needed. For a technique the recipes don't cover, fetch_url can pull an external reference, but the widget itself stays self-contained (no CDN). A widget reads/writes the SAME coordination space (selection/colour) and themes automatically. Prefer built-in panels when they fit; author a widget for the genuine long tail.
 ANNOTATION (the Annotate workspace): reconcile candidate labelings into one clean cell-type annotation. run_annotation adds a SOURCE (e.g. sctype); get_reconciliation reads how sources compare per cluster + where they differ; adopt_source sets the whole working draft to a source's labeling in one step; annotate writes a label onto a cell set in the WORKING draft (last-write-wins, non-destructive). Typical flow: run_annotation → adopt_source the best one → fix the few wrong clusters with annotate → name + document the labels with propose_label. SUGGESTING is the main way you help here: propose_label writes a proposed CAP record (clean name via the 'name' field, fullName, parent category, Cell-Ontology term, canonical markers, marker-grounded rationale) onto a working label, populating the record card for the user to review/edit. PROACTIVELY offer it — after adopt_source/annotate, suggest naming the clusters (e.g. 'want me to name and document these from their markers?') and, when asked or when clusters are still cluster-ids/vague, call propose_label per cluster grounded in each one's top markers. Advise and explain (markers + the confusion matrix) — cross-source string differences are often just vocabulary, not real conflicts. When a labeling does NOT map 1:1 to clusters (a source SPLITS a cluster, or two sources disagree at sub-cluster resolution), reconcile by INTERSECTION rather than per-cluster: annotate the exact disagreeing cells, e.g. A={intersect:[{category:{grouping:"scType",value:"CD14+ monocyte"}},{category:{grouping:"annotation",value:"NK"}}]} labels just the cells scType calls monocyte but the draft calls NK. The confusion matrix's off-diagonal counts are exactly these intersections. HIERARCHY: annotations are often multi-level. The working draft is the FINEST level; coarser levels are derived from each label's category lineage path (coarse›fine, e.g. 'Lymphoid › T cell' for leaf 'CD8 T effector'). Coarser annotation is usually easier — when asked, propose the lineage for each label (set the category field to the path) so the user gets L1/L2 rollups to colour/group by; keep it optional (blank = flat).
 The change itself is visible, so keep your prose to ONE short sentence. Never narrate state the user can already see.
 
@@ -124,6 +129,10 @@ async function execTool(app: App, name: string, input: any): Promise<string> {
     case "compute_code": { const { ok, error } = await app.runComputeCode(input); return error ? `error: ${error}` : ok!; }
     case "read_widget_contract": return WIDGET_API_DOC;
     case "get_widget_template": return getWidgetTemplate(input?.kind);
+    case "list_widget_recipes": return JSON.stringify(listRecipes());
+    case "get_widget_recipe": { const src = getRecipe(String(input?.name || "")); return src || `no recipe "${input?.name}" — call list_widget_recipes for names`; }
+    case "fetch_url": return await fetchUrlText(String(input?.url || ""));
+    case "inspect_widget": return await app.inspectWidget(input?.panelId != null ? Number(input.panelId) : undefined);
     case "preview_widget": {
       const r = await previewWidget(String(input?.source || ""), app.widgetHost(), 4000, input?.probe ? String(input.probe) : undefined);
       return JSON.stringify({ ok: r.ok, error: r.error, logs: r.logs.slice(-8), manifest: r.manifest, renderedText: (r.text || "").slice(0, 400) });
@@ -163,6 +172,17 @@ async function execTool(app: App, name: string, input: any): Promise<string> {
     }
     default: return `unknown tool ${name}`;
   }
+}
+
+// Fetch a web page's text via the proxy (server-side → no CORS). The proxy applies SSRF guards + strips HTML +
+// truncates; here we just validate the scheme and relay. For LEARNING a technique only — widgets stay self-contained.
+async function fetchUrlText(url: string): Promise<string> {
+  if (!/^https?:\/\//i.test(url)) return "fetch_url: provide an http(s):// URL";
+  try {
+    const r = await fetch("/api/web/fetch?url=" + encodeURIComponent(url));
+    const t = await r.text();
+    return r.ok ? t : "fetch_url error (" + r.status + "): " + t.slice(0, 200);
+  } catch (e) { return "fetch_url failed: " + String((e as any)?.message || e); }
 }
 
 // ---- the streaming tool-use loop ----
@@ -256,8 +276,12 @@ function toolLabel(tu: any): string {
   if (tu.name === "propose_labels") return `suggest · ${(i.proposals || []).length} labels`;
   if (tu.name === "read_widget_contract") return "widget contract";
   if (tu.name === "get_widget_template") return "widget template";
+  if (tu.name === "list_widget_recipes") return "widget recipes";
+  if (tu.name === "get_widget_recipe") return `recipe · ${i.name || ""}`;
+  if (tu.name === "fetch_url") return "fetch web";
   if (tu.name === "preview_widget") return "preview widget";
   if (tu.name === "save_widget") return `widget · ${i.title || "custom"}`;
+  if (tu.name === "inspect_widget") return "inspect widget";
   if (tu.name === "get_reconciliation") return "reconciliation";
   if (tu.name === "concordance_panel") return `concordance · ${i.scopeValue}`;
   if (tu.name === "propose_workspace") return `propose workspace · ${i.name}`;

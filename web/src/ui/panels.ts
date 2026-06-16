@@ -56,6 +56,7 @@ export interface PanelHooks {
   splitLabel: (label: string) => void;                        // isolate a working label's cells to split it (brush a subset)
   widgetHost: () => WidgetHost;                                // the coord/ctx/theme bridge a Widget panel's iframe talks to
   onTeardown: (fn: () => void) => void;                        // register cleanup (e.g. destroy a widget iframe) run on the next fullRender
+  registerWidget: (panelId: number, handle: WidgetHandle) => void;   // expose a mounted widget so inspect_widget can read its live state
 }
 
 // A vocabulary-bound panel that reacts to the two tiers, distinctly: `setSelect` is the committed selection
@@ -97,6 +98,7 @@ function widgetBody(p: Panel, ctx: Ctx, hooks: PanelHooks): BuiltBody {
     const handle = mountWidget(wrap, p.source || "pagoda.ready({title:'(empty widget)'});", hooks.widgetHost());
     handle.iframe.style.height = "100%";
     hooks.onTeardown(() => handle.destroy());   // torn down (iframe + host subscription) on the next fullRender
+    hooks.registerWidget(p.id, handle);         // discoverable by inspect_widget
     built.widget = handle;
   };
   return built;

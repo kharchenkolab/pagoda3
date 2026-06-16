@@ -12,7 +12,7 @@ import { setCodeValues, setConfValues, invalidateColor } from "../render/colors.
 import { setThemeColors } from "../render/theme.ts";
 import { installOverflow } from "./overflow.ts";
 import { makeWidgetHost } from "../widget/apphost.ts";
-import type { WidgetHost } from "../widget/runtime.ts";
+import type { WidgetHost, WidgetHandle } from "../widget/runtime.ts";
 import { SESSION_KEY, WIDGETS_KEY, SavedWidget, serializeSession, parseSession, upsertWidget, loadWidgets } from "./persist.ts";
 import { paletteNames, normalizePalette } from "../render/palettes.ts";
 import { AnnotationLayer, seedLayer, setLabel, reconcile, compact, hierarchyDepth, rollupToLevel } from "../anno/model.ts";
@@ -42,6 +42,7 @@ export class App {
   compReactors: CompReactor[] = [];   // vocabulary-bound panels that highlight a category on a coord hint
   coordSubs: (() => void)[] = [];     // managed coord subscriptions (panels' onCoord) — unsubscribed each fullRender
   teardowns: (() => void)[] = [];     // per-panel cleanup (e.g. a widget iframe + its host subscription) — run each fullRender
+  widgetHandles = new Map<number, WidgetHandle>();   // live mounted widget iframes by panel id (for inspect_widget); cleared each fullRender
   themeSubs = new Set<() => void>();  // theme-change listeners (widgets re-theme their iframes); fired in applyTheme
   builtinWS!: Set<string>;            // code-defined workspace names (the rest are user-saved → persisted)
   widgetLib: SavedWidget[] = [];      // the custom-widget LIBRARY (authored widgets, re-addable from the menu); persisted
@@ -191,6 +192,7 @@ export class App {
       splitLabel: (label) => { this.splitLabel(label); },
       widgetHost: () => this.widgetHost(),
       onTeardown: (fn) => { this.teardowns.push(fn); },   // run + cleared each fullRender (like coordSubs) — no iframe leak
+      registerWidget: (id, handle) => { this.widgetHandles.set(id, handle); },   // so inspect_widget can read a live widget's state
     };
   }
 
@@ -220,7 +222,7 @@ export class App {
     for (const p of this.canvas) built.push(await this.panelEl(p));   // build off-DOM first; old panels stay visible meanwhile
     if (token !== this.renderToken) return;   // superseded by a newer fullRender → it owns pointerEvents; discard this build
     this.coordSubs.forEach((u) => u()); this.coordSubs = [];   // tear down old panels' coord subscriptions before rebuilding
-    this.teardowns.forEach((f) => { try { f(); } catch { /* a widget iframe destroy must not abort the render */ } }); this.teardowns = [];   // destroy old widget iframes + their host subscriptions
+    this.teardowns.forEach((f) => { try { f(); } catch { /* a widget iframe destroy must not abort the render */ } }); this.teardowns = []; this.widgetHandles.clear();   // destroy old widget iframes + their host subscriptions; drop stale handles (re-registered on build)
     this.embeddings = []; this.compReactors = []; this.geneHoverSinks = []; this.reactorsStale = true;   // new reactors → repaint must dispatch the selection to them once
     wb.innerHTML = "";
     const afters: (() => void)[] = [];
@@ -1039,6 +1041,19 @@ export class App {
   addWidgetPanel(source: string, title?: string, controls?: { id: string; label: string }[]): number {
     this.saveWidgetToLibrary(title || "Widget", source, controls);   // also keep it in the re-addable library
     return this.addPanel({ type: "Widget", title: title || "Widget", source, controls, bind: "widget:custom" });
+  }
+
+  // CHECK A WIDGET'S LIVE USAGE after it's created: snapshot its current rendered text + recent logs + any error, so
+  // the agent can verify it actually works in the running app (with real data + the user's current selection) and fix it.
+  async inspectWidget(panelId?: number): Promise<string> {
+    const widgets = this.canvas.filter((p) => p.type === "Widget");
+    if (!widgets.length) return "no widget panels on the workbench to inspect";
+    const target = panelId != null ? widgets.find((p) => p.id === panelId) : (widgets.length === 1 ? widgets[0] : null);
+    if (!target) return "several widgets — pass panelId. Available: " + widgets.map((p) => `#${p.id} "${p.title}"`).join(", ");
+    const h = this.widgetHandles.get(target.id);
+    if (!h) return `widget #${target.id} "${target.title}" is not mounted yet — try again`;
+    const text = await h.snapshot(1500); const err = h.lastError();
+    return JSON.stringify({ panelId: target.id, title: target.title, manifest: h.manifest(), error: err ? err.message : null, logs: h.logs().slice(-8), renderedText: (text || "").slice(0, 600) });
   }
   startSaveWS() {
     const t = this.$("wstabs"); const inp = document.createElement("input"); inp.className = "wsinput"; inp.placeholder = "name workspace…"; t.appendChild(inp); inp.focus();
