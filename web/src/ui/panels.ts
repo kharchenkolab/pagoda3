@@ -372,29 +372,36 @@ async function facetsBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltB
     return wrap;
   };
 
-  // a numeric covariate's distribution — drag across the bars to brush a value range → selects those cells.
+  // a numeric covariate's distribution — drag across the bars to brush a value range → selects those cells. The FULL
+  // distribution is always the (grey) backdrop so it never disappears; the current selection's subset is overlaid in
+  // accent (the brushed range, or — if the selection came from elsewhere — that population's distribution here). A ✕
+  // on the readout returns to the full, unrestricted set.
   const numericEl = (f: any, selCells: Int32Array | null) => {
     const nm = numMeta.get(f.name); if (!nm) return mk("div", "facetvals");
     const vals: Float32Array = nm.values, lo = nm.min, hi = nm.max, BINS = 28, wbin = (hi - lo) / BINS || 1;
-    const hist = new Int32Array(BINS), N = selCells ? selCells.length : vals.length;
-    for (let k = 0; k < N; k++) { const v = vals[selCells ? selCells[k] : k]; let bi = Math.floor((v - lo) / wbin); if (bi < 0) bi = 0; else if (bi >= BINS) bi = BINS - 1; hist[bi]++; }
-    const maxH = hist.reduce((m, x) => Math.max(m, x), 1);
-    const mine = brush.field === f.name && brush.mx >= brush.mn;   // a persisted brush on THIS field
+    const binOf = (v: number) => { let bi = Math.floor((v - lo) / wbin); return bi < 0 ? 0 : bi >= BINS ? BINS - 1 : bi; };
+    const full = new Int32Array(BINS); for (let i = 0; i < vals.length; i++) full[binOf(vals[i])]++;
+    const sub = selCells ? new Int32Array(BINS) : null; if (sub) for (let k = 0; k < selCells!.length; k++) sub[binOf(vals[selCells![k]])]++;
+    const maxH = full.reduce((m, x) => Math.max(m, x), 1);
+    const mine = brush.field === f.name && ctx.coord.state.selection?.kind === "cells";   // the selection is THIS field's brush → show its range readout
+    const readout = mine ? `${fmtNum(brush.lo)}–${fmtNum(brush.hi)} <span class="hclear" title="clear range — back to full">✕</span>`
+                         : selCells ? `${selCells.length.toLocaleString()} selected` : "drag to brush a range";
     const wrap = mk("div", "facethist");
-    wrap.innerHTML = `<div class="hbars">${Array.from(hist, (h, i) => `<span class="hbin${mine && i >= brush.mn && i <= brush.mx ? " sel" : ""}" data-i="${i}" style="height:${(h / maxH * 100).toFixed(1)}%"></span>`).join("")}</div>
-      <div class="hmeta"><span>${fmtNum(lo)}</span><span class="hrange">${mine ? `${fmtNum(brush.lo)}–${fmtNum(brush.hi)}` : "drag to brush a range"}</span><span>${fmtNum(hi)}</span></div>`;
-    const bars = wrap.querySelector(".hbars") as HTMLElement, rangeEl = wrap.querySelector(".hrange") as HTMLElement;
+    wrap.innerHTML = `<div class="hbars">${Array.from(full, (h, i) => `<span class="hbin" data-i="${i}"><span class="hf" style="height:${(h / maxH * 100).toFixed(1)}%"></span>${sub ? `<span class="hs" style="height:${(sub[i] / maxH * 100).toFixed(1)}%"></span>` : ""}</span>`).join("")}</div>
+      <div class="hmeta"><span>${fmtNum(lo)}</span><span class="hrange">${readout}</span><span>${fmtNum(hi)}</span></div>`;
+    const bars = wrap.querySelector(".hbars") as HTMLElement;
+    const hclear = wrap.querySelector(".hclear") as HTMLElement | null;
+    if (hclear) hclear.onclick = (e) => { e.stopPropagation(); brush.field = ""; brush.mn = 0; brush.mx = -1; ctx.coord.setSelection(null); };
     let down = -1;
     const binAt = (e: PointerEvent) => { const r = bars.getBoundingClientRect(); return Math.max(0, Math.min(BINS - 1, Math.floor((e.clientX - r.left) / r.width * BINS))); };
-    const paint = (a: number, b: number) => { const mn = Math.min(a, b), mx = Math.max(a, b); bars.querySelectorAll<HTMLElement>(".hbin").forEach((el, i) => el.classList.toggle("sel", i >= mn && i <= mx)); };
+    const paint = (a: number, b: number) => { const mn = Math.min(a, b), mx = Math.max(a, b); bars.querySelectorAll<HTMLElement>(".hbin").forEach((el, i) => el.classList.toggle("brushing", i >= mn && i <= mx)); };
     bars.addEventListener("pointerdown", (e) => { down = binAt(e); paint(down, down); try { bars.setPointerCapture(e.pointerId); } catch { /* */ } });
     bars.addEventListener("pointermove", (e) => { if (down >= 0) paint(down, binAt(e)); });
     bars.addEventListener("pointerup", (e) => {
       if (down < 0) return; const b = binAt(e), mn = Math.min(down, b), mx = Math.max(down, b); down = -1;
       const vlo = lo + mn * wbin, vhi = lo + (mx + 1) * wbin, ids: number[] = [];
       for (let i = 0; i < vals.length; i++) if (vals[i] >= vlo && vals[i] <= vhi) ids.push(i);
-      rangeEl.textContent = `${fmtNum(vlo)}–${fmtNum(vhi)} · ${ids.length.toLocaleString()} cells`;
-      (p as any).facetBrush = { field: f.name, lo: vlo, hi: vhi, mn, mx };   // persist so the readout survives re-render
+      brush.field = f.name; brush.lo = vlo; brush.hi = vhi; brush.mn = mn; brush.mx = mx;   // MUTATE (the closure holds this ref) so the readout survives re-render
       ctx.coord.setSelection(ids.length ? { kind: "cells", ids: Int32Array.from(ids) } : null);
     });
     return wrap;

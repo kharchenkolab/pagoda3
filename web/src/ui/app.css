@@ -123,9 +123,12 @@ button{font-family:inherit}
 .facetfilter{display:flex;align-items:center;gap:8px;padding:5px 10px;margin:0;font-size:11px;color:var(--dim);background:var(--sel);border-bottom:1px solid var(--line2);position:sticky;top:0;z-index:2}
 .facetfilter b{color:var(--text);font-weight:500} .facetfilter .ffclear{margin-left:auto;cursor:pointer;color:var(--faint);font-size:13px} .facetfilter .ffclear:hover{color:var(--cyan)}
 .facethist{padding:3px 10px 8px 22px}
-.facethist .hbars{display:flex;align-items:flex-end;gap:1px;height:42px;cursor:crosshair;touch-action:none}
-.facethist .hbin{flex:1;min-height:1px;background:var(--dim);opacity:.5;border-radius:1px 1px 0 0}
-.facethist .hbin.sel{background:var(--cyan);opacity:1}
+.facethist .hbars{display:flex;align-items:stretch;gap:1px;height:46px;cursor:crosshair;touch-action:none}
+.facethist .hbin{flex:1;position:relative;min-width:1px}
+.facethist .hf{position:absolute;left:0;right:0;bottom:0;background:var(--dim);opacity:.38;border-radius:1px 1px 0 0}
+.facethist .hs{position:absolute;left:0;right:0;bottom:0;background:var(--cyan);border-radius:1px 1px 0 0}
+.facethist .hbin.brushing .hf{background:var(--cyan);opacity:.85}
+.facethist .hclear{cursor:pointer;color:var(--faint);margin-left:3px} .facethist .hclear:hover{color:var(--cyan)}
 .facethist .hmeta{display:flex;justify-content:space-between;font-size:10px;color:var(--faint);font-family:var(--mono);margin-top:3px}
 .facethist .hrange{color:var(--dim)}
 .facetfoot{flex:0 0 auto;border-top:1px solid var(--line2);padding:6px 10px;background:var(--panel)}
