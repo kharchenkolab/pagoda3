@@ -6,6 +6,7 @@ import { ThemeInfo, CoordInfo, WidgetMsg } from "./contract.ts";
 import { KITCHEN_SINK } from "./template.ts";
 import { listRecipes, getRecipe } from "./recipes.ts";
 import { createWidgetAgent, WAgentEvent } from "./wagent.ts";
+import { analyzeTranscript } from "./transcript.ts";
 
 // ---- theme var sets (the real app host will read these from the live document instead) ----
 const THEME_VARS: Record<"dark" | "light", Record<string, string>> = {
@@ -169,14 +170,29 @@ const addThread = (e: WAgentEvent) => {
   else if (e.type === "done") { return; }
   threadEl.appendChild(row); threadEl.scrollTop = threadEl.scrollHeight;
 };
-const agent = createWidgetAgent({
+const makeAgent = () => createWidgetAgent({
   host,
   onSave: (source) => { srcEl.value = source; mount(); },     // mount the agent's widget in the host panel
   onEvent: addThread,
 });
+let agent = makeAgent();
+const resetAgent = () => { agent = makeAgent(); threadEl.innerHTML = ""; (window as any).wdev.agent = agent; };   // fresh memory for an independent scenario
 const send = () => { const inp = document.getElementById("ask") as HTMLInputElement; const t = inp.value.trim(); if (!t) return; inp.value = ""; agent.ask(t); };
 document.getElementById("asksend")!.onclick = send;
 (document.getElementById("ask") as HTMLInputElement).onkeydown = (e) => { if (e.key === "Enter") send(); };
 
 setPageTheme(); mount();
-(window as any).wdev = { host, agent, get handle() { return handle; }, mount, setTheme: (d: boolean) => { dark = d; setPageTheme(); notify("theme"); }, extSelect: () => document.getElementById("extsel")!.click(), previewWidget, srcEl };
+// CONSISTENT TEST HARNESS: run a scenario and get back the structured friction report (agent narration, tool calls,
+// preview ok/error/viz, probe errors, counts, auto-flagged frictions). `fresh` (default) resets the agent's memory so
+// each scenario is independent. This is the standard way to probe authoring: one call → a report I read every time.
+const runScenario = async (prompt: string, opts?: { fresh?: boolean }) => {
+  if (opts?.fresh !== false) resetAgent();
+  const a = (window as any).wdev.agent, start = a.messages.length, t0 = performance.now();
+  await a.ask(prompt);
+  return analyzeTranscript(a.messages.slice(start), Math.round(performance.now() - t0));
+};
+(window as any).wdev = {
+  host, agent, get handle() { return handle; }, mount, resetAgent, runScenario,
+  analyze: () => analyzeTranscript((window as any).wdev.agent.messages),
+  setTheme: (d: boolean) => { dark = d; setPageTheme(); notify("theme"); }, extSelect: () => document.getElementById("extsel")!.click(), previewWidget, srcEl,
+};
