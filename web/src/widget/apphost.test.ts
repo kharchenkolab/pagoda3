@@ -1,7 +1,16 @@
 // Unit tests for the app WidgetHost's pure mappers (no DOM/app). Run: `node --test src/widget/apphost.test.ts`.
 import { test } from "node:test";
 import assert from "node:assert";
-import { selToInfo, widgetSelToRef, fieldsInfo } from "./apphost.ts";
+import { selToInfo, widgetSelToRef, fieldsInfo, hintToInfo } from "./apphost.ts";
+
+test("hintToInfo: hover EntityRef → HintInfo (carries content, caps cells)", () => {
+  assert.equal(hintToInfo(null), null);
+  assert.deepEqual(hintToInfo({ kind: "cells", ids: Int32Array.of(7) }), { kind: "cells", ids: [7] });
+  assert.deepEqual(hintToInfo({ kind: "category", grouping: "cell_type", value: "NK" }), { kind: "category", grouping: "cell_type", value: "NK" });
+  const manyIds = Int32Array.from({ length: 500 }, (_, i) => i);
+  const big = hintToInfo({ kind: "cells", ids: manyIds }) as any;
+  assert.equal(big.ids.length, 256);
+});
 
 test("selToInfo: EntityRef → selection descriptor (count, never ids)", () => {
   assert.equal(selToInfo(null, () => 0), null);

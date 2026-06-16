@@ -4,7 +4,7 @@
 import type { App } from "../ui/shell.ts";
 import type { EntityRef } from "../data/coord.ts";
 import type { WidgetHost } from "./runtime.ts";
-import type { ThemeInfo, CoordInfo, SelectionInfo, WidgetMsg } from "./contract.ts";
+import type { ThemeInfo, CoordInfo, SelectionInfo, HintInfo, WidgetMsg } from "./contract.ts";
 import { themeIsDark } from "../render/theme.ts";
 
 // The CSS custom properties a widget may use (injected into the iframe :root so it themes with the app). Mirrors
@@ -25,6 +25,13 @@ export function selToInfo(ref: EntityRef | null, countOf: (r: EntityRef) => numb
   if (ref.kind === "cells") return { kind: "cells", count: ref.ids.length };
   return { kind: "category", grouping: ref.grouping, value: ref.value, count: countOf(ref) };
 }
+// The app's typed hint EntityRef → the widget-facing HintInfo. Hints are SMALL (a hovered cell, or a category), so
+// they carry content; cells are capped defensively in case a brush-hint ever arrives.
+export function hintToInfo(ref: EntityRef | null): HintInfo {
+  if (!ref) return null;
+  if (ref.kind === "cells") return { kind: "cells", ids: Array.from(ref.ids.length > 256 ? ref.ids.subarray(0, 256) : ref.ids) };
+  return { kind: "category", grouping: ref.grouping, value: ref.value };
+}
 // A widget's setSelection/setHint argument ({cells}|{category}|null) → the app's typed EntityRef.
 export function widgetSelToRef(sel: any): EntityRef | null {
   if (!sel) return null;
@@ -41,7 +48,7 @@ export function fieldsInfo(fields: { name: string; kind: "categorical" | "numeri
 // with real data + the current selection), but the widget's WRITES (setSelection/setColor/updateView) are swallowed —
 // previewing/probing a widget must NOT mutate the user's live session.
 export function readonlyHost(h: WidgetHost): WidgetHost {
-  return { theme: h.theme, coord: h.coord, subscribe: h.subscribe, data: h.data, apply: () => { /* preview is side-effect-free */ } };
+  return { theme: h.theme, coord: h.coord, hint: h.hint, subscribe: h.subscribe, data: h.data, apply: () => { /* preview is side-effect-free */ } };
 }
 
 export function makeWidgetHost(app: App): WidgetHost {
@@ -55,9 +62,13 @@ export function makeWidgetHost(app: App): WidgetHost {
       selection: selToInfo(coord.state.selection, countOf),
       focus: coord.state.focus ? { label: coord.state.focus.label } : null,
     }),
+    hint: (): HintInfo => hintToInfo(coord.state.hint),
     subscribe: (cb) => {
-      // coord changes the widget cares about — NOT hint (that fires on every hover; too chatty and CoordInfo omits it)
-      const u1 = coord.subscribe((_s, changed: string[]) => { if (changed.some((k) => k === "colorBy" || k === "selection" || k === "focus")) cb("coord"); });
+      // coord (committed) and hint (ephemeral hover) are SEPARATE channels, so hover churn never re-fires coord handlers.
+      const u1 = coord.subscribe((_s, changed: string[]) => {
+        if (changed.some((k) => k === "colorBy" || k === "selection" || k === "focus")) cb("coord");
+        if (changed.some((k) => k === "hint")) cb("hint");
+      });
       const u2 = app.onTheme(() => cb("theme"));
       return () => { u1(); u2(); };
     },

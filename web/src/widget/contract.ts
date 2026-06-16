@@ -14,6 +14,9 @@ export type SelectionInfo =
   | { kind: "cells"; count: number }
   | { kind: "category"; grouping: string; value: string; count: number };
 export interface CoordInfo { colorBy: string; selection: SelectionInfo; focus: { label: string } | null; }
+// The ephemeral HOVER tier (the hint), delivered on its OWN channel (pagoda.on('hint')) — separate from coord so
+// hover churn never re-fires coord handlers. Hints are small (a hovered cell, or a category), so they carry content.
+export type HintInfo = null | { kind: "cells"; ids: number[] } | { kind: "category"; grouping: string; value: string };
 
 // A widget's self-declared metadata. controls become standard header buttons the HOST renders (uniform ⋯/toolbar
 // policy); a click comes back as a {t:"control"} message. height lets a widget request its natural body height.
@@ -21,8 +24,9 @@ export interface WidgetManifest { title?: string; height?: number; controls?: { 
 
 // host → widget
 export type HostMsg =
-  | { t: "init"; theme: ThemeInfo; coord: CoordInfo }
+  | { t: "init"; theme: ThemeInfo; coord: CoordInfo; hint: HintInfo }
   | { t: "coord"; coord: CoordInfo }
+  | { t: "hint"; hint: HintInfo }                                 // cross-panel hover changed (ephemeral)
   | { t: "theme"; theme: ThemeInfo }
   | { t: "control"; id: string }                                  // a host-rendered header control was clicked
   | { t: "data"; reqId: number; ok: boolean; payload?: any; error?: string }   // reply to a requestData
@@ -64,7 +68,11 @@ export const WIDGET_API_DOC =
   "`pagoda.coord` (current {colorBy, selection, focus}); selection is a small descriptor — null, {kind:'cells',count} or " +
   "{kind:'category',grouping,value,count} — NOT the cell ids (pull those with data('selectedCells') when you need them); " +
   "`pagoda.theme` ({dark, vars}); " +
-  "`pagoda.on('coord'|'theme'|'control', cb)` → subscribe (returns an unsubscribe fn); " +
+  "`pagoda.on('coord'|'hint'|'theme'|'control', cb)` → subscribe (returns an unsubscribe fn). HOVER/CLICK like a native " +
+  "panel: EMIT hover with pagoda.setHint({cells:[i]}|{category:{grouping,value}}|null) and clicks with " +
+  "pagoda.setSelection(...); REACT to cross-panel hover via pagoda.on('hint', h => …) where h is null|{kind:'cells',ids}|" +
+  "{kind:'category',grouping,value} (`pagoda.hint` is the current one) — the ephemeral hover tier, separate from coord; " +
+  "react to clicks/selection via pagoda.on('coord', c => c.selection). " +
   "`pagoda.setSelection({cells:[...]}|{category:{grouping,value}}|null)`, `pagoda.setColor('gene:CD3E'|'meta:cell_type'|'qc:mito')`, " +
   "`pagoda.setHint(ref)`, `pagoda.updateView(patch)` (same patch shape as the update_view tool); " +
   "`await pagoda.data(kind, args)` to pull data on demand — kinds: " +
@@ -97,14 +105,15 @@ a{color:var(--cyan,#1f7faf)}
 // postMessage, applies theme vars, forwards console/errors, auto-resizes. A string (no app import).
 export const WIDGET_BOOTSTRAP = `
 (function(){
-  var pending={}, reqId=0, coord=null, theme=null, listeners={coord:[],theme:[],control:[]}, parentWin=window.parent;
+  var pending={}, reqId=0, coord=null, theme=null, hint=null, listeners={coord:[],theme:[],control:[],hint:[]}, parentWin=window.parent;
   function post(m){ try{ parentWin.postMessage(m,'*'); }catch(e){} }
   function fire(ev,arg){ (listeners[ev]||[]).forEach(function(f){ try{ f(arg); }catch(err){ reportError(err); } }); }
   function reportError(err){ post({t:'error', message:String(err&&err.message?err.message:err), stack: err&&err.stack ? String(err.stack) : undefined }); }
   function applyTheme(t){ if(!t) return; var s=document.getElementById('pg-theme'); if(!s){ s=document.createElement('style'); s.id='pg-theme'; document.head.appendChild(s); } var v=t.vars||{}; s.textContent=':root{'+Object.keys(v).map(function(k){return k+':'+v[k];}).join(';')+'}'; document.documentElement.setAttribute('data-theme', t.dark?'dark':'light'); }
   window.addEventListener('message', function(e){ var m=e.data; if(!m||!m.t) return;
-    if(m.t==='init'){ coord=m.coord; theme=m.theme; applyTheme(theme); fire('theme',theme); fire('coord',coord); }
+    if(m.t==='init'){ coord=m.coord; theme=m.theme; hint=m.hint||null; applyTheme(theme); fire('theme',theme); fire('coord',coord); if(hint) fire('hint',hint); }
     else if(m.t==='coord'){ coord=m.coord; fire('coord',coord); }
+    else if(m.t==='hint'){ hint=m.hint||null; fire('hint',hint); }
     else if(m.t==='theme'){ theme=m.theme; applyTheme(theme); fire('theme',theme); }
     else if(m.t==='control'){ fire('control', m.id); }
     else if(m.t==='snapshot'){ post({t:'snapshotResult', text:(document.body.innerText||'').replace(/\\s+/g,' ').trim().slice(0,3000)}); }
@@ -116,7 +125,7 @@ export const WIDGET_BOOTSTRAP = `
   var ro=null;
   function startResize(){ if(ro) return; var send=function(){ post({t:'resize', height: Math.ceil(document.body.scrollHeight)}); }; ro=new ResizeObserver(send); ro.observe(document.body); send(); }
   window.pagoda={
-    get coord(){ return coord; }, get theme(){ return theme; },
+    get coord(){ return coord; }, get theme(){ return theme; }, get hint(){ return hint; },
     on:function(ev,cb){ (listeners[ev]=listeners[ev]||[]).push(cb); return function(){ var a=listeners[ev]||[]; var i=a.indexOf(cb); if(i>=0) a.splice(i,1); }; },
     ready:function(m){ post({t:'ready', manifest:m||{}}); startResize(); },
     setSelection:function(sel){ post({t:'setSelection', sel: sel||null}); },

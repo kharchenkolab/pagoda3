@@ -33,7 +33,7 @@ test("bootstrap defines the documented pagoda surface", () => {
     assert.ok(WIDGET_BOOTSTRAP.includes(fn), `bootstrap missing pagoda.${fn}`);
   }
   // every host→widget message the bootstrap must handle
-  for (const t of ["init", "coord", "theme", "control", "snapshot", "data"]) {
+  for (const t of ["init", "coord", "hint", "theme", "control", "snapshot", "data"]) {
     assert.ok(WIDGET_BOOTSTRAP.includes(`'${t}'`), `bootstrap missing handler for ${t}`);
   }
 });

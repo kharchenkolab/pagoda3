@@ -1,13 +1,14 @@
 // Browser-side widget runtime: mount an author-written widget in a sandboxed iframe and bridge it to a WidgetHost
 // (the app provides a real one over coord/ctx; the dev harness provides a mock). Decoupled from the app — it only
 // speaks the contract.ts protocol + this WidgetHost interface.
-import { ThemeInfo, CoordInfo, WidgetManifest, WidgetMsg, validateManifest, widgetSrcdoc } from "./contract.ts";
+import { ThemeInfo, CoordInfo, HintInfo, WidgetManifest, WidgetMsg, validateManifest, widgetSrcdoc } from "./contract.ts";
 
 // What a host must provide. The runtime never touches app state directly — it asks the host.
 export interface WidgetHost {
   theme(): ThemeInfo;
   coord(): CoordInfo;
-  subscribe(cb: (what: "coord" | "theme") => void): () => void;   // notify on coord/theme change → re-pushed to the iframe
+  hint(): HintInfo;                                              // the ephemeral cross-panel hover (separate from coord)
+  subscribe(cb: (what: "coord" | "theme" | "hint") => void): () => void;   // notify on coord/theme/hint change → re-pushed to the iframe
   apply(msg: WidgetMsg): void;                                    // host acts on setSelection/setColor/setHint/updateView
   data(kind: string, args: any): Promise<any>;                   // resolve a pagoda.data(kind,args) request
 }
@@ -60,8 +61,11 @@ export function mountWidget(container: HTMLElement, source: string, host: Widget
   window.addEventListener("message", onMsg);
 
   // push the initial state once the iframe is ready, then keep it in sync
-  iframe.addEventListener("load", () => post({ t: "init", theme: host.theme(), coord: host.coord() }));
-  const unsub = host.subscribe((what) => post(what === "coord" ? { t: "coord", coord: host.coord() } : { t: "theme", theme: host.theme() }));
+  iframe.addEventListener("load", () => post({ t: "init", theme: host.theme(), coord: host.coord(), hint: host.hint() }));
+  const unsub = host.subscribe((what) => post(
+    what === "coord" ? { t: "coord", coord: host.coord() }
+      : what === "hint" ? { t: "hint", hint: host.hint() }
+        : { t: "theme", theme: host.theme() }));
 
   container.appendChild(iframe);
 

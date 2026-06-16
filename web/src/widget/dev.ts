@@ -23,9 +23,11 @@ const NUMS = ["mito", "n_umi"];
 const codesFor = (field: string) => { const k = CATS[field].length; const codes = new Int32Array(N); for (let i = 0; i < N; i++) codes[i] = (i * 2654435761 >>> 0) % k; return codes; };
 
 let dark = false;
-const subs: ((what: "coord" | "theme") => void)[] = [];
+const subs: ((what: "coord" | "theme" | "hint") => void)[] = [];
 const coord: CoordInfo = { colorBy: "meta:cell_type", selection: null, focus: null };
-const notify = (what: "coord" | "theme") => subs.forEach((f) => f(what));
+let hintInfo: any = null;
+const notify = (what: "coord" | "theme" | "hint") => subs.forEach((f) => f(what));
+const toHintInfo = (h: any) => !h ? null : (h.category ? { kind: "category", grouping: h.category.grouping, value: h.category.value } : (h.cells ? { kind: "cells", ids: h.cells.slice(0, 256) } : null));
 // mirror the app host: a selection is a small descriptor; the actual ids are kept here and served via 'selectedCells'
 let selectedIds: number[] = [];
 const cellsOfCat = (field: string, value: string) => { const codes = codesFor(field); const k = (CATS[field] || []).indexOf(value); const ids: number[] = []; for (let i = 0; i < N; i++) if (codes[i] === k) ids.push(i); return ids; };
@@ -48,12 +50,13 @@ const log = (dir: "→" | "←", m: any) => {
 const host: WidgetHost = {
   theme: (): ThemeInfo => ({ dark, vars: THEME_VARS[dark ? "dark" : "light"] }),
   coord: () => ({ ...coord }),
+  hint: () => hintInfo,
   subscribe: (cb) => { subs.push(cb); return () => { const i = subs.indexOf(cb); if (i >= 0) subs.splice(i, 1); }; },
   apply: (m: WidgetMsg) => {
     log("→", m);
-    if (m.t === "setColor") coord.colorBy = m.handle;
-    else if (m.t === "setSelection") coord.selection = toSelInfo(m.sel);
-    if (m.t === "setColor" || m.t === "setSelection") notify("coord");   // reflect the widget's own write back (realistic)
+    if (m.t === "setColor") { coord.colorBy = m.handle; notify("coord"); }
+    else if (m.t === "setSelection") { coord.selection = toSelInfo(m.sel); notify("coord"); }
+    else if (m.t === "setHint") { hintInfo = toHintInfo(m.hint); notify("hint"); }   // hover tier (separate channel)
   },
   data: async (kind, args) => {
     log("→", { t: "requestData", kind });
