@@ -66,7 +66,7 @@ const TOOLS: Tool[] = [
   { name: "fetch_url", description: "Fetch the TEXT of a web page (server-side, so no CORS) to consult an external viz/data technique or doc when the recipes don't cover it — e.g. a charting-pattern or algorithm reference. Returns truncated text. The widget itself must stay SELF-CONTAINED (no remote code/CDN at runtime); use this only to learn a technique, then write the code inline.", input_schema: { type: "object", properties: { url: { type: "string", description: "an https:// page URL" } }, required: ["url"] } },
   { name: "preview_widget", description: "Render a widget SOURCE in a sandbox and return {ok, error, logs, manifest, renderedText} — your TEST/DEBUG loop. Pass the FULL `source` the FIRST time; after that OMIT source to re-preview the current widget (e.g. with a probe) without re-emitting it. To FIX, prefer edit_widget (small patches) over re-sending the whole source. To test interactive logic pass `probe`: JS run after mount IN THE WIDGET'S OWN SCOPE — call the widget's functions / set inputs, e.g. \"document.querySelector('#g').value='CD3E'; await compute();\" — prefer ONE preview WITH a probe. renderedText includes a [viz: …] summary of SVG/canvas content so you can confirm a CHART drew WITHOUT a DOM-counting probe (data-driven draws are async — if a probe shows 0 elements, `await` first).", input_schema: { type: "object", properties: { from: { type: "string", description: "seed from a recipe by name (e.g. 'scatter') instead of typing its source" }, source: { type: "string", description: "full source (first time); omit to reuse the current source" }, probe: { type: "string", description: "optional JS run after mount to exercise interactions (can be async)" } } } },
   { name: "edit_widget", description: "FIX or ADAPT a widget with str_replace-style edits (like the text-editor tool) instead of re-emitting the whole source — far fewer tokens + faster — then it previews automatically. `edits` is an array applied in order; each is {old_str, new_str}: `old_str` must match the CURRENT widget source EXACTLY (verbatim, including whitespace) and UNIQUELY — include enough surrounding lines to make it the only match; `new_str` is the replacement (use \"\" to delete). ATOMIC: if any old_str isn't found or isn't unique, NOTHING changes and you get the failures back (or re-send the full source via preview_widget to resync). Use this for every fix after the first preview. To ADAPT a recipe, pass `from` (the recipe name) and the edits adapt ITS source — you never re-type the recipe body (much cheaper than preview_widget with full source). Pass `probe` to also exercise interactions.", input_schema: { type: "object", properties: { from: { type: "string", description: "seed from a recipe by name (e.g. 'scatter') then apply the edits to ITS source" }, edits: { type: "array", description: "str_replace edits, applied in order", items: { type: "object", properties: { old_str: { type: "string", description: "exact, unique text in the current source" }, new_str: { type: "string", description: "replacement (\"\" to delete)" } }, required: ["old_str", "new_str"] } }, probe: { type: "string", description: "optional JS run after mount to exercise interactions" } }, required: ["edits"] } },
-  { name: "save_widget", description: "Mount the finished widget as a Widget PANEL on the workbench. Call only once preview_widget returned ok:true. OMIT `source` to mount EXACTLY what you last previewed (the default + much faster — don't re-emit the whole source); pass `source` only if you changed it since the last preview. The widget reads/writes the same coordination space (selection/colour) as other panels and themes automatically.", input_schema: { type: "object", properties: { source: { type: "string", description: "optional — omit to reuse the last previewed source" }, title: { type: "string" } } } },
+  { name: "save_widget", description: "Mount the finished widget as a Widget PANEL on the workbench. Call only once preview_widget returned ok:true. OMIT `source` to mount EXACTLY what you last previewed (the default + much faster — don't re-emit the whole source); pass `source` only if you changed it since the last preview. REVISING an existing widget (the user asks to fix/clean up/extend one already on the canvas): keep the SAME `title` — save_widget then UPDATES that panel in place (no duplicate). Use a NEW title only for a genuinely separate widget. The widget reads/writes the same coordination space (selection/colour) as other panels and themes automatically.", input_schema: { type: "object", properties: { source: { type: "string", description: "optional — omit to reuse the last previewed source" }, title: { type: "string" } } } },
   { name: "inspect_widget", description: "CHECK A WIDGET'S LIVE USE after it's mounted — returns its current rendered text, recent console logs, any runtime error, and manifest, captured from the actual running panel (with real data + the user's current selection). Use it to confirm a widget you saved is actually working, or to debug one the user says is misbehaving, then fix it (re-author + save_widget). Omit panelId if there's only one widget; otherwise pass it (LAYOUT lists Widget panel ids).", input_schema: { type: "object", properties: { panelId: { type: "number" } } } },
   // ---- annotation: build a clean cell-type labeling by reconciling sources (see the Annotate workspace) ----
   { name: "run_annotation", description: "Compute an annotation SOURCE by running a cell-typing method in-browser, added as a layer to reconcile against others. method='sctype' scores each cluster against a bundled marker DB (no server). Then read get_reconciliation and compare in the Annotate workspace's Reconcile panel.", input_schema: { type: "object", properties: { method: { type: "string", enum: ["sctype"] }, base: { type: "string", description: "clustering to label (default leiden)" } }, required: ["method"] } },
@@ -158,7 +158,7 @@ async function execTool(app: App, name: string, input: any): Promise<string> {
       const r = await previewWidget(lastWidgetSource, readonlyHost(app.widgetHost()), 6000, input?.probe ? String(input.probe) : undefined);
       return JSON.stringify({ ok: r.ok, error: r.error, logs: r.logs.slice(-8), manifest: r.manifest, renderedText: (r.text || "").slice(0, 400), applied: res.applied });
     }
-    case "save_widget": { const src = String(input?.source || lastWidgetSource); if (!src.trim()) return "save_widget: no source — preview_widget first, then save (omit source to reuse it)"; const id = app.addWidgetPanel(src, input?.title); return `mounted widget panel #${id} on the workbench`; }
+    case "save_widget": { const src = String(input?.source || lastWidgetSource); if (!src.trim()) return "save_widget: no source — preview_widget first, then save (omit source to reuse it)"; const { id, updated } = app.addWidgetPanel(src, input?.title); return updated ? `updated widget panel #${id} in place (same title) — no duplicate added` : `mounted widget panel #${id} on the workbench`; }
     case "run_annotation": { const method = String(input.method || "sctype").toLowerCase(); if (method !== "sctype") return `unknown method "${method}" — available: sctype`; const { ok, error } = await app.runScType({ base: input.base }); return error ? `error: ${error}` : ok!; }
     case "annotate": {
       if (!input.label) return "annotate: 'label' is required"; if (!input.A) return "annotate: 'A' (a cell set) is required";
@@ -252,8 +252,10 @@ export async function runLive(app: App, userText: string, abort: AbortSignal): P
     for (const tu of toolUses) {
       app.setPip("working", tu.name);
       let out = ""; try { out = await execTool(app, tu.name, tu.input); } catch (e) { out = "error: " + e; }
-      // mark the step done
-      const step = [...app.thread.entries].reverse().find((e: any) => e.tool === tu.name && e.status === "active"); if (step) { step.status = "done"; step.detail = out; }
+      // mark the step done — the MODEL gets the full `out` (pushed to results below); the CHAT gets a short summary
+      // (displayDetail), so big payloads (the widget contract, recipe/template SOURCE, preview JSON) don't dump raw
+      // code into the thread and reflow it ("long stretches of code, then jumps").
+      const step = [...app.thread.entries].reverse().find((e: any) => e.tool === tu.name && e.status === "active"); if (step) { step.status = "done"; step.detail = displayDetail(tu.name, out); }
       results.push({ type: "tool_result", tool_use_id: tu.id, content: out });
       ag.renderThread();
     }
@@ -274,6 +276,30 @@ function trimLiveMessages(m: any[], max = 40): void {
   if (m.length <= max) return;
   m.splice(0, m.length - max);
   while (m.length && !(m[0].role === "user" && typeof m[0].content === "string")) m.shift();
+}
+
+// What to SHOW in the chat for a completed tool step. The model still gets the full `out` as the tool_result; the UI
+// gets a short, plain-text summary — otherwise large payloads (the widget contract, recipe/template SOURCE, preview
+// JSON) dump raw code into the thread and reflow the layout. Kept tiny; never includes source.
+function displayDetail(name: string, out: string): string {
+  const sz = (s: string) => (s.length >= 1024 ? (s.length / 1024).toFixed(1) + " KB" : s.length + " chars");
+  if (name === "read_widget_contract") return "contract loaded · " + sz(out);
+  if (name === "get_widget_template") return "template loaded · " + sz(out);
+  if (name === "get_widget_recipe") return out.startsWith("no ") ? out.slice(0, 120) : "recipe source · " + sz(out);
+  if (name === "find_widget_recipe" || name === "list_widget_recipes") {
+    try { const a = JSON.parse(out); if (Array.isArray(a)) return a.length + " match(es): " + a.map((h: any) => h?.name || h).filter(Boolean).slice(0, 6).join(", "); } catch { /* fall through */ }
+    return out.slice(0, 120);
+  }
+  if (name === "preview_widget" || name === "edit_widget") {
+    try { const r = JSON.parse(out); if (r && typeof r === "object") {
+      if (r.ok === false) return "preview FAILED · " + String(r.error || (r.failed ? "edits did not apply" : "error")).slice(0, 140);
+      const bits = ["preview ok"]; const nApplied = Array.isArray(r.applied) ? r.applied.length : r.applied; if (nApplied) bits.push(nApplied + " edit(s)"); if (Array.isArray(r.logs) && r.logs.length) bits.push(r.logs.length + " log(s)"); return bits.join(" · ");
+    } } catch { /* fall through */ }
+    return out.slice(0, 120);
+  }
+  if (name === "fetch_url") return "fetched · " + sz(out);
+  // most tools already return a short human string — just clamp it.
+  return out.length > 200 ? out.slice(0, 197) + "…" : out;
 }
 
 function toolLabel(tu: any): string {

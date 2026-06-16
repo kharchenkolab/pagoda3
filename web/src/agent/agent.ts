@@ -10,6 +10,10 @@ import { runLive } from "./live.ts";
 
 export interface Scope { type: "selection" | "panel"; summary: string; ids?: number[]; }
 
+// Tool labels + step details are interpolated into innerHTML; they derive from tool inputs/outputs (gene names,
+// queries, error text), so `<...>` in them would otherwise be parsed as HTML and corrupt the thread layout.
+const esc = (s: any) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]!));
+
 export const REGISTRY: Record<string, number> = { Embedding: 1, CompositionBars: 1, DeTable: 1, Volcano: 1, Overdispersion: 1, Heatmap: 1, BoxBySample: 1, Note: 1, Reconcile: 1, AnnoRecord: 1, MetadataFacets: 1, Widget: 1 };
 
 export class Agent {
@@ -152,7 +156,7 @@ export class Agent {
     inner.appendChild(hd);
     if (t.kind === "live") {
       for (const e of t.entries) {
-        if (e.tool) { const m = e.status === "done" ? "✓" : "◐"; const d = mk("div", "step " + (e.status || "active")); d.innerHTML = `<span class="mk">${m}</span><div><div>${e.label}</div>${e.detail ? `<div class="sd">${e.detail}</div>` : ""}</div>`; inner.appendChild(d); }
+        if (e.tool) { const m = e.status === "done" ? "✓" : "◐"; const d = mk("div", "step " + (e.status || "active")); d.innerHTML = `<span class="mk">${m}</span><div><div>${esc(e.label)}</div>${e.detail ? `<div class="sd">${esc(e.detail)}</div>` : ""}</div>`; inner.appendChild(d); }
         else { const d = mk("div", "turn " + e.role); d.innerHTML = `<span class="ava">${e.role === "user" ? "me" : "✦"}</span><div class="msg">${e.text}</div>`; inner.appendChild(d); }
       }
     } else if (t.kind === "autopilot") {
@@ -201,7 +205,7 @@ export class Agent {
     if (steps.length) card.appendChild(mk("div", "cxmeta", `${steps.length} step${steps.length > 1 ? "s" : ""} · click to expand`));
     const det = mk("div", "cxdetail"); let skippedFirstUser = false;
     for (const e of entries) {
-      if (e.tool) { const m = e.status === "done" ? "✓" : "◐"; const d = mk("div", "step " + (e.status || "done")); d.innerHTML = `<span class="mk">${m}</span><div><div>${e.label || e.tool}</div>${e.detail ? `<div class="sd">${e.detail}</div>` : ""}</div>`; det.appendChild(d); }
+      if (e.tool) { const m = e.status === "done" ? "✓" : "◐"; const d = mk("div", "step " + (e.status || "done")); d.innerHTML = `<span class="mk">${m}</span><div><div>${esc(e.label || e.tool)}</div>${e.detail ? `<div class="sd">${esc(e.detail)}</div>` : ""}</div>`; det.appendChild(d); }
       else if (e.text) { if (e.role === "user" && !skippedFirstUser) { skippedFirstUser = true; continue; } const d = mk("div", "turn " + e.role); d.innerHTML = `<span class="ava">${e.role === "user" ? "me" : "✦"}</span><div class="msg">${e.text}</div>`; det.appendChild(d); }
     }
     for (const t of turns) { if (!t.text) continue; if (t.role === "user" && !skippedFirstUser) { skippedFirstUser = true; continue; } const d = mk("div", "turn " + t.role); d.innerHTML = `<span class="ava">${t.role === "user" ? "me" : "✦"}</span><div class="msg">${t.text}</div>`; det.appendChild(d); }
