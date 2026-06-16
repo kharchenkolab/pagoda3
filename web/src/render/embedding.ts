@@ -194,31 +194,52 @@ export class EmbeddingView {
     this.selVersion++; this.redraw();
   }
 
-  // Shift-drag rectangle select via deck.pickObjects.
+  // Shift-drag freehand LASSO select — far more useful than a rectangle for irregular cluster shapes. The path is
+  // collected in screen px; on release each cell's world position is PROJECTED to screen (via the deck viewport) and
+  // tested point-in-polygon (bbox-culled first). Native cell indices → onSelect.
   private installBrush(canvas: HTMLCanvasElement) {
-    const overlay = document.createElement("div");
-    overlay.style.cssText = "position:absolute;border:1px dashed var(--cyan);background:var(--sel);pointer-events:none;display:none;z-index:5";
-    canvas.parentElement!.appendChild(overlay); // #emb is already position:absolute (a positioning context)
-    let sx = 0, sy = 0, active = false;
-    const rectOf = (e: PointerEvent) => { const r = canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
+    const NS = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(NS, "svg");
+    svg.setAttribute("style", "position:absolute;inset:0;width:100%;height:100%;pointer-events:none;display:none;z-index:5;overflow:visible");
+    const poly = document.createElementNS(NS, "polygon");
+    poly.setAttribute("fill", "var(--sel)"); poly.setAttribute("stroke", "var(--cyan)"); poly.setAttribute("stroke-width", "1.4"); poly.setAttribute("stroke-dasharray", "4 3");
+    svg.appendChild(poly); canvas.parentElement!.appendChild(svg);   // #emb is position:absolute (a positioning context)
+    let path: [number, number][] = [], active = false;
+    const at = (e: PointerEvent): [number, number] => { const r = canvas.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+    const render = () => poly.setAttribute("points", path.map((p) => p.join(",")).join(" "));
     canvas.addEventListener("pointerdown", (e) => {
       if (!e.shiftKey) return;
-      active = true; const p = rectOf(e); sx = p.x; sy = p.y;
-      overlay.style.display = "block"; overlay.style.left = sx + "px"; overlay.style.top = sy + "px"; overlay.style.width = "0px"; overlay.style.height = "0px";
+      active = true; path = [at(e)]; svg.style.display = "block"; render();
       canvas.setPointerCapture(e.pointerId); e.stopPropagation();
     });
     canvas.addEventListener("pointermove", (e) => {
-      if (!active) return; const p = rectOf(e);
-      overlay.style.left = Math.min(sx, p.x) + "px"; overlay.style.top = Math.min(sy, p.y) + "px";
-      overlay.style.width = Math.abs(p.x - sx) + "px"; overlay.style.height = Math.abs(p.y - sy) + "px";
+      if (!active) return; const p = at(e), last = path[path.length - 1];
+      if (!last || Math.hypot(p[0] - last[0], p[1] - last[1]) > 3) { path.push(p); render(); }   // decimate to keep the polygon small
     });
     canvas.addEventListener("pointerup", (e) => {
-      if (!active) return; active = false; overlay.style.display = "none";
-      const p = rectOf(e); const x = Math.min(sx, p.x), y = Math.min(sy, p.y), w = Math.abs(p.x - sx), h = Math.abs(p.y - sy);
-      if (w < 3 || h < 3) return;
-      const picked = (this.deck as any).pickObjects({ x, y, width: w, height: h, layerIds: ["cells"], maxObjects: 200000 });
-      const ids = new Int32Array(picked.map((q: any) => this.draw[q.index]));   // pick gives draw-slot indices → map to native cells
-      this.onSelect?.(ids);
+      if (!active) return; active = false; svg.style.display = "none";
+      if (path.length < 3) return;
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const [x, y] of path) { if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y; }
+      if (maxX - minX < 3 || maxY - minY < 3) return;
+      const vp = (this.deck as any).getViewports?.()[0]; if (!vp) return;
+      const ids: number[] = [];
+      for (let i = 0; i < this.n; i++) {
+        const s = vp.project([this.positions[i * 2], this.positions[i * 2 + 1]]); const sx = s[0], sy = s[1];
+        if (sx < minX || sx > maxX || sy < minY || sy > maxY) continue;   // bbox cull before the polygon test
+        if (pointInPolygon(sx, sy, path)) ids.push(i);
+      }
+      if (ids.length) this.onSelect?.(Int32Array.from(ids));
     });
   }
+}
+
+// ray-casting point-in-polygon (screen-space px)
+function pointInPolygon(x: number, y: number, poly: [number, number][]): boolean {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const xi = poly[i][0], yi = poly[i][1], xj = poly[j][0], yj = poly[j][1];
+    if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) inside = !inside;
+  }
+  return inside;
 }
