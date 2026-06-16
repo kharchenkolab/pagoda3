@@ -40,6 +40,7 @@ export interface PanelHooks {
   onCoord: (fn: (s: any, changed: string[]) => void) => void;  // managed coord subscription (colorBy/selection/focus reactivity); cleaned up on fullRender
   focusCategory: (field: string, value: string) => void;       // restrict the workspace to a metadata value (focus + chip)
   addPanel: (spec: any) => void;                               // add a panel to the workbench (e.g. → composition hand-off)
+  openSelectionMenu: (anchor: { left: number; top: number }) => void;   // open the selection ops menu (DE/label/ask) for the current selection
   onConfigurePanel: (panelId: number, patch: any) => void;     // a panel reconfiguring itself (e.g. dismissing pinned genes)
   registerGeneHover: (fn: (sym: string | null) => void) => void;   // a panel that highlights a gene's row on cross-panel geneHint
   annotate: (cellIds: ArrayLike<number>, label: string, layer?: string) => void;   // write a label onto a cell set in an annotation layer (default the working draft)
@@ -437,7 +438,8 @@ async function facetsBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltB
     if (sel && selCells) {   // cross-filter banner: every bar + count below reflects this subset
       const lbl = sel.kind === "category" ? (sel as any).value : `${selCells.length.toLocaleString()} cells`;
       const banner = mk("div", "facetfilter");
-      banner.innerHTML = `<span>within <b>${esc(lbl)}</b> · ${selCells.length.toLocaleString()} cells</span><span class="ffclear" title="clear the filter">✕</span>`;
+      banner.innerHTML = `<span class="fftext">within <b>${esc(lbl)}</b> · ${selCells.length.toLocaleString()} cells</span><button class="ffact mini" title="operations on this selection: run DE, label / create a group, ask">actions ▾</button><span class="ffclear" title="clear the selection">✕</span>`;
+      (banner.querySelector(".ffact") as HTMLElement).onclick = (e) => { e.stopPropagation(); const r = banner.getBoundingClientRect(); hooks.openSelectionMenu({ left: r.left + 8, top: r.bottom + 4 }); };
       (banner.querySelector(".ffclear") as HTMLElement).onclick = () => ctx.coord.setSelection(null);
       host.appendChild(banner);
     }
