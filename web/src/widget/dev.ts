@@ -4,6 +4,7 @@
 import { mountWidget, previewWidget, WidgetHost, WidgetHandle } from "./runtime.ts";
 import { ThemeInfo, CoordInfo, WidgetMsg } from "./contract.ts";
 import { KITCHEN_SINK } from "./template.ts";
+import { listRecipes, getRecipe } from "./recipes.ts";
 import { createWidgetAgent, WAgentEvent } from "./wagent.ts";
 
 // ---- theme var sets (the real app host will read these from the live document instead) ----
@@ -78,11 +79,16 @@ const setPageTheme = () => { const v = THEME_VARS[dark ? "dark" : "light"]; for 
 app.style.cssText = "font:13px -apple-system,system-ui,sans-serif;min-height:100vh;padding:14px;display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start";
 app.innerHTML = `
   <div>
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap">
       <b>widget dev harness</b>
-      <button id="run">▶ preview</button><button id="check">run preview check</button><button id="theme">toggle theme</button>
-      <button id="extsel">external select</button><button id="ctl">fire control</button>
+      <select id="recipe" title="load a recipe into the editor"><option value="">recipe…</option></select>
+      <button id="run">▶ preview</button><button id="check">check</button><button id="theme">theme</button>
     </div>
+    <div style="display:flex;align-items:center;gap:7px;margin-bottom:8px;flex-wrap:wrap;font:11px ui-monospace,monospace">
+      <span style="color:var(--faint,#9aa)">simulate native panel →</span>
+      <button id="extsel">select NK</button><button id="exthover">hover Monocyte</button><button id="extclear">clear</button><button id="ctl">fire control</button>
+    </div>
+    <div id="state" style="font:11px ui-monospace,monospace;color:var(--dim,#667);margin-bottom:6px"></div>
     <textarea id="src" spellcheck="false" style="width:100%;height:300px;font:12px ui-monospace,monospace;border:1px solid var(--line,#ccc);border-radius:8px;padding:8px;background:var(--panel,#fff);color:var(--text,#222)"></textarea>
     <div id="check-out" style="font:11px ui-monospace,monospace;margin-top:6px;white-space:pre-wrap;color:var(--dim,#667)"></div>
     <div style="font:11px ui-monospace,monospace;letter-spacing:1px;color:var(--faint,#9aa);margin:12px 0 4px">AGENT (authoring loop)</div>
@@ -94,7 +100,7 @@ app.innerHTML = `
       <div style="font:11px ui-monospace,monospace;letter-spacing:1px;color:var(--faint,#9aa);padding:6px 10px;border-bottom:1px solid var(--line,#ccc)" id="wtitle">WIDGET</div>
       <div id="host" style="min-height:200px"></div>
     </div>
-    <div style="font:11px ui-monospace,monospace;letter-spacing:1px;color:var(--faint,#9aa);margin:10px 0 4px">CONTRACT EVENTS (→ widget→host)</div>
+    <div style="font:11px ui-monospace,monospace;letter-spacing:1px;color:var(--faint,#9aa);margin:10px 0 4px">CONTRACT EVENTS · → widget→host · ← host→widget</div>
     <div id="log" style="border:1px solid var(--line,#ccc);border-radius:8px;padding:6px 9px;height:200px;overflow:auto;background:var(--panel,#fff)"></div>
   </div>`;
 logEl = document.getElementById("log")!;
@@ -111,8 +117,16 @@ const mount = () => {
 };
 document.getElementById("run")!.onclick = mount;
 document.getElementById("theme")!.onclick = () => { dark = !dark; setPageTheme(); notify("theme"); };
-document.getElementById("extsel")!.onclick = () => { coord.selection = toSelInfo({ category: { grouping: "cell_type", value: "NK" } }); notify("coord"); log("←", { t: "coord" }); };
+const updateState = () => { const st = document.getElementById("state"); if (st) st.textContent = "coord: color=" + coord.colorBy + " · sel=" + (coord.selection ? ((coord.selection as any).value || (coord.selection as any).kind) : "none") + " · hint=" + (hintInfo ? (hintInfo.value || hintInfo.kind) : "none"); };
+document.getElementById("extsel")!.onclick = () => { coord.selection = toSelInfo({ category: { grouping: "cell_type", value: "NK" } }); notify("coord"); log("←", { t: "coord" }); updateState(); };
+document.getElementById("exthover")!.onclick = () => { hintInfo = { kind: "category", grouping: "cell_type", value: "Monocyte" }; notify("hint"); log("←", { t: "hint" }); updateState(); };
+document.getElementById("extclear")!.onclick = () => { coord.selection = null; selectedIds = []; hintInfo = null; notify("coord"); notify("hint"); log("←", { t: "clear" }); updateState(); };
 document.getElementById("ctl")!.onclick = () => handle?.sendControl("reset");
+// recipe picker — load a recipe into the editor + mount (fast iteration starting point)
+const recipeSel = document.getElementById("recipe") as HTMLSelectElement;
+recipeSel.innerHTML = '<option value="">recipe…</option>' + listRecipes().map((r) => '<option value="' + r.name + '">' + r.title + '</option>').join("");
+recipeSel.onchange = () => { const src = getRecipe(recipeSel.value); if (src) { srcEl.value = src; mount(); } };
+updateState();
 document.getElementById("check")!.onclick = async () => {
   const out = await previewWidget(srcEl.value, host);
   (document.getElementById("check-out")!).textContent = JSON.stringify(out, null, 2);
