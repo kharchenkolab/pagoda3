@@ -133,6 +133,9 @@ export class EmbeddingView {
             getColor: themeIsDark() ? [240, 244, 250, 255] : [38, 50, 58, 255], getTextAnchor: "middle", getAlignmentBaseline: "center",   // theme-aware on-plot labels: light text+dark halo (dark) / dark text+light halo (white)
             fontFamily: "-apple-system, BlinkMacSystemFont, system-ui, sans-serif", fontWeight: 700,
             fontSettings: { sdf: true, radius: 14, buffer: 6 }, outlineWidth: 2.4, outlineColor: themeIsDark() ? [9, 13, 20, 255] : [255, 255, 255, 235],
+            // a translucent backing plate behind each label so it reads over any cluster colour (esp. light theme,
+            // where dark text over a saturated blob was hard) — a soft panel-coloured rectangle, not fully opaque.
+            background: true, getBackgroundColor: themeIsDark() ? [13, 17, 23, 150] : [255, 255, 255, 165], backgroundPadding: [5, 2],
             billboard: true, pickable: false, characterSet: "auto",
             extensions: [new CollisionFilterExtension()],
             collisionEnabled: true, collisionGroup: "labels",
