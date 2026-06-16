@@ -45,6 +45,11 @@ export class EmbeddingView {
     canvas.style.width = "100%"; canvas.style.height = "100%"; canvas.style.display = "block";
     container.appendChild(canvas);
 
+    // deck.gl can't paint without a WebGL context. When the GPU process is wedged/disabled or contexts are
+    // exhausted (e.g. many open tabs), getContext() returns null and the browser fires this event — exactly and
+    // only in that case. Surface an actionable overlay instead of a silent blank panel + uncaught rejection.
+    canvas.addEventListener("webglcontextcreationerror", (e: any) => this.showGlError(e && e.statusMessage), { once: true });
+
     this.deck = new Deck({
       canvas,
       views: [new OrthographicView({ flipY: false })],
@@ -69,6 +74,26 @@ export class EmbeddingView {
     let rafR = 0;
     const ro = new ResizeObserver(() => { if (!container.isConnected) { ro.disconnect(); return; } if (rafR) return; rafR = requestAnimationFrame(() => { rafR = 0; if (container.isConnected) this.redraw(); }); });
     ro.observe(container);
+  }
+
+  // Shown when WebGL is unavailable (GPU process disabled/exhausted). One-shot, themed, actionable — turns a
+  // baffling empty panel into "here's what's wrong and how to recover". The rest of the app is unaffected.
+  private glFailed = false;
+  private showGlError(detail?: string) {
+    if (this.glFailed) return; this.glFailed = true;
+    const dark = themeIsDark();
+    if (getComputedStyle(this.container).position === "static") this.container.style.position = "relative";
+    const box = document.createElement("div");
+    box.className = "gl-error";
+    box.style.cssText = "position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:24px;text-align:center;font:13px/1.55 system-ui,sans-serif;z-index:5;background:" + (dark ? "rgba(18,18,22,.88)" : "rgba(250,250,252,.92)") + ";color:" + (dark ? "#ddd" : "#333");
+    box.innerHTML =
+      '<div style="max-width:440px">' +
+      '<div style="font-size:15px;font-weight:600;margin-bottom:8px">Can’t render the embedding</div>' +
+      '<div style="opacity:.85">Your browser couldn’t create a WebGL context — its GPU process is disabled or out of contexts. The rest of the app works; this panel needs WebGL.</div>' +
+      '<div style="opacity:.72;margin-top:10px">Fix: <b>fully quit &amp; reopen your browser</b> (not just reload), close other heavy tabs, or check <code>chrome://gpu</code>.</div>' +
+      (detail ? '<div style="opacity:.45;margin-top:10px;font-size:11px">' + String(detail).replace(/[<>&]/g, "") + "</div>" : "") +
+      "</div>";
+    this.container.appendChild(box);
   }
 
   private layers() {
