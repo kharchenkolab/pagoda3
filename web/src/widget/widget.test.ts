@@ -29,11 +29,11 @@ test("widgetSrcdoc embeds base css, bootstrap and the (escaped) source", () => {
 });
 
 test("bootstrap defines the documented pagoda surface", () => {
-  for (const fn of ["on:", "ready:", "setSelection:", "setColor:", "setHint:", "updateView:", "data:", "cssVar:"]) {
+  for (const fn of ["on:", "ready:", "setSelection:", "setColor:", "setHint:", "updateView:", "data:", "fetchExternal:", "cssVar:"]) {
     assert.ok(WIDGET_BOOTSTRAP.includes(fn), `bootstrap missing pagoda.${fn}`);
   }
   // every host→widget message the bootstrap must handle
-  for (const t of ["init", "coord", "hint", "theme", "control", "snapshot", "data"]) {
+  for (const t of ["init", "coord", "hint", "theme", "control", "snapshot", "data", "extData"]) {
     assert.ok(WIDGET_BOOTSTRAP.includes(`'${t}'`), `bootstrap missing handler for ${t}`);
   }
 });

@@ -97,6 +97,14 @@ const host: WidgetHost = {
     }
     throw new Error("unknown data kind: " + kind);
   },
+  fetchExternal: async (u: string, opts?: { as?: string }) => {   // real proxy fetch (Vite proxies /api → :8786) so PDB etc. work in the harness
+    const r = await fetch("/api/ext/fetch?url=" + encodeURIComponent(String(u)));
+    if (!r.ok) throw new Error("external fetch failed (" + r.status + "): " + (await r.text()).slice(0, 150));
+    const as = opts?.as, ct = r.headers.get("content-type") || "";
+    if (as === "text") return r.text();
+    if (as === "json" || /json/.test(ct)) return r.json();
+    return r.text();
+  },
 };
 
 // ---- UI ----

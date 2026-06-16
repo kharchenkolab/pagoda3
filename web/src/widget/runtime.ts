@@ -11,6 +11,7 @@ export interface WidgetHost {
   subscribe(cb: (what: "coord" | "theme" | "hint") => void): () => void;   // notify on coord/theme/hint change → re-pushed to the iframe
   apply(msg: WidgetMsg): void;                                    // host acts on setSelection/setColor/setHint/updateView
   data(kind: string, args: any): Promise<any>;                   // resolve a pagoda.data(kind,args) request
+  fetchExternal?(url: string, opts?: { as?: string }): Promise<any>;   // host-mediated allowlisted external fetch (optional)
 }
 
 export interface WidgetHandle {
@@ -54,6 +55,11 @@ export function mountWidget(container: HTMLElement, source: string, host: Widget
       case "requestData": host.data(m.kind, m.args).then(
         (payload) => post({ t: "data", reqId: m.reqId, ok: true, payload }),
         (err) => post({ t: "data", reqId: m.reqId, ok: false, error: String(err?.message || err) }));
+        break;
+      case "fetchExternal":
+        (host.fetchExternal ? host.fetchExternal(m.url, { as: m.as }) : Promise.reject(new Error("external fetch not available in this host"))).then(
+          (payload) => post({ t: "extData", reqId: m.reqId, ok: true, payload }),
+          (err) => post({ t: "extData", reqId: m.reqId, ok: false, error: String(err?.message || err) }));
         break;
       case "setSelection": case "setColor": case "setHint": case "updateView": host.apply(m); break;
     }

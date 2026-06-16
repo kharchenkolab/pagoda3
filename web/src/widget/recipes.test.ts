@@ -6,15 +6,18 @@ import { transformSync } from "esbuild";
 import { RECIPES, SNIPPETS, listRecipes, findRecipes, getRecipe } from "./recipes.ts";
 
 const themed = (s: string) => /var\(--/.test(s) || /['"]--\w/.test(s);
-const selfContained = (s: string) => !/https?:\/\/|cdn\.|\bimport\s|\brequire\(/.test(s);
+// self-contained = no DIRECT network/code loading. https:// URLs are fine — they're passed to pagoda.fetchExternal
+// (host-mediated). What's forbidden is a raw fetch()/XHR, an import, or a CDN <script>.
+const selfContained = (s: string) => !/\bfetch\s*\(|XMLHttpRequest|\bimport\s|\brequire\(|cdn\.|<script/i.test(s);
+const sourcesData = (s: string) => /pagoda\.data\(/.test(s) || /pagoda\.fetchExternal\(/.test(s);
 
 test("every WIDGET recipe parses, calls ready, themes, pulls data, and is self-contained", () => {
   for (const r of RECIPES) {
     try { transformSync(r.source, { loader: "js" }); } catch (e) { assert.fail(`recipe "${r.name}" does not parse: ${String((e as any)?.message).split("\n")[0]}`); }
     assert.match(r.source, /pagoda\.ready\(/, `${r.name}: must call pagoda.ready()`);
     assert.ok(themed(r.source), `${r.name}: must theme via CSS vars`);
-    assert.match(r.source, /pagoda\.data\(/, `${r.name}: should pull data`);
-    assert.ok(selfContained(r.source), `${r.name}: must be self-contained`);
+    assert.ok(sourcesData(r.source), `${r.name}: should pull data (pagoda.data or pagoda.fetchExternal)`);
+    assert.ok(selfContained(r.source), `${r.name}: must be self-contained (no raw fetch/import/CDN)`);
   }
 });
 

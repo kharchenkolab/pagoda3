@@ -28,6 +28,11 @@ function blockedHost(h) {
   if (/^127\./.test(h) || /^10\./.test(h) || /^192\.168\./.test(h) || /^169\.254\./.test(h) || /^172\.(1[6-9]|2\d|3[01])\./.test(h) || /^fe80:|^fc|^fd/.test(h)) return true;
   return false;
 }
+// External DATA fetch for widgets (pagoda.fetchExternal): only these registrable domains, https-only — keeps a widget
+// from reaching arbitrary hosts while opening the curated set of bio data sources. host === D or *.D.
+const EXT_ALLOW = ["rcsb.org", "ebi.ac.uk", "ensembl.org", "uniprot.org", "ncbi.nlm.nih.gov", "alphafold.ebi.ac.uk", "string-db.org", "reactome.org"];
+function extAllowed(host) { host = (host || "").toLowerCase(); return EXT_ALLOW.some((d) => host === d || host.endsWith("." + d)); }
+const extCache = new Map();   // tiny response cache (url -> {ct, body}) so preview/probe re-runs don't re-hit the API
 function htmlToText(h) {
   return h.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<!--[\s\S]*?-->/g, " ")
     .replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
@@ -127,6 +132,26 @@ const server = http.createServer(async (req, res) => {
       res.setHeader("content-type", "text/plain; charset=utf-8");
       return res.end(text || "(empty response)");
     } catch (e) { clearTimeout(to); res.statusCode = 502; return res.end("fetch failed: " + String(e && e.message || e)); }
+  }
+  if (url.pathname === "/api/ext/fetch" && req.method === "GET") {
+    let u; try { u = new URL(url.searchParams.get("url") || ""); } catch { res.statusCode = 400; return res.end("bad url"); }
+    if (u.protocol !== "https:") { res.statusCode = 400; return res.end("https only"); }
+    if (blockedHost(u.hostname) || !extAllowed(u.hostname)) { res.statusCode = 403; return res.end("host not in the external data allowlist (PDB/RCSB, UniProt, Ensembl, NCBI, AlphaFold, STRING, Reactome)"); }
+    const hit = extCache.get(u.href);
+    if (hit) { res.setHeader("content-type", hit.ct); return res.end(hit.body); }
+    const ac = new AbortController(); const to = setTimeout(() => ac.abort(), 12000);
+    try {
+      const up = await fetch(u.href, { signal: ac.signal, redirect: "follow", headers: { "user-agent": "pagoda-widget", "accept": "application/json,text/plain,*/*" } });
+      clearTimeout(to);
+      if (!up.ok) { res.statusCode = up.status; return res.end("upstream " + up.status); }
+      const buf = Buffer.from(await up.arrayBuffer());
+      if (buf.length > 6_000_000) { res.statusCode = 413; return res.end("response too large (>6MB)"); }
+      const ct = up.headers.get("content-type") || "text/plain";
+      if (extCache.size > 40) extCache.clear();
+      extCache.set(u.href, { ct, body: buf });
+      res.setHeader("content-type", ct); res.setHeader("access-control-allow-origin", "*");
+      return res.end(buf);
+    } catch (e) { clearTimeout(to); res.statusCode = 502; return res.end("ext fetch failed: " + String(e && e.message || e)); }
   }
   res.statusCode = 404; res.end("not found");
 });

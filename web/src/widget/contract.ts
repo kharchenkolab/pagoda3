@@ -30,6 +30,7 @@ export type HostMsg =
   | { t: "theme"; theme: ThemeInfo }
   | { t: "control"; id: string }                                  // a host-rendered header control was clicked
   | { t: "data"; reqId: number; ok: boolean; payload?: any; error?: string }   // reply to a requestData
+  | { t: "extData"; reqId: number; ok: boolean; payload?: any; error?: string }   // reply to a fetchExternal
   | { t: "snapshot" };                                            // ask the widget to report its rendered text (preview feedback)
 
 // widget → host
@@ -40,6 +41,7 @@ export type WidgetMsg =
   | { t: "setHint"; hint: any }
   | { t: "updateView"; patch: any }
   | { t: "requestData"; reqId: number; kind: string; args?: any }
+  | { t: "fetchExternal"; reqId: number; url: string; as?: string }   // host-mediated, allowlisted external data fetch
   | { t: "resize"; height: number }
   | { t: "snapshotResult"; text: string }
   | { t: "log"; level: string; args: string[] }
@@ -81,6 +83,10 @@ export const WIDGET_API_DOC =
   "'numeric' (args:{field} → {values,min,max}), 'selectedCells' (→ number[] of the currently selected cell indices), " +
   "'groupStats' (args:{field, genes:[...]} → {groups, genes, mean:[gene][group], frac:[gene][group]}) — per-group MEAN expression + " +
   "FRACTION expressing for each gene in one call; use it for dot-plots/heatmaps/violins instead of looping raw expr. " +
+  "`await pagoda.fetchExternal(url, {as:'json'|'text'})` pulls EXTERNAL biodata through the host (server-side, so no " +
+  "CORS) from an ALLOWLIST — PDB/RCSB, UniProt, Ensembl, NCBI, AlphaFold, STRING, Reactome (e.g. " +
+  "data.rcsb.org/rest/v1/core/entry/4HHB, rest.uniprot.org, rest.ensembl.org). NEVER call fetch()/XHR or load a CDN " +
+  "directly — the iframe is sandboxed; route every network request through pagoda.fetchExternal (data) or the data() kinds. " +
   "Errors/console are forwarded to the host for debugging; an uncaught " +
   "throw shows an error state. Header `controls` you declare are rendered by the host in the standard panel chrome; " +
   "a click arrives as pagoda.on('control', id => …). Keep it self-contained — no external network/CDN.";
@@ -130,6 +136,7 @@ export const WIDGET_BOOTSTRAP = `
       post({t:'snapshotResult', text:((viz.length? '[viz: '+viz.join(' · ')+']\\n' : '')+txt).slice(0,3000)});
     }
     else if(m.t==='data'){ var p=pending[m.reqId]; if(p){ delete pending[m.reqId]; m.ok ? p.resolve(m.payload) : p.reject(new Error(m.error||'data error')); } }
+    else if(m.t==='extData'){ var pe=pending[m.reqId]; if(pe){ delete pending[m.reqId]; m.ok ? pe.resolve(m.payload) : pe.reject(new Error(m.error||'external fetch error')); } }
   });
   ['log','warn','error'].forEach(function(lv){ var orig=console[lv]; console[lv]=function(){ try{ post({t:'log', level:lv, args:[].map.call(arguments, function(x){ try{return typeof x==='string'?x:JSON.stringify(x);}catch(e){return String(x);} })}); }catch(e){} try{ orig.apply(console, arguments); }catch(e){} }; });
   window.onerror=function(msg,src,ln,col,err){ reportError(err||msg); return false; };
@@ -145,6 +152,7 @@ export const WIDGET_BOOTSTRAP = `
     setHint:function(h){ post({t:'setHint', hint: h||null}); },
     updateView:function(p){ post({t:'updateView', patch: p||{}}); },
     data:function(kind,args){ var id=++reqId; return new Promise(function(res,rej){ pending[id]={resolve:res,reject:rej}; post({t:'requestData', reqId:id, kind:String(kind), args:args||{}}); }); },
+    fetchExternal:function(url,opts){ var id=++reqId; return new Promise(function(res,rej){ pending[id]={resolve:res,reject:rej}; post({t:'fetchExternal', reqId:id, url:String(url), as:(opts&&opts.as)||null}); }); },
     cssVar:function(name){ try{ return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }catch(e){ return ''; } }
   };
 })();

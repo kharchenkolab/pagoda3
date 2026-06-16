@@ -239,7 +239,18 @@ function onSized(el, draw) {
 // usage: onSized(wrap, (w, h) => { svg.setAttribute('width', w); svg.setAttribute('height', h); /* ...draw with w,h... */ });
 `;
 
+const SNIP_EXT_FETCH = `// Pull EXTERNAL biodata through the host (allowlisted: PDB/RCSB, UniProt, Ensembl, NCBI, AlphaFold, STRING, Reactome).
+// Widgets are sandboxed — never call the browser's network APIs or load a CDN directly; always route through this. Returns json or text.
+async function examples(id) {
+  const entry = await pagoda.fetchExternal('https://data.rcsb.org/rest/v1/core/entry/' + id, { as: 'json' });   // PDB entry metadata
+  const prot  = await pagoda.fetchExternal('https://rest.uniprot.org/uniprotkb/P69905.json', { as: 'json' });    // UniProt record
+  const cif   = await pagoda.fetchExternal('https://files.rcsb.org/download/' + id + '.cif', { as: 'text' });    // structure file (text)
+  return { entry, prot, cif };
+}
+`;
+
 export const SNIPPETS: WidgetRecipe[] = [
+  { name: "ext-fetch", title: "External data fetch", about: "pagoda.fetchExternal(url,{as}) pulls ALLOWLISTED external biodata (PDB/RCSB, UniProt, Ensembl, NCBI, AlphaFold, STRING, Reactome) through the host — for fetching a structure, a protein record, gene annotations, etc. Never fetch() directly.", techniques: ["external", "fetch", "PDB", "RCSB", "UniProt", "Ensembl", "NCBI", "AlphaFold", "API", "protein", "structure", "annotation"], source: SNIP_EXT_FETCH, kind: "snippet" },
   { name: "responsive", title: "Size-aware draw / redraw", about: "onSized(el, draw): run your draw(width,height) once the container has a real size and again on resize — the antidote to a chart rendering at 0×0 before first layout (SVG or canvas). Wrap any chart's draw in this.", techniques: ["responsive", "resize", "ResizeObserver", "layout", "clientWidth", "redraw", "size", "draw"], source: SNIP_RESPONSIVE, kind: "snippet" },
   { name: "scales", title: "Scales + nice ticks", about: "scaleLinear(domain→range) and niceTicks(min,max,n) — the basis of any axis or positioned chart.", techniques: ["scale", "axis", "ticks", "linear", "log alternative"], source: SNIP_SCALES, kind: "snippet" },
   { name: "canvas-points", title: "Canvas point cloud", about: "paintPoints(canvas,xs,ys,opt): DPR-correct, auto-scaled scatter painting with optional selection highlight; returns the scales for hit-testing.", techniques: ["canvas", "scatter", "DPR", "autoscale", "selection highlight"], source: SNIP_CANVAS_POINTS, kind: "snippet" },
@@ -250,7 +261,33 @@ export const SNIPPETS: WidgetRecipe[] = [
   { name: "bins", title: "Histogram binning", about: "histogramBins(values,n) → counts/edges/min/max for a histogram or density.", techniques: ["histogram", "bins", "distribution", "density"], source: SNIP_BINS, kind: "snippet" },
 ];
 
+// External-data demo: fetch a PDB entry's metadata from RCSB via the host (allowlisted) and show a themed card.
+const PDB_CARD = `// Fetch a PDB structure's metadata from RCSB via the host and show a card. Adapt to UniProt/Ensembl/AlphaFold.
+const root = document.body;
+root.innerHTML = '<div class="pg-row"><label>PDB id <input id="pid" value="4HHB" style="width:84px;text-transform:uppercase"></label><button id="go">fetch</button></div><div id="card" class="pg-muted" style="margin-top:8px;line-height:1.6"></div>';
+const card = root.querySelector('#card');
+async function load() {
+  const id = root.querySelector('#pid').value.trim().toUpperCase(); if (!id) return;
+  card.textContent = 'loading ' + id + '…';
+  try {
+    const e = await pagoda.fetchExternal('https://data.rcsb.org/rest/v1/core/entry/' + id, { as: 'json' });
+    const title = (e.struct && e.struct.title) || '(no title)';
+    const method = (e.exptl && e.exptl[0] && e.exptl[0].method) || '?';
+    const res = e.rcsb_entry_info && e.rcsb_entry_info.resolution_combined && e.rcsb_entry_info.resolution_combined[0];
+    const atoms = e.rcsb_entry_info && e.rcsb_entry_info.deposited_atom_count;
+    card.innerHTML = '<div style="font-weight:600;color:var(--text)">' + id + '</div>'
+      + '<div style="color:var(--text);margin:2px 0">' + title + '</div>'
+      + '<div>' + method + (res ? (' · ' + res + ' Å') : '') + (atoms ? (' · ' + atoms.toLocaleString() + ' atoms') : '') + '</div>';
+  } catch (err) { card.textContent = 'error: ' + err.message; }
+}
+root.querySelector('#go').onclick = load;
+root.querySelector('#pid').onkeydown = (ev) => { if (ev.key === 'Enter') load(); };
+load();
+pagoda.ready({ title: 'PDB entry' });
+`;
+
 export const RECIPES: WidgetRecipe[] = [
+  { name: "pdb-card", title: "PDB entry card", about: "Fetch a PDB structure's metadata from RCSB (title, method, resolution, atom count) via pagoda.fetchExternal and show a themed card — the worked example of external-data integration.", techniques: ["external", "PDB", "RCSB", "protein", "structure", "fetchExternal", "card", "annotation"], source: PDB_CARD },
   { name: "ranked-bars", title: "Ranked composition bars", about: "Horizontal bars of a categorical field's composition; click a bar to select; highlights the active selection.", techniques: ["SVG bars", "data('categories')", "click → setSelection", "react to coord"], source: RANKED_BARS },
   { name: "histogram", title: "Histogram + brush", about: "Binned distribution of a numeric field; drag a range to select the cells in it.", techniques: ["SVG histogram", "data('numeric')", "drag-brush", "range → setSelection(cells)"], source: HISTOGRAM },
   { name: "scatter", title: "Canvas scatter", about: "Two numeric fields/genes on a <canvas>; selected cells highlighted; reacts to selection + theme.", techniques: ["canvas 2d + DPR", "data('numeric'/'expr')", "data('selectedCells')", "react to coord+theme"], source: SCATTER },

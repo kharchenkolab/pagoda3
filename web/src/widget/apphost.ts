@@ -48,7 +48,7 @@ export function fieldsInfo(fields: { name: string; kind: "categorical" | "numeri
 // with real data + the current selection), but the widget's WRITES (setSelection/setColor/updateView) are swallowed —
 // previewing/probing a widget must NOT mutate the user's live session.
 export function readonlyHost(h: WidgetHost): WidgetHost {
-  return { theme: h.theme, coord: h.coord, hint: h.hint, subscribe: h.subscribe, data: h.data, apply: () => { /* preview is side-effect-free */ } };
+  return { theme: h.theme, coord: h.coord, hint: h.hint, subscribe: h.subscribe, data: h.data, fetchExternal: h.fetchExternal, apply: () => { /* preview is side-effect-free */ } };
 }
 
 export function makeWidgetHost(app: App): WidgetHost {
@@ -126,6 +126,15 @@ export function makeWidgetHost(app: App): WidgetHost {
         }
         default: throw new Error("unknown data kind: " + kind);
       }
+    },
+    fetchExternal: async (u, opts) => {
+      const r = await fetch("/api/ext/fetch?url=" + encodeURIComponent(String(u)));
+      if (!r.ok) throw new Error("external fetch failed (" + r.status + "): " + (await r.text()).slice(0, 150));
+      const as = opts?.as, ct = r.headers.get("content-type") || "";
+      if (as === "text") return r.text();
+      if (as === "arrayBuffer") return r.arrayBuffer();
+      if (as === "json" || /json/.test(ct)) return r.json();
+      return r.text();
     },
   };
 }
