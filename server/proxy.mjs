@@ -74,6 +74,11 @@ const server = http.createServer(async (req, res) => {
         messages: payload.messages || [],
       };
       if (payload.tools) out.tools = payload.tools;
+      // PROMPT CACHING: the system prompt + tool definitions are large and stable across a conversation's turns —
+      // mark the last block of each so Anthropic caches them (5-min TTL), so they're written once and read (cheap)
+      // on every follow-up turn instead of re-billed in full. Transparent to results.
+      if (out.system && out.system.length) out.system[out.system.length - 1] = { ...out.system[out.system.length - 1], cache_control: { type: "ephemeral" } };
+      if (out.tools && out.tools.length) out.tools[out.tools.length - 1] = { ...out.tools[out.tools.length - 1], cache_control: { type: "ephemeral" } };
       if (payload.thinking) out.thinking = payload.thinking;
       const headers = { "content-type": "application/json", "anthropic-version": "2023-06-01" };
       if (auth.mode === "oauth") { headers["authorization"] = `Bearer ${auth.token}`; headers["anthropic-beta"] = "oauth-2025-04-20"; }
