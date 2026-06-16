@@ -328,6 +328,12 @@ export function findRecipes(query: string, limit = 6): RecipeMeta[] {
   return scored.slice(0, limit).map((x) => meta(x.r));
 }
 
+// The RAW runnable source for a recipe/snippet (no header comment) — used to SEED an authoring session from a recipe
+// so the agent edits it instead of re-emitting the whole body (the dominant authoring cost; see the proxy agent log).
+export function recipeSource(name: string): string | null {
+  const r = ALL.find((x) => x.name === (name || "").trim());
+  return r ? r.source : null;
+}
 export function getRecipe(name: string): string | null {
   const r = ALL.find((x) => x.name === (name || "").trim());
   if (!r) return null;
