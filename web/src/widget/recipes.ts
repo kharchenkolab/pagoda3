@@ -297,8 +297,60 @@ load();
 pagoda.ready({ title: 'PDB entry' });
 `;
 
+// A complete loadLib-powered 3D viewer with CLEAN DEFAULTS — the canonical good first result for "show a structure".
+// (No inner backticks: this whole source is a template literal, so it builds markup with string concatenation.)
+const STRUCTURE_VIEWER = `// 3D protein STRUCTURE viewer — loadLib('3dmol') + fetchExternal(RCSB) → a clean cartoon.
+// CLEAN DEFAULTS so a multi-chain entry doesn't render as a pile of "extra" chains: shows ONE representative chain,
+// cartoon/spectrum, waters+ligands hidden. The chain selector switches chain / shows all; .pdb falls back to mmCIF.
+const root = document.body;
+root.style.cssText = 'margin:0;font-family:var(--sans);color:var(--text);display:flex;flex-direction:column;height:100vh;background:var(--panel)';
+const bar = document.createElement('div');
+bar.style.cssText = 'display:flex;gap:6px;align-items:center;padding:8px 10px;border-bottom:1px solid var(--line);flex:0 0 auto;flex-wrap:wrap';
+bar.innerHTML = '<label style="font-size:12px;color:var(--dim)">PDB</label>'
+  + '<input id="pdb" value="1CRN" maxlength="8" style="width:72px;background:var(--inset);color:var(--text);border:1px solid var(--line);border-radius:4px;padding:3px 6px;font-family:var(--mono);text-transform:uppercase">'
+  + '<button id="go" style="background:var(--cyan);color:var(--panel);border:none;border-radius:4px;padding:4px 10px;cursor:pointer;font-weight:600">Load</button>'
+  + '<select id="rep" style="background:var(--inset);color:var(--text);border:1px solid var(--line);border-radius:4px;padding:3px 5px"><option value="cartoon">Cartoon</option><option value="stick">Stick</option><option value="sphere">Sphere</option><option value="line">Line</option></select>'
+  + '<select id="chain" style="background:var(--inset);color:var(--text);border:1px solid var(--line);border-radius:4px;padding:3px 5px"></select>'
+  + '<span id="status" style="font-size:12px;color:var(--dim);margin-left:auto"></span>';
+root.appendChild(bar);
+const view = document.createElement('div'); view.style.cssText = 'flex:1 1 auto;position:relative;min-height:0'; root.appendChild(view);
+const $ = function (s) { return root.querySelector(s); };
+const status = function (m) { $('#status').textContent = m; };
+let viewer = null;
+function styleSpec() { const r = $('#rep').value; if (r === 'stick') return { stick: { radius: 0.15 } }; if (r === 'sphere') return { sphere: { scale: 0.3 } }; if (r === 'line') return { line: {} }; return { cartoon: { color: 'spectrum' } }; }
+function chainSel() { const c = $('#chain').value; return c === '*' ? {} : { chain: c }; }
+function draw() { if (!viewer) return; viewer.setStyle({}, {}); const sel = Object.assign({ hetflag: false }, chainSel()); viewer.setStyle(sel, styleSpec()); viewer.zoomTo(sel); viewer.render(); }
+async function load() {
+  const id = ($('#pdb').value || '').trim().toUpperCase();
+  if (!/^[A-Za-z0-9]{4}$/.test(id)) { status('enter a 4-char PDB id'); return; }
+  status('loading ' + id + '…');
+  try {
+    await pagoda.loadLib('3dmol');
+    let txt = await pagoda.fetchExternal('https://files.rcsb.org/download/' + id + '.pdb', { as: 'text' }).catch(function () { return null; });
+    let fmt = 'pdb';
+    if (!txt || txt.length < 100 || /^<|no.?file/i.test(txt.slice(0, 80))) { txt = await pagoda.fetchExternal('https://files.rcsb.org/download/' + id + '.cif', { as: 'text' }).catch(function () { return null; }); fmt = 'cif'; }
+    if (!txt || txt.length < 100) { status('no structure for ' + id); return; }
+    const bg = pagoda.cssVar('--panel') || '#111';
+    if (!viewer) viewer = $3Dmol.createViewer(view, { backgroundColor: bg });
+    viewer.clear(); const model = viewer.addModel(txt, fmt);
+    const chains = []; model.selectedAtoms({}).forEach(function (a) { if (a.chain && chains.indexOf(a.chain) < 0) chains.push(a.chain); }); chains.sort();
+    const sel = $('#chain'); sel.innerHTML = chains.map(function (c) { return '<option value="' + c + '">Chain ' + c + '</option>'; }).join('') + (chains.length > 1 ? '<option value="*">All chains</option>' : '');
+    sel.value = chains[0] || '*';
+    draw();
+    status(id + ' · ' + chains.length + ' chain' + (chains.length !== 1 ? 's' : ''));
+  } catch (e) { status('error: ' + (e && e.message || e)); }
+}
+$('#go').addEventListener('click', load);
+$('#pdb').addEventListener('keydown', function (e) { if (e.key === 'Enter') load(); });
+$('#rep').addEventListener('change', draw);
+$('#chain').addEventListener('change', draw);
+pagoda.ready({ title: 'Protein Structure', height: 420 });
+load();
+`;
+
 export const RECIPES: WidgetRecipe[] = [
   { name: "pdb-card", title: "PDB entry card", about: "Fetch a PDB structure's metadata from RCSB (title, method, resolution, atom count) via pagoda.fetchExternal and show a themed card — the worked example of external-data integration.", techniques: ["external", "PDB", "RCSB", "protein", "structure", "fetchExternal", "card", "annotation"], source: PDB_CARD },
+  { name: "structure-viewer", title: "3D protein structure viewer", about: "Interactive 3D molecular structure from a PDB id: loadLib('3dmol') + fetchExternal(RCSB), rendered as a clean cartoon. CLEAN DEFAULTS — shows ONE representative chain (not the whole multi-chain assembly), waters/ligands hidden, with chain + representation selectors; .pdb falls back to mmCIF for large entries. Use this when the user wants to SEE a structure (not just its metadata — that's pdb-card).", techniques: ["3D", "structure", "protein", "molecule", "PDB", "RCSB", "3dmol", "loadLib", "fetchExternal", "viewer", "cartoon", "chain", "webgl", "mmCIF", "render"], source: STRUCTURE_VIEWER },
   { name: "ranked-bars", title: "Ranked composition bars", about: "Horizontal bars of a categorical field's composition; click a bar to select; highlights the active selection.", techniques: ["SVG bars", "data('categories')", "click → setSelection", "react to coord"], source: RANKED_BARS },
   { name: "histogram", title: "Histogram + brush", about: "Binned distribution of a numeric field; drag a range to select the cells in it.", techniques: ["SVG histogram", "data('numeric')", "drag-brush", "range → setSelection(cells)"], source: HISTOGRAM },
   { name: "scatter", title: "Canvas scatter", about: "Two numeric fields/genes on a <canvas>; selected cells highlighted; reacts to selection + theme.", techniques: ["canvas 2d + DPR", "data('numeric'/'expr')", "data('selectedCells')", "react to coord+theme"], source: SCATTER },
