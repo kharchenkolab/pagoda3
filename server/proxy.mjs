@@ -25,6 +25,25 @@ function loadStore() { try { return JSON.parse(fs.readFileSync(OAUTH_STORE, "utf
 const AGENT_LOG = process.env.PAGODA_AGENT_LOG || "/tmp/pagoda-agent.jsonl";
 function logAgent(rec) { try { fs.appendFileSync(AGENT_LOG, JSON.stringify(rec) + "\n"); } catch { /* non-fatal */ } }
 
+// FULL-CONTENT debug capture (opt-in: PAGODA_AGENT_DEBUG=1). Off by default — the telemetry log above stays the only
+// write. When on, every agent turn's full request transcript + assistant response is dumped so the live session can be
+// inspected end-to-end (prompts, tool inputs/outputs, replies), not just telemetry. Layout, optimised for "what is the
+// session I'm running RIGHT NOW doing?":
+//   <dir>/current.json     — ALWAYS the latest full conversation (overwritten each turn). One file → read it first.
+//   <dir>/sess-<runId>.jsonl — per-session history: one line per turn (the delta: triggering user turn + the reply).
+// Each conversation carries a client-minted runId so concurrent tabs / the preview don't get conflated.
+const DEBUG = /^(1|true|yes|on)$/i.test(String(process.env.PAGODA_AGENT_DEBUG || ""));
+const DEBUG_DIR = process.env.PAGODA_AGENT_DEBUG_DIR || "/tmp/pagoda-debug";
+if (DEBUG) { try { fs.mkdirSync(DEBUG_DIR, { recursive: true }); } catch { /* */ } }
+function writeDebug(rec) {
+  if (!DEBUG) return;
+  try {
+    fs.writeFileSync(`${DEBUG_DIR}/current.json`, JSON.stringify(rec, null, 2));   // overwrite → current.json is the live session
+    const id = String(rec.runId || "session").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 40) || "session";
+    fs.appendFileSync(`${DEBUG_DIR}/sess-${id}.jsonl`, JSON.stringify({ t: rec.t, store: rec.store, turn: rec.turnIndex, stop: rec.stop, usage: rec.usage, user: rec.lastUser, assistant: rec.response }) + "\n");
+  } catch { /* non-fatal */ }
+}
+
 // ---- web fetch (for the agent's fetch_url tool: consult an external viz/technique reference) ----
 // SSRF guard: only http(s), and refuse loopback / link-local / private-range hosts so the tool can't be steered at
 // internal services. (Literal-host checks only — adequate for a local single-user dev tool.)
@@ -136,17 +155,22 @@ const server = http.createServer(async (req, res) => {
       const pump = async () => {
         for (;;) { const { done, value } = await reader.read(); if (done) break; res.write(Buffer.from(value)); raw += dec.decode(value, { stream: true }); }
         res.end();
-        // tee-parse the buffered SSE for usage / tool calls / stop reason → one log line per turn
+        // tee-parse the buffered SSE for usage / tool calls / stop reason → one log line per turn. When DEBUG, also
+        // accumulate the FULL assistant response (text + tool_use inputs) for the content dump.
         let usage = {}, tools = [], stop = "", textChars = 0;
+        let dbgText = "", dbgTools = [], curTool = null, curJson = "";
         for (const line of raw.split("\n")) { if (!line.startsWith("data:")) continue; let ev; try { ev = JSON.parse(line.slice(5).trim()); } catch { continue; }
           if (ev.type === "message_start") usage = { ...(ev.message && ev.message.usage || {}) };
-          else if (ev.type === "content_block_start" && ev.content_block && ev.content_block.type === "tool_use") tools.push(ev.content_block.name);
-          else if (ev.type === "content_block_delta" && ev.delta && ev.delta.type === "text_delta") textChars += (ev.delta.text || "").length;
+          else if (ev.type === "content_block_start" && ev.content_block && ev.content_block.type === "tool_use") { tools.push(ev.content_block.name); if (DEBUG) { curTool = { name: ev.content_block.name, input: undefined }; curJson = ""; } }
+          else if (ev.type === "content_block_delta" && ev.delta && ev.delta.type === "text_delta") { textChars += (ev.delta.text || "").length; if (DEBUG) dbgText += ev.delta.text || ""; }
+          else if (ev.type === "content_block_delta" && ev.delta && ev.delta.type === "input_json_delta" && DEBUG) curJson += ev.delta.partial_json || "";
+          else if (ev.type === "content_block_stop" && DEBUG && curTool) { try { curTool.input = curJson ? JSON.parse(curJson) : {}; } catch { curTool.input = curJson; } dbgTools.push(curTool); curTool = null; }
           else if (ev.type === "message_delta") { if (ev.usage) usage = { ...usage, ...ev.usage }; if (ev.delta && ev.delta.stop_reason) stop = ev.delta.stop_reason; }
         }
-        logAgent({ t: new Date().toISOString(), ms: Date.now() - t0, client: payload.client || "?", model: out.model, msgs: out.messages.length,
+        logAgent({ t: new Date().toISOString(), ms: Date.now() - t0, client: payload.client || "?", runId: payload.runId || null, store: payload.store || null, model: out.model, msgs: out.messages.length,
           tools, stop: stop || null, textChars, in: usage.input_tokens || 0, cr: usage.cache_read_input_tokens || 0, cc: usage.cache_creation_input_tokens || 0, out: usage.output_tokens || 0,
           empty: tools.length === 0 && textChars === 0 });
+        if (DEBUG) { const msgs = payload.messages || []; writeDebug({ t: new Date().toISOString(), runId: payload.runId || "session", client: payload.client || "?", store: payload.store || null, model: out.model, turnIndex: msgs.length, stop: stop || null, usage, system: payload.system || "", messages: msgs, response: { text: dbgText, tools: dbgTools, stop: stop || null }, lastUser: msgs.length ? msgs[msgs.length - 1] : null }); }
       };
       pump().catch(() => res.end());
     });

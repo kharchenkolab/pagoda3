@@ -12,6 +12,12 @@ import { applyEdits } from "../widget/edits.ts";
 
 const PROXY = "/api/agent/stream";
 
+// A stable id for THIS browser session's conversation — minted once per page load, sent with every turn so the proxy's
+// debug capture (PAGODA_AGENT_DEBUG) can attribute turns to one session (current.json + sess-<runId>.jsonl) instead of
+// conflating concurrent tabs / the preview. Telemetry-only by default; no effect unless DEBUG is on server-side.
+let _liveRunId = "";
+function liveRunId(): string { if (!_liveRunId) _liveRunId = "r" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); return _liveRunId; }
+
 export async function checkLive(): Promise<boolean> {
   try { const r = await fetch("/api/health"); const j = await r.json(); return !!j.ok; } catch { return false; }
 }
@@ -273,7 +279,7 @@ export async function runLive(app: App, userText: string, abort: AbortSignal): P
   let emptyRetries = 0;
   for (let turn = 0; turn < 12; turn++) {   // headroom for multi-step flows like widget authoring (template → preview → fix → save)
     if (abort.aborted) break;
-    const res = await fetch(PROXY, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ system: sys, messages, tools: TOOLS, model: "claude-opus-4-8", max_tokens: 8192, client: "app" }), signal: abort });
+    const res = await fetch(PROXY, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ system: sys, messages, tools: TOOLS, model: "claude-opus-4-8", max_tokens: 8192, client: "app", runId: liveRunId(), store: app.currentStore() }), signal: abort });
     if (!res.ok || !res.body) { app.thread.entries.push({ role: "agent", text: "(agent unreachable — using local fallback)" }); ag.renderThread(); throw new Error("live unreachable"); }
     const assistant: any[] = []; let curText = ""; let curTool: any = null; let curJson = ""; let textEntry: any = null; let stop = "";
     const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = "";
