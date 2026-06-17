@@ -19,6 +19,7 @@ export const REGISTRY: Record<string, number> = { Embedding: 1, CompositionBars:
 export class Agent {
   app: App;
   live = false;                 // set true when the proxy + token are reachable
+  running = false;              // a live turn is in flight (drives the Stop affordances on the Ask button + docked chat)
   private abortCtrl?: AbortController;
   constructor(app: App) { this.app = app; }
   get ctx() { return this.app.ctx; }
@@ -30,18 +31,32 @@ export class Agent {
   }
   async askLive(qraw: string, sc?: Scope | null) {
     this.app.hideSelpop();
-    this.abortCtrl = new AbortController();
-    try { await runLive(this.app, qraw, this.abortCtrl.signal); }
+    const ctrl = this.abortCtrl = new AbortController();
+    this.running = true; this.app.refreshAskBtn();
+    try { await runLive(this.app, qraw, ctrl.signal); }
     catch (e) {
-      const lm = this.app.liveMessages; if (lm.length && typeof lm[lm.length - 1]?.content === "string") lm.pop();   // drop the dangling user turn so continuity stays clean
-      this.live = false;
-      if (this.app.thread) this.settleThread(null);
-      this.app.setPip("idle");
-      this.app.toast("Live agent unavailable — using local planner", String((e as any)?.message || e));
-      return this.askMock(qraw, sc);
+      if (!ctrl.signal.aborted) {   // a GENUINE failure (proxy/token) — fall back to the local planner, once
+        const lm = this.app.liveMessages; if (lm.length && typeof lm[lm.length - 1]?.content === "string") lm.pop();   // drop the dangling user turn so continuity stays clean
+        this.live = false;
+        if (this.app.thread?.live) this.settleThread(null);
+        this.app.setPip("idle"); this.running = false; this.app.refreshAskBtn();
+        this.app.toast("Live agent unavailable — using local planner", String((e as any)?.message || e));
+        return this.askMock(qraw, sc);
+      }   // else: user hit STOP — handled in finally (stay live)
+    } finally {
+      this.running = false; this.app.refreshAskBtn();
+      if (ctrl.signal.aborted) {
+        // STOP (whether the abort threw mid-stream or broke cleanly between turns): truncate the aborted exchange —
+        // its user-text turn + every partial assistant/tool turn after it — so the next ask starts on a clean role
+        // boundary (an assistant tool_use left without its tool_result would make the next request invalid). Stay live.
+        const lm = this.app.liveMessages; for (let i = lm.length - 1; i >= 0; i--) { if (lm[i].role === "user" && typeof lm[i].content === "string") { lm.length = i; break; } }
+        if (this.app.thread?.live) this.settleThread(null);
+        this.app.setPip("idle");
+      }
+      if (this.app.threadDocked) this.renderThread();
     }
   }
-  stopLive() { this.abortCtrl?.abort(); }
+  stopLive() { this.abortCtrl?.abort(); this.app.toast("Stopped — you have the wheel", null); }
 
   validate(p: Partial<Panel>) {
     if (!REGISTRY[p.type!]) return { ok: false, reason: `unknown component type “${p.type}” — not in the validated registry` };
@@ -188,9 +203,14 @@ export class Agent {
     const awaiting = !this.app.thread && !!lastEx && String(lastEx.why || "").replace(/<[^>]+>/g, "").trim().endsWith("?");
     const foot = mk("div", "convofoot" + (awaiting ? " awaiting" : ""));
     if (awaiting) foot.appendChild(mk("div", "awaitlabel", "↳ the agent asked you something — reply below"));
-    const inp = document.createElement("input"); inp.placeholder = awaiting ? "Type your reply…" : "Message the agent…";
+    const running = this.running;
+    const inrow = mk("div", "convoinrow");
+    const inp = document.createElement("input"); inp.placeholder = running ? "Working… — hit ■ to stop" : awaiting ? "Type your reply…" : "Message the agent…";
     inp.onkeydown = (e) => { if (e.key === "Enter" && inp.value.trim()) { const v = inp.value.trim(); inp.value = ""; this.dockSend(v); } };
-    foot.appendChild(inp); host.appendChild(foot); body.scrollTop = body.scrollHeight;
+    inrow.appendChild(inp);
+    // while a live turn runs, a STOP square sits at the right edge of the entry field (the side-chat stop)
+    if (running) { const stop = mk("button", "convostop"); stop.title = "stop the agent"; stop.onclick = () => this.stopLive(); inrow.appendChild(stop); }
+    foot.appendChild(inrow); host.appendChild(foot); body.scrollTop = body.scrollHeight;
     if (awaiting) inp.focus();
   }
   // a past user↔agent exchange, collapsed to question + answer, click to expand the full trace

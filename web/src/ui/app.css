@@ -50,6 +50,9 @@ button{font-family:inherit}
 .tb.pip.nudge{border-color:var(--cyan);color:var(--cyan)} .tb.pip.nudge .dot{background:var(--cyan);animation:ppulse 1.4s infinite}
 @keyframes ppulse{0%,100%{opacity:1}50%{opacity:.25}}
 .tb.pip .nbadge{position:absolute;top:-6px;right:-6px;min-width:15px;height:15px;border-radius:8px;background:var(--cyan);color:var(--on-accent);font-size:9.5px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;padding:0 3px}
+/* the Ask button becomes a STOP button while a live turn runs */
+.tb.pip.stop{cursor:pointer;border-color:var(--teal)} .tb.pip.stop:hover{border-color:var(--bad);color:var(--bad)}
+.tb.pip.stop .stopsq{width:8px;height:8px;border-radius:1.5px;background:currentColor;flex:0 0 auto;animation:ppulse 1.3s infinite}
 .badge{min-width:16px;height:16px;border-radius:8px;background:var(--cyan);color:var(--on-accent);font-size:10px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;padding:0 4px}
 
 /* ---------- stage: canvas + rail + docked convo ---------- */
@@ -230,6 +233,10 @@ button{font-family:inherit}
 .convofoot.awaiting{border-top-color:var(--cyan)}                                    /* the agent is waiting on a reply */
 .convofoot .awaitlabel{font-size:10.5px;color:var(--cyan);padding:0 2px 6px}
 .convofoot.awaiting input{border-color:var(--cyan);box-shadow:0 0 0 1px var(--cyan) inset}
+.convoinrow{position:relative;display:flex}
+.convoinrow input{flex:1;padding-right:36px}                                          /* room for the stop square */
+.convostop{position:absolute;right:7px;top:50%;transform:translateY(-50%);width:20px;height:20px;border:0;border-radius:5px;background:var(--text);cursor:pointer;padding:0}
+.convostop:hover{background:var(--bad)}
 
 /* ---------- timeline strip + live thread ---------- */
 .timeline{flex:0 0 auto;background:var(--panel);border-top:1px solid var(--line)}

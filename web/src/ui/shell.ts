@@ -1127,10 +1127,17 @@ export class App {
   }
 
   // ---------- pip + thread (presence) : delegated to agent's view methods below ----------
-  setPip(state: string, label?: string) {
-    const b = this.$("askBtn"); b.className = "tb pip" + (state && state !== "idle" ? " " + state : "");
-    const main = state === "working" ? "Working" + (label ? " · " + label : "") : state === "listening" ? "Listening…" : "Ask";
-    const right = state === "nudge" ? `<span class="nbadge">${label || "!"}</span>` : (!state || state === "idle" || state === "listening") ? `<span class="kbd">⌘K</span>` : "";
+  pipState = "idle"; pipLabel = "";
+  setPip(state: string, label?: string) { this.pipState = state; this.pipLabel = label || ""; this.renderAskBtn(); }
+  // While a LIVE turn is in flight the Ask button becomes a STOP button (click to abort) — the main-screen stop. Else
+  // it reflects the presence pip (Working/Listening/Ask). refreshAskBtn re-renders it when only `running` changed.
+  refreshAskBtn() { this.renderAskBtn(); }
+  renderAskBtn() {
+    const b = this.$("askBtn");
+    if (this.agent?.running) { b.className = "tb pip working stop"; b.title = "stop the agent"; b.innerHTML = `<span class="stopsq"></span>Stop${this.pipLabel ? ` · ${this.pipLabel}` : ""}`; return; }
+    b.title = ""; b.className = "tb pip" + (this.pipState && this.pipState !== "idle" ? " " + this.pipState : "");
+    const main = this.pipState === "working" ? "Working" + (this.pipLabel ? " · " + this.pipLabel : "") : this.pipState === "listening" ? "Listening…" : "Ask";
+    const right = this.pipState === "nudge" ? `<span class="nbadge">${this.pipLabel || "!"}</span>` : (!this.pipState || this.pipState === "idle" || this.pipState === "listening") ? `<span class="kbd">⌘K</span>` : "";
     b.innerHTML = `<span class="dot"></span>${main}${right}`;
   }
 
@@ -1225,7 +1232,7 @@ export class App {
 
   // ---------- wiring ----------
   wire() {
-    this.$("askBtn").onclick = () => { if (this.nudgePending) this.agent.openNudge(); else this.openPalette(); };
+    this.$("askBtn").onclick = () => { if (this.agent.running) { this.agent.stopLive(); return; } if (this.nudgePending) this.agent.openNudge(); else this.openPalette(); };
     this.$("lockBtn").onclick = () => { this.locked = !this.locked; this.$("lockBtn").classList.toggle("on", this.locked); this.$("lockBtn").textContent = this.locked ? "🔒 Layout" : "🔓 Layout"; this.toast(this.locked ? "Layout locked" : "Layout unlocked", this.locked ? "The agent will route bigger changes to the rail instead of touching your workbench." : null); };
     this.$("acctBtn").onclick = (e) => { e.stopPropagation(); const c = this.$("acct"); if (c.classList.contains("show")) c.classList.remove("show"); else this.openAccountMenu(); };
     this.applyTheme((localStorage.getItem("p2-theme") as "light" | "dark") || "dark");   // restore the saved preference
