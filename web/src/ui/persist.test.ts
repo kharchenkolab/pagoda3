@@ -1,7 +1,33 @@
 // Unit tests for session/widget persistence helpers. Run: `node --test src/ui/persist.test.ts`.
 import { test } from "node:test";
 import assert from "node:assert";
-import { serializeSession, parseSession, upsertWidget, loadWidgets } from "./persist.ts";
+import { serializeSession, parseSession, upsertWidget, loadWidgets, serializeBundle, parseBundle, fingerprintMismatch } from "./persist.ts";
+
+test("session carries the dataset fingerprint + annotation layers through serialize/parse", () => {
+  const s = { store: "/pbmc6.lstar.zarr", fingerprint: { n: 35391, fields: ["cell_type", "leiden"] }, currentWS: "Annotate", colorBy: "meta:annotation", canvas: [], userWS: [],
+    annotation: [{ name: "annotation", source: "derived", categories: ["T", "B"], codes: [0, 1, 0, -1], records: { T: { name: "T cell" } } }] };
+  const doc = parseSession(serializeSession(s))!;
+  assert.equal(doc.fingerprint!.n, 35391);
+  assert.deepEqual(doc.annotation![0].codes, [0, 1, 0, -1]);
+  assert.equal(doc.annotation![0].records.T.name, "T cell");
+});
+
+test("serializeBundle/parseBundle round-trips a self-contained document (session + widgets)", () => {
+  const session = { store: "/d.zarr", fingerprint: { n: 100, fields: ["ct"] }, currentWS: "Metadata", colorBy: "meta:ct", canvas: [{ type: "Embedding" }], userWS: [] };
+  const bundle = serializeBundle({ session: parseSession(serializeSession(session))!, widgets: [{ id: "w1", name: "W", source: "x", createdAt: 1 }], savedAt: 42 });
+  const got = parseBundle(bundle)!;
+  assert.ok(got); assert.equal(got.savedAt, 42);
+  assert.equal(got.session.store, "/d.zarr"); assert.equal(got.session.canvas[0].type, "Embedding");
+  assert.equal(got.widgets.length, 1); assert.equal(got.widgets[0].name, "W");
+  assert.equal(parseBundle('{"kind":"not-ours"}'), null); assert.equal(parseBundle("junk"), null);
+});
+
+test("fingerprintMismatch flags a cell-count difference (decisive) and missing fields (informational)", () => {
+  assert.equal(fingerprintMismatch({ n: 100, fields: ["a"] }, { n: 100, fields: ["a", "b"] }), null);   // subset of live fields → ok
+  assert.match(fingerprintMismatch({ n: 100, fields: [] }, { n: 200, fields: [] })!, /different dataset/);
+  assert.match(fingerprintMismatch({ n: 100, fields: ["x"] }, { n: 100, fields: ["a"] })!, /aren't in this dataset/);
+  assert.equal(fingerprintMismatch(undefined, { n: 1, fields: [] }), null);   // older doc w/o fingerprint → can't compare → allow
+});
 
 test("session round-trips through serialize/parse, incl. the store key", () => {
   const s = { store: "/pbmc6.lstar.zarr", currentWS: "Metadata", colorBy: "meta:cell_type", canvas: [{ type: "Widget", source: "x", title: "W" }], userWS: [{ name: "Mine", ws: { colorBy: "meta:leiden", panels: [] } }] };

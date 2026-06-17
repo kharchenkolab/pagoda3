@@ -13,7 +13,7 @@ import { setThemeColors } from "../render/theme.ts";
 import { installOverflow } from "./overflow.ts";
 import { makeWidgetHost } from "../widget/apphost.ts";
 import type { WidgetHost, WidgetHandle } from "../widget/runtime.ts";
-import { SESSION_KEY, WIDGETS_KEY, SavedWidget, serializeSession, parseSession, upsertWidget, loadWidgets } from "./persist.ts";
+import { SESSION_KEY, WIDGETS_KEY, SavedWidget, SerAnnoLayer, Fingerprint, serializeSession, parseSession, serializeBundle, parseBundle, fingerprintMismatch, upsertWidget, loadWidgets } from "./persist.ts";
 import { paletteNames, normalizePalette } from "../render/palettes.ts";
 import { AnnotationLayer, seedLayer, setLabel, reconcile, compact, hierarchyDepth, rollupToLevel } from "../anno/model.ts";
 import { PBMC_MARKERS, MarkerDB } from "../anno/markerdb.ts";
@@ -146,19 +146,76 @@ export class App {
   // saved for one dataset is never restored onto another (which would clobber its view with a stale colorBy/scope/widget).
   currentStore(): string { try { return new URLSearchParams(location.search).get("store") || "default"; } catch { return "default"; } }
   scheduleSave() { if (this._saveTimer) return; this._saveTimer = setTimeout(() => { this._saveTimer = null; this.persistSession(); }, 400); }
+  // dataset IDENTITY for the persistence guard — cell count is decisive (annotation codes are cell-indexed), field
+  // names are informational. A session/annotation only safely reapplies where these align.
+  datasetFingerprint(): Fingerprint { try { return { n: this.ctx.n, fields: this.ctx.categoricalFields().slice().sort() }; } catch { return { n: 0, fields: [] }; } }
+  // AUTHORED data → materialized in full: every annotation layer's per-cell codes + label names + CAP records.
+  serializeAnnotation(): SerAnnoLayer[] { return [...this.annoLayers.values()].map((L) => ({ name: L.name, source: L.source, categories: L.categories.slice(), codes: Array.from(L.codes as Int32Array), records: L.records, provenance: L.provenance })); }
+  restoreAnnotation(layers: SerAnnoLayer[]): void { for (const s of layers) { try { this.commitLayer({ name: s.name, source: s.source as any, codes: Int32Array.from(s.codes), categories: s.categories.slice(), records: s.records || {}, provenance: s.provenance } as AnnotationLayer, false); } catch { /* a malformed layer must not abort the rest */ } } }
+
   persistSession() {
     const userWS = this.wsOrder.filter((n) => !this.builtinWS.has(n) && this.WS[n]).map((n) => ({ name: n, ws: this.WS[n] }));
-    try { localStorage.setItem(SESSION_KEY, serializeSession({ store: this.currentStore(), currentWS: this.currentWS, colorBy: this.coord.state.colorBy, canvas: this.captureLayout(), userWS })); } catch { /* quota / private mode — non-fatal */ }
+    try { localStorage.setItem(SESSION_KEY, serializeSession({ store: this.currentStore(), fingerprint: this.datasetFingerprint(), currentWS: this.currentWS, colorBy: this.coord.state.colorBy, canvas: this.captureLayout(), userWS, annotation: this.serializeAnnotation() })); } catch { /* quota / private mode — non-fatal */ }
   }
   restoreSession() {
     this.widgetLib = loadWidgets(localStorage.getItem(WIDGETS_KEY));   // the widget LIBRARY is dataset-agnostic — always load it
     const doc = parseSession(localStorage.getItem(SESSION_KEY));
     if (!doc || doc.store !== this.currentStore()) return;   // no session, or one from a DIFFERENT dataset → keep this store's default layout (no redundant re-render)
+    this.applySessionViews(doc);
+    if (doc.annotation && !fingerprintMismatch(doc.fingerprint, this.datasetFingerprint())) this.restoreAnnotation(doc.annotation);   // cell-indexed → only when the dataset still aligns
+    this.fullRender();
+  }
+  // Apply the VIEW layer of a session doc (workspaces + current WS + colour + canvas). Shared by localStorage restore
+  // and file import; recompute-free (panels re-derive their data from these specs on the next render).
+  private applySessionViews(doc: { userWS: { name: string; ws: any }[]; currentWS: string; colorBy: string; canvas: any[] }): void {
     for (const u of doc.userWS) if (u && u.name && !this.WS[u.name]) { this.WS[u.name] = u.ws; this.wsOrder.push(u.name); }   // re-add user workspaces
     if (doc.currentWS && this.WS[doc.currentWS]) this.currentWS = doc.currentWS;
     if (doc.colorBy) this.coord.set({ colorBy: doc.colorBy });
-    if (Array.isArray(doc.canvas)) this.canvas = doc.canvas.map((p) => this.newPanel(p));   // restore the live layout (widget panels carry their source)
-    this.fullRender();
+    if (Array.isArray(doc.canvas)) this.canvas = doc.canvas.map((p) => this.newPanel(p));   // widget panels carry their source
+  }
+
+  // ---- the portable session DOCUMENT (file) — see persist.ts. A bundle = the session + the widget library it uses.
+  buildBundle(): string {
+    const userWS = this.wsOrder.filter((n) => !this.builtinWS.has(n) && this.WS[n]).map((n) => ({ name: n, ws: this.WS[n] }));
+    const session = parseSession(serializeSession({ store: this.currentStore(), fingerprint: this.datasetFingerprint(), currentWS: this.currentWS, colorBy: this.coord.state.colorBy, canvas: this.captureLayout(), userWS, annotation: this.serializeAnnotation() }))!;
+    return serializeBundle({ session, widgets: this.widgetLib, savedAt: Date.now() });
+  }
+  applyBundle(raw: string): { ok: boolean; msg: string } {
+    const b = parseBundle(raw);
+    if (!b) return { ok: false, msg: "Not a pagoda session file." };
+    const mism = fingerprintMismatch(b.session.fingerprint, this.datasetFingerprint());
+    let added = 0;   // widgets are dataset-agnostic → always merge into the library (upsert by name)
+    for (const w of b.widgets) { const before = this.widgetLib.length; this.widgetLib = upsertWidget(this.widgetLib, { name: w.name, source: w.source, controls: w.controls }, w.createdAt || Date.now(), w.id || "w" + Date.now().toString(36) + added); if (this.widgetLib.length > before) added++; }
+    if (b.widgets.length) try { localStorage.setItem(WIDGETS_KEY, JSON.stringify({ widgets: this.widgetLib })); } catch { /* */ }
+    this.applySessionViews(b.session);
+    if (b.session.annotation && !mism) this.restoreAnnotation(b.session.annotation);
+    this.fullRender(); this.renderWS(); this.scheduleSave();
+    const parts = [`opened — ${b.session.canvas.length} panel(s)`];
+    if (added) parts.push(`${added} widget(s)`);
+    if (b.session.annotation?.length) parts.push(mism ? `annotation NOT applied (${mism})` : "annotation restored");
+    return { ok: true, msg: parts.join(" · ") };
+  }
+  async exportSessionToFile(): Promise<void> {
+    const data = this.buildBundle();
+    const base = this.currentStore().replace(/[^a-z0-9]+/gi, "_").replace(/^_+|_+$/g, "").slice(0, 40) || "session";
+    const name = `pagoda-${base}.json`;
+    try {
+      const w = window as any;
+      if (w.showSaveFilePicker) { const h = await w.showSaveFilePicker({ suggestedName: name, types: [{ description: "pagoda session", accept: { "application/json": [".json"] } }] }); const ws = await h.createWritable(); await ws.write(data); await ws.close(); this.toast("Session saved", null); return; }
+    } catch (e) { if ((e as any)?.name === "AbortError") return; /* else fall through to download */ }
+    const url = URL.createObjectURL(new Blob([data], { type: "application/json" }));
+    const a = document.createElement("a"); a.href = url; a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+    this.toast("Session downloaded", "A portable .json — reopen it here or on another machine, or share it.");
+  }
+  async importSessionFromFile(): Promise<void> {
+    const read = (text: string) => { const r = this.applyBundle(text); this.toast(r.ok ? "Session " + r.msg : "Couldn't open session", r.ok ? null : r.msg); };
+    try {
+      const w = window as any;
+      if (w.showOpenFilePicker) { const [h] = await w.showOpenFilePicker({ types: [{ description: "pagoda session", accept: { "application/json": [".json"] } }] }); const f = await h.getFile(); read(await f.text()); return; }
+    } catch (e) { if ((e as any)?.name === "AbortError") return; /* else fall through to file input */ }
+    const inp = document.createElement("input"); inp.type = "file"; inp.accept = "application/json,.json";
+    inp.onchange = async () => { const f = inp.files?.[0]; if (f) read(await f.text()); };
+    inp.click();
   }
   // The custom-widget library (menu): upsert an authored widget, delete one, persist.
   saveWidgetToLibrary(name: string, source: string, controls?: { id: string; label: string }[]) {
@@ -1097,12 +1154,17 @@ export class App {
       <div class="acsec"><div class="aclabel">THEME</div>
         <div class="acseg"><button data-a="dark" class="${light ? "" : "on"}">Dark</button><button data-a="light" class="${light ? "on" : ""}">Light</button></div></div>
       <div class="acsec"><div class="aclabel">CUSTOM WIDGETS · ${this.widgetLib.length}</div><div class="acwidgets">${widgets}</div></div>
-      <div class="acsec"><div class="aclabel">SESSION</div><button class="acbtn" data-a="reset">Reset layout &amp; reload</button></div>`;
+      <div class="acsec"><div class="aclabel">SESSION</div>
+        <div class="acseg"><button data-a="export">Save to file…</button><button data-a="import">Open file…</button></div>
+        <div class="acsub" style="margin:5px 2px 0">A portable .json (layout + annotation + widgets) — reopen anywhere or share.</div>
+        <button class="acbtn" data-a="reset" style="margin-top:7px">Reset layout &amp; reload</button></div>`;
     const b = this.$("acctBtn").getBoundingClientRect();
     c.style.left = Math.max(8, Math.min(b.right - 280, innerWidth - 288)) + "px"; c.style.top = (b.bottom + 6) + "px"; c.classList.add("show");
     c.querySelectorAll<HTMLElement>("[data-a]").forEach((el) => el.onclick = () => { const a = el.dataset.a!;
       if (a === "signin") { this.toast("Sign-in is coming soon — your session + widgets are saved locally for now.", null); c.classList.remove("show"); }
       else if (a === "dark" || a === "light") { this.applyTheme(a as "dark" | "light"); this.openAccountMenu(); }   // re-render to move the highlight
+      else if (a === "export") { c.classList.remove("show"); void this.exportSessionToFile(); }
+      else if (a === "import") { c.classList.remove("show"); void this.importSessionFromFile(); }
       else if (a === "reset") { try { localStorage.removeItem(SESSION_KEY); } catch { /* */ } location.reload(); } });   // clear the saved layout AND reboot to the dataset's default (recovers a stuck view; keeps the widget library + theme)
     c.querySelectorAll<HTMLElement>("[data-add]").forEach((el) => el.onclick = () => { const w = this.widgetLib.find((x) => x.id === el.dataset.add); if (w) { this.addWidgetPanel(w.source, w.name, w.controls); this.toast(`Added widget “${w.name}”`, null); } c.classList.remove("show"); });
     c.querySelectorAll<HTMLElement>("[data-del]").forEach((el) => el.onclick = (e) => { e.stopPropagation(); this.deleteWidgetFromLibrary(el.dataset.del!); this.openAccountMenu(); });   // re-render the list in place
