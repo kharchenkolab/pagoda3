@@ -462,7 +462,7 @@ async function facetsBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltB
       const lbl = sel.kind === "category" ? (sel as any).value : `${selCells.length.toLocaleString()} cells`;
       const banner = mk("div", "facetfilter");
       banner.innerHTML = `<span class="fftext"><b>${esc(lbl)}</b> · ${selCells.length.toLocaleString()} cells selected</span><button class="ffact mini" title="operations on this selection: run DE, label / create a group, ask">actions ▾</button><span class="ffclear" title="clear the selection">✕</span>`;
-      (banner.querySelector(".ffact") as HTMLElement).onclick = (e) => { e.stopPropagation(); const r = banner.getBoundingClientRect(); hooks.openSelectionMenu({ left: r.left + 8, top: r.bottom + 4 }); };
+      (banner.querySelector(".ffact") as HTMLElement).onclick = (e) => { e.stopPropagation(); const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); hooks.openSelectionMenu({ left: r.left, top: r.bottom + 4 }); };   // anchor under the BUTTON (right-aligned), not the full-width banner
       (banner.querySelector(".ffclear") as HTMLElement).onclick = () => ctx.coord.setSelection(null);
       host.appendChild(banner);
     }
