@@ -240,6 +240,13 @@ async function compositionBody(panel: Panel, ctx: Ctx, hooks: PanelHooks): Promi
   // Responsive: the bars fill the host's live height (no fixed aspect → no wasted vertical space). Re-lays on
   // resize. A faint 0/50/100% scale reads the stacked proportions now that the bars are tall.
   const draw = () => {
+    // Hide the legend by DEFAULT when it would crowd the panel — if its (wrapped) height is ≥ ~50% of the widget,
+    // drop it; identity is still available on hover (the segment tooltip + legend-driven highlight). Re-evaluated on
+    // every resize (wrapping changes with width). An explicit display.legend override always wins.
+    const explicitLegend = panel.view?.display?.legend;
+    leg.style.display = "";                                          // reset so scrollHeight reads the natural height
+    const totalH = w.clientHeight, legH = leg.scrollHeight;
+    leg.style.display = (explicitLegend != null ? !!explicitLegend : (totalH <= 0 || legH < totalH * 0.5)) ? "" : "none";
     const W = host.clientWidth, H = host.clientHeight; if (W < 12 || H < 12) return;
     const svg = host.querySelector(".compsvg") as SVGSVGElement;   // size the SVG to the host in px (height:100% won't resolve against a flex parent)
     svg.setAttribute("width", String(W)); svg.setAttribute("height", String(H)); svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
