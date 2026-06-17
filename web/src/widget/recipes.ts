@@ -162,6 +162,41 @@ pagoda.on('coord', draw);
 pagoda.ready({ title: 'Selection breakdown' });
 `;
 
+// Top MARKER genes for the current selection — the canonical "react to selection → meaningful stats" pattern. Uses
+// data('rankGenes') (DE vs rest, ONE call) — NOT a per-gene expr loop (slow) or raw-mean ranking (housekeeping genes).
+// (No inner backticks: built with string concatenation so the whole source stays a clean template literal.)
+const SELECTION_MARKERS = "// Top marker genes for whatever is selected in any panel — reacts to the selection.\n"
++ "const root = document.body;\n"
++ "root.innerHTML = '<div id=\"hd\" class=\"pg-muted\" style=\"margin-bottom:6px\"></div><svg id=\"c\" width=\"100%\" style=\"display:block\"></svg>';\n"
++ "const svg = root.querySelector('#c'), hd = root.querySelector('#hd');\n"
++ "let busy = false, again = false;\n"
++ "async function draw() {\n"
++ "  if (busy) { again = true; return; }\n"
++ "  busy = true;\n"
++ "  try {\n"
++ "    const sel = pagoda.coord && pagoda.coord.selection;\n"
++ "    if (!sel) { hd.textContent = 'Nothing selected — pick cells or a category in any panel.'; svg.innerHTML = ''; svg.setAttribute('height', 0); return; }\n"
++ "    hd.textContent = 'ranking…';\n"
++ "    const res = await pagoda.data('rankGenes', { n: 10, dir: 'up' });   // current selection vs the rest, one call\n"
++ "    const genes = (res && res.genes) || [];\n"
++ "    if (!genes.length) { hd.textContent = 'No marker genes for this set.'; svg.innerHTML = ''; svg.setAttribute('height', 0); return; }\n"
++ "    const max = Math.max.apply(null, genes.map(function (g) { return g.lfc; }).concat([1e-6]));\n"
++ "    const rowH = 20, w = svg.clientWidth || 300, barX = 80, barW = Math.max(40, w - barX - 46);\n"
++ "    svg.setAttribute('height', genes.length * rowH + 4);\n"
++ "    svg.innerHTML = genes.map(function (g, i) {\n"
++ "      const y = i * rowH + 2, bw = Math.max(1, g.lfc / max * barW);\n"
++ "      return '<text x=\"0\" y=\"' + (y + 14) + '\" fill=\"var(--text)\" font-size=\"11\" font-family=\"var(--mono)\">' + g.symbol.slice(0, 11) + '</text>'\n"
++ "        + '<rect x=\"' + barX + '\" y=\"' + (y + 4) + '\" width=\"' + bw + '\" height=\"12\" rx=\"2\" fill=\"var(--cyan)\"></rect>'\n"
++ "        + '<text x=\"' + (barX + bw + 5) + '\" y=\"' + (y + 14) + '\" fill=\"var(--dim)\" font-size=\"10\" font-family=\"var(--mono)\">' + g.lfc.toFixed(2) + '</text>';\n"
++ "    }).join('');\n"
++ "    const cnt = sel.count != null ? sel.count.toLocaleString() + ' cells · ' : '';\n"
++ "    hd.textContent = cnt + 'top markers (log-FC vs rest)';\n"
++ "  } finally { busy = false; if (again) { again = false; draw(); } }\n"
++ "}\n"
++ "pagoda.on('coord', draw);\n"
++ "draw();\n"
++ "pagoda.ready({ title: 'Selection markers' });\n";
+
 // ---- reusable building-block SNIPPETS (the "plot kit", delivered as inlinable functions) ----
 const SNIP_SCALES = `// scales + nice ticks — paste in, then use for axes/positions.
 function scaleLinear(d0, d1, r0, r1) { const m = (r1 - r0) / ((d1 - d0) || 1); return (v) => r0 + (v - d0) * m; }
@@ -357,6 +392,7 @@ export const RECIPES: WidgetRecipe[] = [
   { name: "heatmap", title: "Expression heatmap", about: "Mean expression of a gene set across a grouping's groups, with a sequential colour scale.", techniques: ["table grid", "per-group means", "colour ramp", "data('category')+data('expr')"], source: HEATMAP },
   { name: "donut", title: "Proportions donut", about: "Donut chart of a categorical field's proportions (SVG arc paths) with a legend.", techniques: ["SVG arc paths", "data('categories')", "themed palette"], source: DONUT },
   { name: "selection-breakdown", title: "Selection breakdown", about: "Live analytic: breaks the CURRENT selection down by a chosen field — reacts to selections from any panel.", techniques: ["data('selectedCells')", "tally by category", "react to coord"], source: SELECTION_BREAKDOWN },
+  { name: "selection-markers", title: "Selection marker genes", about: "Top MARKER genes for whatever is selected in any panel — reacts to the selection and ranks via data('rankGenes') (DE vs rest, ONE fast call). The right pattern for 'top/marker genes for the selection' — never loop per-gene expr or rank by raw mean. Adapt the bar list / count.", techniques: ["react to coord.selection", "data('rankGenes')", "SVG bars", "re-entrancy guard"], source: SELECTION_MARKERS },
 ];
 
 // The full registry: complete widgets to adapt + reusable snippets to inline.

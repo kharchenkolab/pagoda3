@@ -51,6 +51,45 @@ export function readonlyHost(h: WidgetHost): WidgetHost {
   return { theme: h.theme, coord: h.coord, hint: h.hint, subscribe: h.subscribe, data: h.data, fetchExternal: h.fetchExternal, loadLib: h.loadLib, apply: () => { /* preview is side-effect-free */ } };
 }
 
+// A short, agent-readable summary of a coordination message a widget EMITS — so a preview can report "the widget did
+// X" (e.g. clicking a row emitted setSelection(category cell_type=NK)) without the agent needing the live app.
+export function emitSummary(m: WidgetMsg): string {
+  if (m.t === "setSelection") { const s: any = (m as any).sel; if (!s) return "setSelection(null)"; if (s.category) return `setSelection(category ${s.category.grouping}=${s.category.value})`; if (Array.isArray(s.cells)) return `setSelection(${s.cells.length} cells)`; return "setSelection(?)"; }
+  if (m.t === "setHint") { const h: any = (m as any).hint; if (!h) return "setHint(null)"; if (h.category) return `setHint(category ${h.category.grouping}=${h.category.value})`; if (Array.isArray(h.cells)) return `setHint(${h.cells.length} cells)`; return "setHint(?)"; }
+  if (m.t === "setColor") return `setColor(${(m as any).handle})`;
+  if (m.t === "updateView") return `updateView(${Object.keys((m as any).patch || {}).join(",") || "?"})`;
+  return m.t;
+}
+
+// What preview_widget can simulate. Pre-resolved (cells already looked up) so the host stays synchronous.
+export interface PreviewSim { selection?: SelectionInfo | null; selCells?: number[]; hint?: HintInfo | null; colorBy?: string; }
+
+// The PREVIEW host: read-only (writes are CAPTURED, never applied) + an optional SIMULATED coord selection / hover so
+// the agent can TEST coordination widgets (a selection-reactive or hover-reactive widget renders against realistic
+// state), and an in-flight counter so the preview waits for data/fetch/lib to settle before snapshotting. `__emitted`
+// collects the coordination the widget tried to drive; `pending()` reports outstanding async ops. Reads (data/theme)
+// still resolve against the real app, so previews use real data.
+export function previewHost(app: App, sim?: PreviewSim): WidgetHost & { __emitted: string[]; pending: () => number } {
+  const base = makeWidgetHost(app);
+  const emitted: string[] = [];
+  let inflight = 0;
+  const track = <T,>(p: Promise<T>): Promise<T> => { inflight++; return p.finally(() => { inflight--; }); };
+  const hasSel = sim ? "selection" in sim : false;
+  const hasHint = sim ? "hint" in sim : false;
+  return {
+    theme: base.theme,
+    coord: (): CoordInfo => { const c = base.coord(); return { colorBy: sim?.colorBy || c.colorBy, selection: hasSel ? (sim!.selection ?? null) : c.selection, focus: c.focus }; },
+    hint: (): HintInfo => (hasHint ? (sim!.hint ?? null) : base.hint()),
+    subscribe: base.subscribe,
+    apply: (m: WidgetMsg) => { emitted.push(emitSummary(m)); },   // capture for the agent; never mutate the live session
+    data: (kind, args) => { if (kind === "selectedCells" && sim && sim.selCells) return track(Promise.resolve(sim.selCells.slice())); return track(base.data(kind, args)); },
+    fetchExternal: base.fetchExternal ? (u, o) => track(base.fetchExternal!(u, o)) : undefined,
+    loadLib: base.loadLib ? (n) => track(base.loadLib!(n)) : undefined,
+    __emitted: emitted,
+    pending: () => inflight,
+  };
+}
+
 export function makeWidgetHost(app: App): WidgetHost {
   const ctx = app.ctx, coord = app.coord;
   const countOf = (r: EntityRef) => app.ctx.refToCells(r).length;
@@ -123,6 +162,28 @@ export function makeWidgetHost(app: App): WidgetHost {
             frac.push(pos.map((p, j) => cnt[j] ? p / cnt[j] : 0));
           }
           return { groups: m.categories, genes, mean, frac };
+        }
+        case "rankGenes": {
+          // Top genes for a CELL SET vs the rest (markers) — DE over the WHOLE transcriptome, computed app-side in ONE
+          // call (subsampled, so fast), so widgets get a MEANINGFUL ranking (what's special about these cells) without
+          // looping per-gene expr (slow) or ranking by raw mean (which surfaces housekeeping genes). The cell set is
+          // explicit `cells`, a category {field,value}, or — by default — the CURRENT selection.
+          let cells: number[] | null = null;
+          if (Array.isArray(a.cells)) cells = a.cells.map(Number).filter((i: number) => i >= 0 && i < ctx.n);
+          else if (a.field != null && a.value != null) { await ctx.metaOf(String(a.field)); cells = Array.from(ctx.cellsOfCategory(String(a.field), String(a.value))); }
+          else cells = Array.from(ctx.selectedCells());
+          if (!cells || !cells.length) return { genes: [], nA: 0, note: "no cells in the set (nothing selected?)" };
+          const inA = new Uint8Array(ctx.n); for (const i of cells) inA[i] = 1;
+          const B: number[] = []; for (let i = 0; i < ctx.n; i++) if (!inA[i]) B.push(i);
+          const de = await ctx.view.subsampleDE(cells, B);
+          const n = Math.min(Math.max(1, Number(a.n) || 20), 100);
+          const dir = a.dir === "abs" ? "abs" : a.dir === "down" ? "down" : "up";
+          let ranked = de.ranked;
+          if (dir === "up") ranked = ranked.filter((r) => r.lfc > 0).sort((x, y) => y.lfc - x.lfc);
+          else if (dir === "down") ranked = ranked.filter((r) => r.lfc < 0).sort((x, y) => x.lfc - y.lfc);
+          // 'abs' keeps subsampleDE's existing |lfc| ordering
+          const genes = ranked.slice(0, n).map((r) => ({ symbol: r.symbol, lfc: +r.lfc.toFixed(3), meanA: +r.meanA.toFixed(3), meanB: +r.meanB.toFixed(3) }));
+          return { genes, nA: de.nA, approx: de.approx };
         }
         default: throw new Error("unknown data kind: " + kind);
       }

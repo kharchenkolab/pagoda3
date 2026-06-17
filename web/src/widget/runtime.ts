@@ -109,7 +109,7 @@ function withProbe(source: string, probe: string): string {
 // `probe` (optional) is JS run in the widget's scope after mount — it can call the widget's functions and set input
 // values to exercise interactive logic the initial render never reaches; its console output + the post-probe DOM are returned.
 export async function previewWidget(source: string, host: WidgetHost, timeoutMs = 4000, probe?: string):
-    Promise<{ ok: boolean; manifest: WidgetManifest | null; error: string | null; logs: { level: string; args: string[] }[]; text: string }> {
+    Promise<{ ok: boolean; manifest: WidgetManifest | null; error: string | null; logs: { level: string; args: string[] }[]; text: string; emitted?: string[] }> {
   // Offscreen but FULLY LAID OUT at a real size (not visibility:hidden, and the iframe sized in px below) — so canvas
   // widgets measure non-zero clientWidth/Height during preview, matching prod. Otherwise the agent burns an iteration
   // working around a 0×0 canvas that only exists in the headless preview.
@@ -124,19 +124,26 @@ export async function previewWidget(source: string, host: WidgetHost, timeoutMs 
     const poll = setInterval(() => { if (h.lastError()) { clearInterval(poll); fin(false); } }, 60);
     setTimeout(() => { clearInterval(poll); fin(!!h.manifest()); }, timeoutMs);
   });
-  // If a probe is running, wait for it to signal done (it may be async — e.g. awaiting data OR a loadLib + render) before
-  // snapshotting. Resolves EARLY on the done sentinel, so a generous cap (8s) only costs time when a lib genuinely loads.
-  if (ready && probe) {
+  // Before snapshotting, wait for the widget to SETTLE: the probe (if any) to finish AND outstanding async work
+  // (data / fetchExternal / loadLib, tracked by the preview host's pending()) to drain — so a widget that loads on
+  // mount or in a probe is captured AFTER its data arrives, not in a "loading…" state (the agent otherwise can't tell
+  // a real render from a pending one). Resolves as soon as it's idle; the cap only costs time when work genuinely runs.
+  if (ready) {
+    const pendingFn = typeof (host as any).pending === "function" ? () => (host as any).pending() as number : null;
+    const cap = Math.max(8000, timeoutMs);
     await new Promise<void>((res) => {
-      const t0 = Date.now();
+      const t0 = Date.now(); let idleSince = 0;
       const poll = setInterval(() => {
-        const done = h.logs().some((l) => l.args.some((a) => a === PROBE_DONE));
-        if (done || h.lastError() || Date.now() - t0 > Math.max(8000, timeoutMs)) { clearInterval(poll); res(); }
+        const probeDone = !probe || h.logs().some((l) => l.args.some((a) => a === PROBE_DONE));
+        const netIdle = !pendingFn || pendingFn() === 0;
+        if (probeDone && netIdle) { if (!idleSince) idleSince = Date.now(); if (Date.now() - idleSince > 150) { clearInterval(poll); res(); } }
+        else idleSince = 0;
+        if (h.lastError() || Date.now() - t0 > cap) { clearInterval(poll); res(); }
       }, 60);
     });
-    // grace window: async lib init / a render callback can throw AFTER the probe returns — catch those errors+logs
+    // grace window: async lib init / a render callback can throw or paint AFTER settle — catch those errors+logs
     // (which otherwise land after the iframe is destroyed and are lost) before we collect.
-    await new Promise<void>((res) => setTimeout(res, 500));
+    await new Promise<void>((res) => setTimeout(res, 400));
   }
   const text = ready ? await h.snapshot(1200) : "";
   // Make the failure reason actionable: a caught error wins; otherwise a no-manifest result means it timed out
@@ -144,7 +151,8 @@ export async function previewWidget(source: string, host: WidgetHost, timeoutMs 
   const error = h.lastError()?.message
     || (!h.manifest() ? `widget did not call pagoda.ready() within ${timeoutMs}ms (it timed out — call pagoda.ready({title}) once your UI is set up, and check for a script error above it)` : null);
   const logs = h.logs().filter((l) => !l.args.some((a) => a === PROBE_DONE));   // hide the internal sentinel
-  const out = { ok: ready && !h.lastError(), manifest: h.manifest(), error, logs, text };
+  const emitted = Array.isArray((host as any).__emitted) ? (host as any).__emitted.slice() : undefined;   // coordination the widget drove (preview host captures it)
+  const out = { ok: ready && !h.lastError(), manifest: h.manifest(), error, logs, text, emitted };
   h.destroy(); off.remove();
   return out;
 }

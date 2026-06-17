@@ -1,7 +1,16 @@
 // Unit tests for the app WidgetHost's pure mappers (no DOM/app). Run: `node --test src/widget/apphost.test.ts`.
 import { test } from "node:test";
 import assert from "node:assert";
-import { selToInfo, widgetSelToRef, fieldsInfo, hintToInfo } from "./apphost.ts";
+import { selToInfo, widgetSelToRef, fieldsInfo, hintToInfo, emitSummary } from "./apphost.ts";
+
+test("emitSummary: a widget's coordination write → a short agent-readable line", () => {
+  assert.equal(emitSummary({ t: "setSelection", sel: null } as any), "setSelection(null)");
+  assert.equal(emitSummary({ t: "setSelection", sel: { category: { grouping: "cell_type", value: "NK" } } } as any), "setSelection(category cell_type=NK)");
+  assert.equal(emitSummary({ t: "setSelection", sel: { cells: [1, 2, 3] } } as any), "setSelection(3 cells)");
+  assert.equal(emitSummary({ t: "setHint", hint: { category: { grouping: "cell_type", value: "B" } } } as any), "setHint(category cell_type=B)");
+  assert.equal(emitSummary({ t: "setColor", handle: "gene:CD3E" } as any), "setColor(gene:CD3E)");
+  assert.equal(emitSummary({ t: "updateView", patch: { color: "x", focus: {} } } as any), "updateView(color,focus)");
+});
 
 test("hintToInfo: hover EntityRef → HintInfo (carries content, caps cells)", () => {
   assert.equal(hintToInfo(null), null);

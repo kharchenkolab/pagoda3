@@ -60,7 +60,7 @@ export function validateManifest(m: any): WidgetManifest {
 }
 
 // The data kinds a widget may request (host resolves them). Documented so the agent + the host stay in step.
-export const DATA_KINDS = ["n", "fields", "categories", "category", "cellsOf", "expr", "numeric", "selectedCells", "groupStats"] as const;
+export const DATA_KINDS = ["n", "fields", "categories", "category", "cellsOf", "expr", "numeric", "selectedCells", "groupStats", "rankGenes"] as const;
 
 // Agent-facing reference — what the widget code can do. Kept next to the protocol so they can't drift (mirrors
 // codeapi.CODE_API_DOC). Surfaced via the read_widget_contract tool + injected into the authoring prompt.
@@ -85,6 +85,8 @@ export const WIDGET_API_DOC =
   "'numeric' (args:{field} → {values,min,max}), 'selectedCells' (→ number[] of the currently selected cell indices), " +
   "'groupStats' (args:{field, genes:[...]} → {groups, genes, mean:[gene][group], frac:[gene][group]}) — per-group MEAN expression + " +
   "FRACTION expressing for each gene in one call; use it for dot-plots/heatmaps/violins instead of looping raw expr. " +
+  "'rankGenes' (args:{cells?:[...]|field+value?, n?=20, dir?:'up'|'down'|'abs'} → {genes:[{symbol,lfc,meanA,meanB}], nA}) — the TOP MARKER genes for a CELL SET vs the rest, " +
+  "computed app-side in ONE call (whole transcriptome, subsampled → fast). Use this for 'top/marker genes for the selection' — do NOT loop expr over a hand-picked gene list (slow, and raw-mean ranking just surfaces housekeeping genes). Omit cells to rank the CURRENT selection. " +
   "`await pagoda.fetchExternal(url, {as:'json'|'text'})` pulls EXTERNAL biodata through the host (server-side, so no " +
   "CORS) from an ALLOWLIST — PDB/RCSB, UniProt, Ensembl, NCBI, AlphaFold, STRING, Reactome (e.g. " +
   "data.rcsb.org/rest/v1/core/entry/4HHB, rest.uniprot.org, rest.ensembl.org). NEVER call fetch()/XHR or load a CDN " +
