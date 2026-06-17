@@ -108,7 +108,7 @@ export class App {
         <div class="canvas"><div class="workbench" id="workbench"></div></div>
         <div class="rail" id="rail"><div class="railgrip" id="railgrip"></div><div class="railhd"><span class="t">ANSWERS · DISPOSABLE</span><span class="x" id="railX" title="collapse">⇥</span></div><div class="railbody" id="railbody"></div></div>
       </div>
-      <div class="timeline" id="timeline">
+      <div class="timeline collapsed" id="timeline">
         <div class="thread" id="thread"></div>
         <div class="tlhd" id="tlhd"><span class="t">HISTORY</span><span class="dockbtn" id="dockBtn">⇥ dock chat</span><span class="chev">▾</span></div>
         <div class="ckpts" id="ckpts"></div>
