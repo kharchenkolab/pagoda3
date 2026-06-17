@@ -120,7 +120,7 @@ button{font-family:inherit}
 .facetv .vfocus{flex:0 0 auto;width:13px;text-align:center;color:var(--faint);font-size:12px;opacity:0;cursor:pointer} .facetv:hover .vfocus{opacity:.7} .facetv .vfocus:hover{opacity:1;color:var(--amber)}
 .facetsort{font-size:10.5px;font-family:var(--mono);flex:0 0 auto;color:var(--dim);padding:3px 6px}
 .facetf .fcomp{padding:1px 6px;font-size:11px;line-height:1;color:var(--faint);border-color:transparent;background:transparent;opacity:0} .facetf:hover .fcomp{opacity:1} .facetf .fcomp:hover{color:var(--cyan);border-color:var(--line)}
-.facetfilter{display:flex;align-items:center;gap:8px;padding:5px 10px;margin:0;font-size:11px;color:var(--dim);background:linear-gradient(var(--sel),var(--sel)),var(--panel);border-bottom:1px solid var(--line2);position:sticky;top:0;z-index:2}
+.facetfilter{display:flex;align-items:center;gap:8px;padding:5px 9px;margin:0 0 6px;font-size:11px;color:var(--dim);background:linear-gradient(var(--sel),var(--sel)),var(--panel);border:1px solid var(--line2);border-radius:5px}
 .facetfilter b{color:var(--text);font-weight:500}
 .facetfilter .fftext{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 .facetfilter .ffact{margin-left:auto;flex:0 0 auto;font-size:10.5px;padding:1px 7px;color:var(--cyan);border-color:var(--line)}

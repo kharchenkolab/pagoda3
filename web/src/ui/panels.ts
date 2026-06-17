@@ -131,16 +131,13 @@ export async function paintEmbedding(ev: EmbeddingView, ctx: Ctx) {
   const scopeKey = view?.scope ? (view.scope.kind === "category" ? `c:${view.scope.grouping}=${view.scope.value}` : `n:${scopeCells!.length}`) : "";
   if ((ev as any)._scopeKey !== scopeKey) { (ev as any)._scopeKey = scopeKey; ev.fitTo(scopeCells && scopeCells.length ? scopeCells : undefined); }
 
-  // dim mask: scope frames the panel; else the committed SELECTION (bright cells, grey context); else metadata focus.
-  const selCells = ctx.refToCells(c.selection);   // this panel is cell-space — read the selection as cells
-  // A continuous colouring (gene/qc/score) is read for its WHOLE distribution — dimming to the selected cluster
-  // would hide exactly what you're inspecting (e.g. clicking a marker in Annotate to judge how specific it is
-  // everywhere). So the SELECTION greys the map only for CATEGORICAL colourings; scope and focus (deliberate
-  // "restrict my view" acts) still dim regardless.
-  const numericColoring = !colorBy.startsWith("meta:");   // gene:/qc:/code:/conf:/geneset: are continuous
+  // dim mask = "restrict my view": only SCOPE (frames this panel) and FOCUS (the ⊙ act, with a notice+clear pill)
+  // grey the map. A plain SELECTION must NOT — it's a transient highlight, not a restriction; greying it out reads
+  // as a subset (the user can't tell it from a focus, yet there's no pill). The selection instead LIFTS its cells in
+  // place (ev.setSelection → an accent overlay/halo in embedding.ts), leaving the rest of the map fully intact.
+  const selCells = ctx.refToCells(c.selection);   // this panel is cell-space — read the selection as cells (for the lift)
   let mask: Uint8Array | undefined;
   if (scopeCells && scopeCells.length) { mask = new Uint8Array(ctx.n); for (let j = 0; j < scopeCells.length; j++) mask[scopeCells[j]] = 1; }
-  else if (selCells.length && !numericColoring) { mask = new Uint8Array(ctx.n); for (let j = 0; j < selCells.length; j++) mask[selCells[j]] = 1; }
   else mask = focusMaskFor(c.focus, ctx.n);
   // display is PER-PANEL: a panel's own overrides win over the coord default, so panels are independent
   // (toggle labels on one embedding without touching another). coord.display is just the starting default.
@@ -345,6 +342,7 @@ async function facetsBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltB
   sortBtn.onclick = () => { sortMode = sortMode === "count" ? "name" : "count"; (p as any).facetSort = sortMode; setSortLabel(); render(); };
   hdr.appendChild(search); hdr.appendChild(sortBtn); w.appendChild(hdr); setSortLabel();
   const host = mk("div"); host.style.cssText = "flex:1 1 auto;min-height:0;overflow:auto"; w.appendChild(host);
+  const bannerHost = mk("div", "facetbannerhost"); bannerHost.style.cssText = "flex:0 0 auto";   // the cross-filter/selection banner lives at the BOTTOM (in the footer, above create-category), not atop the scroll list
   const brush = (p as any).facetBrush || ((p as any).facetBrush = { field: "", lo: 0, hi: 0, mn: 0, mx: -1 });   // persisted histogram brush
 
   // expanded fields persist on the panel (instanceof guard: a workspace-switch JSON round-trip turns a Set into {})
@@ -458,13 +456,17 @@ async function facetsBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltB
     const q = search.value.trim().toLowerCase();
     const top = host.scrollTop; host.innerHTML = "";
     const act = activeField(); const sel = ctx.coord.state.selection; const selCells = sel ? ctx.refToCells(sel) : null;
-    if (sel && selCells) {   // cross-filter banner: every bar + count below reflects this subset
+    // The cross-filter/selection banner (every bar + count below reflects this subset) renders at the BOTTOM of the
+    // panel — in the footer, just above "create category" — so it's an action bar for the current selection, not
+    // something that shoves the field list down from the top.
+    bannerHost.innerHTML = "";
+    if (sel && selCells) {
       const lbl = sel.kind === "category" ? (sel as any).value : `${selCells.length.toLocaleString()} cells`;
       const banner = mk("div", "facetfilter");
       banner.innerHTML = `<span class="fftext">within <b>${esc(lbl)}</b> · ${selCells.length.toLocaleString()} cells</span><button class="ffact mini" title="operations on this selection: run DE, label / create a group, ask">actions ▾</button><span class="ffclear" title="clear the selection">✕</span>`;
-      (banner.querySelector(".ffact") as HTMLElement).onclick = (e) => { e.stopPropagation(); const r = banner.getBoundingClientRect(); hooks.openSelectionMenu({ left: r.left + 8, top: r.bottom + 4 }); };
+      (banner.querySelector(".ffact") as HTMLElement).onclick = (e) => { e.stopPropagation(); const r = banner.getBoundingClientRect(); hooks.openSelectionMenu({ left: r.left + 8, top: r.top - 4 }); };
       (banner.querySelector(".ffclear") as HTMLElement).onclick = () => ctx.coord.setSelection(null);
-      host.appendChild(banner);
+      bannerHost.appendChild(banner);
     }
     const allFields = ctx.metadataFields();   // recompute each render → newly created derived categories appear
     // a field matches the search if its NAME matches OR (categorical) any of its VALUE names match (so "cd4" surfaces
@@ -565,7 +567,7 @@ async function facetsBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltB
     buildBody(); w.appendChild(ov); (ov.querySelector(".fcnameinp") as HTMLInputElement).focus();
   };
 
-  const foot = mk("div", "facetfoot"); const cbtn = mk("button", "mini", "＋ create category"); cbtn.onclick = showCreateCard; foot.appendChild(cbtn); w.appendChild(foot);
+  const foot = mk("div", "facetfoot"); const cbtn = mk("button", "mini", "＋ create category"); cbtn.onclick = showCreateCard; foot.appendChild(bannerHost); foot.appendChild(cbtn); w.appendChild(foot);
 
   search.oninput = () => render();
   render();

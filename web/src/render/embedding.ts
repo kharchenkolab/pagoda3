@@ -13,6 +13,7 @@ export class EmbeddingView {
   private drawPos!: Float32Array;      // 2n positions in draw order
   private drawColors!: Uint8Array;     // 4n colours in draw order
   private selected: Uint8Array;        // n (0/1)
+  private selectedIds: number[] = [];  // selected cell indices (list form) — drives the large-selection lift overlay
   private n: number;
   private radius = 2.4;
   private pointAlpha = 0.7;   // cells-layer opacity (display.alpha); <1 conveys density
@@ -115,8 +116,9 @@ export class EmbeddingView {
         opacity: this.pointAlpha,                 // <1 lets overlapping cells convey density
         updateTriggers: { all: this.colorVersion },
       }) as any,
-      // selection halo — only for a SMALL freeform selection (pinpoints the cells). A large cluster selection
-      // relies on the grey-out instead, so we don't speckle hundreds of cells with cyan rings.
+      // SELECTION lift — a selection highlights its cells IN PLACE (it never greys the rest; that's focus/scope only).
+      // Small/freeform: a precise cyan RING per cell (pinpoints them). Large cluster: rings would speckle, so instead
+      // lift the cells with a translucent accent FILL on top (reads over any cluster colour, leaves the map whole).
       this.selCount() > 0 && this.selCount() <= 250
         ? new ScatterplotLayer({
             id: "sel",
@@ -126,7 +128,15 @@ export class EmbeddingView {
             stroked: true, filled: false, getLineColor: [...accentRGB(), 255], lineWidthUnits: "pixels", getLineWidth: 1.6,
             updateTriggers: { getPosition: this.selVersion },
           }) as any
-        : null,
+        : this.selCount() > 250
+          ? new ScatterplotLayer({
+              id: "sel",
+              data: { length: this.selectedIds.length },
+              getPosition: (_: any, { index }: any) => { const c = this.selectedIds[index]; return [this.positions[c * 2], this.positions[c * 2 + 1]]; },
+              radiusUnits: "pixels", getRadius: this.radius + 1.4, stroked: false, getFillColor: [...accentRGB(), 165],
+              updateTriggers: { getPosition: this.selVersion },
+            }) as any
+          : null,
       // CATEGORY hint → a light overlay lifting that category's cells (honest even when they're not compact)
       this.highlightIds && this.highlightIds.length
         ? new ScatterplotLayer({
@@ -215,6 +225,7 @@ export class EmbeddingView {
 
   setSelection(ids: Int32Array | null) {
     this.selected.fill(0);
+    this.selectedIds = ids ? Array.from(ids) : [];   // kept as a list so the large-selection lift layer iterates only selected cells
     if (ids) for (const i of ids) this.selected[i] = 1;
     this.selVersion++; this.redraw();
   }
