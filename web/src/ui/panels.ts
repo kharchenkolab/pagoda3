@@ -342,7 +342,6 @@ async function facetsBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltB
   sortBtn.onclick = () => { sortMode = sortMode === "count" ? "name" : "count"; (p as any).facetSort = sortMode; setSortLabel(); render(); };
   hdr.appendChild(search); hdr.appendChild(sortBtn); w.appendChild(hdr); setSortLabel();
   const host = mk("div"); host.style.cssText = "flex:1 1 auto;min-height:0;overflow:auto"; w.appendChild(host);
-  const bannerHost = mk("div", "facetbannerhost"); bannerHost.style.cssText = "flex:0 0 auto";   // the cross-filter/selection banner lives at the BOTTOM (in the footer, above create-category), not atop the scroll list
   const brush = (p as any).facetBrush || ((p as any).facetBrush = { field: "", lo: 0, hi: 0, mn: 0, mx: -1 });   // persisted histogram brush
 
   // expanded fields persist on the panel (instanceof guard: a workspace-switch JSON round-trip turns a Set into {})
@@ -359,7 +358,10 @@ async function facetsBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltB
     if (sortMode === "name") order = [...order].sort((a: any, b: any) => a.value.localeCompare(b.value, undefined, { numeric: true }));
     const act = activeField();
     const F = (act && act !== f.name && meta.has(act)) ? meta.get(act) : null;   // crosstab vs the active colour-by (categorical only)
-    const t = tally(G, F, selCells);                            // counts (+ segments) over the current universe
+    // A SELECTION does NOT cross-filter the facet counts — that zeroed every non-matching row (they read as disabled),
+    // too drastic for a lightweight highlight. Counts/bars stay over ALL cells; the selected value just gets a subtle
+    // row shade (.facetv.on). (The banner above announces the selection + its actions.)
+    const t = tally(G, F, null);                                // counts (+ segments) over all cells, always
     const Fcol = F ? F.categories.map((_: any, i: number) => `rgb(${catColor(F.colors?.[i] ?? i).join(",")})`) : null;
     const idx = new Map<string, number>(G.categories.map((c: string, i: number) => [c, i]));
     const maxC = order.reduce((mx: number, r: any) => Math.max(mx, t.counts[idx.get(r.value)!]), 1);
@@ -369,7 +371,7 @@ async function facetsBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltB
       const seg = (F && cnt > 0) ? F.categories.map((_: any, fi: number) => { const s = t.seg![gi][fi]; return s ? `<i style="width:${(s / cnt * 100).toFixed(2)}%;background:${Fcol![fi]}" title="${esc(r.value)} › ${esc(F.categories[fi])}: ${s.toLocaleString()} (${(s / cnt * 100).toFixed(0)}%)"></i>` : ""; }).join("")
                                  : (cnt > 0 ? `<i style="width:100%;background:${self}"></i>` : "");
       const selfOn = sel && sel.kind === "category" && sel.grouping === f.name && sel.value === r.value;
-      return `<div class="facetv${selfOn ? " on" : ""}${selCells && !cnt ? " dim" : ""}" data-v="${esc(r.value)}" title="${esc(r.value)} · ${cnt.toLocaleString()} cells · click to select, ⌘-click to add, ⊙ to focus">
+      return `<div class="facetv${selfOn ? " on" : ""}" data-v="${esc(r.value)}" title="${esc(r.value)} · ${cnt.toLocaleString()} cells · click to select, ⌘-click to add, ⊙ to focus">
         <span class="vsw" style="background:${self}"></span><span class="vname">${esc(r.value)}</span>
         <span class="vbar"><span class="vbarfill" style="width:${(cnt / maxC * 100).toFixed(1)}%">${seg}</span></span>
         <span class="vcount">${cnt.toLocaleString()}</span><span class="vfocus" title="restrict the workspace to this value">⊙</span></div>`;
@@ -456,17 +458,13 @@ async function facetsBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltB
     const q = search.value.trim().toLowerCase();
     const top = host.scrollTop; host.innerHTML = "";
     const act = activeField(); const sel = ctx.coord.state.selection; const selCells = sel ? ctx.refToCells(sel) : null;
-    // The cross-filter/selection banner (every bar + count below reflects this subset) renders at the BOTTOM of the
-    // panel — in the footer, just above "create category" — so it's an action bar for the current selection, not
-    // something that shoves the field list down from the top.
-    bannerHost.innerHTML = "";
-    if (sel && selCells) {
+    if (sel && selCells) {   // selection action bar — announces the selection + its operations; sits atop the list
       const lbl = sel.kind === "category" ? (sel as any).value : `${selCells.length.toLocaleString()} cells`;
       const banner = mk("div", "facetfilter");
-      banner.innerHTML = `<span class="fftext">within <b>${esc(lbl)}</b> · ${selCells.length.toLocaleString()} cells</span><button class="ffact mini" title="operations on this selection: run DE, label / create a group, ask">actions ▾</button><span class="ffclear" title="clear the selection">✕</span>`;
-      (banner.querySelector(".ffact") as HTMLElement).onclick = (e) => { e.stopPropagation(); const r = banner.getBoundingClientRect(); hooks.openSelectionMenu({ left: r.left + 8, top: r.top - 4 }); };
+      banner.innerHTML = `<span class="fftext"><b>${esc(lbl)}</b> · ${selCells.length.toLocaleString()} cells selected</span><button class="ffact mini" title="operations on this selection: run DE, label / create a group, ask">actions ▾</button><span class="ffclear" title="clear the selection">✕</span>`;
+      (banner.querySelector(".ffact") as HTMLElement).onclick = (e) => { e.stopPropagation(); const r = banner.getBoundingClientRect(); hooks.openSelectionMenu({ left: r.left + 8, top: r.bottom + 4 }); };
       (banner.querySelector(".ffclear") as HTMLElement).onclick = () => ctx.coord.setSelection(null);
-      bannerHost.appendChild(banner);
+      host.appendChild(banner);
     }
     const allFields = ctx.metadataFields();   // recompute each render → newly created derived categories appear
     // a field matches the search if its NAME matches OR (categorical) any of its VALUE names match (so "cd4" surfaces
@@ -567,7 +565,7 @@ async function facetsBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltB
     buildBody(); w.appendChild(ov); (ov.querySelector(".fcnameinp") as HTMLInputElement).focus();
   };
 
-  const foot = mk("div", "facetfoot"); const cbtn = mk("button", "mini", "＋ create category"); cbtn.onclick = showCreateCard; foot.appendChild(bannerHost); foot.appendChild(cbtn); w.appendChild(foot);
+  const foot = mk("div", "facetfoot"); const cbtn = mk("button", "mini", "＋ create category"); cbtn.onclick = showCreateCard; foot.appendChild(cbtn); w.appendChild(foot);
 
   search.oninput = () => render();
   render();
