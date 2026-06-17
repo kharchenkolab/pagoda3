@@ -220,7 +220,7 @@ export class Agent {
     const answer = h.why || [...entries, ...turns].reverse().find((e) => e.role === "agent" && e.text)?.text || "Done.";
     const steps = entries.filter((e) => e.tool);
     const card = mk("div", "cxex");
-    const head = mk("div", "cxhead"); head.innerHTML = `<span class="ava">me</span><div class="q">${userText}</div><span class="caret">▸</span>`; card.appendChild(head);
+    const head = mk("div", "cxhead"); head.innerHTML = `<span class="ava">me</span><div class="q">${userText}</div><span class="caret">▶</span>`; card.appendChild(head);
     const sum = mk("div", "cxsum"); sum.innerHTML = `<span class="ava">✦</span><div class="ans">${answer}</div>`; card.appendChild(sum);
     if (steps.length) card.appendChild(mk("div", "cxmeta", `${steps.length} step${steps.length > 1 ? "s" : ""} · click to expand`));
     const det = mk("div", "cxdetail"); let skippedFirstUser = false;

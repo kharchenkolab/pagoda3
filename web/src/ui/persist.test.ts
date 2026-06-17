@@ -12,6 +12,16 @@ test("session carries the dataset fingerprint + annotation layers through serial
   assert.equal(doc.annotation![0].records.T.name, "T cell");
 });
 
+test("session carries the conversation (chat log) — messages + history", () => {
+  const s = { store: "/d.zarr", currentWS: "Metadata", colorBy: "meta:ct", canvas: [], userWS: [],
+    conversation: { messages: [{ role: "user", content: "hi" }, { role: "assistant", content: [{ type: "text", text: "hello" }] }], history: [{ i: 0, q: "hi", why: "hello" }] } };
+  const doc = parseSession(serializeSession(s))!;
+  assert.equal(doc.conversation!.messages.length, 2);
+  assert.equal(doc.conversation!.history[0].q, "hi");
+  // tolerant: a doc with no conversation parses to undefined (not a crash)
+  assert.equal(parseSession(serializeSession({ store: "x", currentWS: "", colorBy: "", canvas: [], userWS: [] }))!.conversation, undefined);
+});
+
 test("serializeBundle/parseBundle round-trips a self-contained document (session + widgets)", () => {
   const session = { store: "/d.zarr", fingerprint: { n: 100, fields: ["ct"] }, currentWS: "Metadata", colorBy: "meta:ct", canvas: [{ type: "Embedding" }], userWS: [] };
   const bundle = serializeBundle({ session: parseSession(serializeSession(session))!, widgets: [{ id: "w1", name: "W", source: "x", createdAt: 1 }], savedAt: 42 });

@@ -17,19 +17,26 @@ export interface Fingerprint { n: number; fields: string[]; }
 // A serialized annotation layer (the working draft + any sources): per-cell codes + label names + CAP records. This is
 // AUTHORED data (not a recompute), so it's materialized in full.
 export interface SerAnnoLayer { name: string; source: string; categories: string[]; codes: number[]; records?: any; provenance?: any; }
+// The agent CONVERSATION — the chat log. `messages` is the agent's raw context (bounded ~40 turns; lets the agent
+// CONTINUE after reopen) and `history` is the user-visible timeline/docked-chat cards. Part of "the session" → saved.
+export interface SerConversation { messages: any[]; history: any[]; }
 // `store` scopes the session to its DATASET — a session saved for one store must NOT be restored onto another (it would
 // clobber the new dataset's view with a stale colorBy/scope/widget). Restore only when the store matches.
-export interface SessionDoc { v: number; store: string; fingerprint?: Fingerprint; currentWS: string; colorBy: string; canvas: any[]; userWS: { name: string; ws: any }[]; annotation?: SerAnnoLayer[]; }
+export interface SessionDoc { v: number; store: string; fingerprint?: Fingerprint; currentWS: string; colorBy: string; canvas: any[]; userWS: { name: string; ws: any }[]; annotation?: SerAnnoLayer[]; conversation?: SerConversation; }
 
-export function serializeSession(d: { store: string; fingerprint?: Fingerprint; currentWS: string; colorBy: string; canvas: any[]; userWS: { name: string; ws: any }[]; annotation?: SerAnnoLayer[] }): string {
-  return JSON.stringify({ v: VERSION, store: d.store, fingerprint: d.fingerprint, currentWS: d.currentWS, colorBy: d.colorBy, canvas: d.canvas, userWS: d.userWS, annotation: d.annotation });
+export function serializeSession(d: { store: string; fingerprint?: Fingerprint; currentWS: string; colorBy: string; canvas: any[]; userWS: { name: string; ws: any }[]; annotation?: SerAnnoLayer[]; conversation?: SerConversation }): string {
+  return JSON.stringify({ v: VERSION, store: d.store, fingerprint: d.fingerprint, currentWS: d.currentWS, colorBy: d.colorBy, canvas: d.canvas, userWS: d.userWS, annotation: d.annotation, conversation: d.conversation });
 }
 // Tolerant parse: anything malformed / from an older version → null (start fresh, never throw on boot).
 export function parseSession(raw: string | null): SessionDoc | null {
   if (!raw) return null;
   try { const o = JSON.parse(raw); if (!o || o.v !== VERSION || !Array.isArray(o.canvas)) return null;
-    return { v: o.v, store: String(o.store || ""), fingerprint: parseFingerprint(o.fingerprint), currentWS: String(o.currentWS || ""), colorBy: String(o.colorBy || ""), canvas: o.canvas, userWS: Array.isArray(o.userWS) ? o.userWS : [], annotation: parseAnnotation(o.annotation) };
+    return { v: o.v, store: String(o.store || ""), fingerprint: parseFingerprint(o.fingerprint), currentWS: String(o.currentWS || ""), colorBy: String(o.colorBy || ""), canvas: o.canvas, userWS: Array.isArray(o.userWS) ? o.userWS : [], annotation: parseAnnotation(o.annotation), conversation: parseConversation(o.conversation) };
   } catch { return null; }
+}
+function parseConversation(c: any): SerConversation | undefined {
+  if (!c || (!Array.isArray(c.messages) && !Array.isArray(c.history))) return undefined;
+  return { messages: Array.isArray(c.messages) ? c.messages : [], history: Array.isArray(c.history) ? c.history : [] };
 }
 function parseFingerprint(f: any): Fingerprint | undefined {
   if (!f || typeof f.n !== "number") return undefined;

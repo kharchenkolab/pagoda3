@@ -110,7 +110,7 @@ export class App {
       </div>
       <div class="timeline collapsed" id="timeline">
         <div class="thread" id="thread"></div>
-        <div class="tlhd" id="tlhd"><span class="t">HISTORY</span><span class="dockbtn" id="dockBtn">⇥ dock chat</span><span class="chev">▾</span></div>
+        <div class="tlhd" id="tlhd"><span class="t">HISTORY</span><span class="dockbtn" id="dockBtn">⇥ dock chat</span><span class="chev">▶</span></div>
         <div class="ckpts" id="ckpts"></div>
       </div>`;
     parent.innerHTML = "";
@@ -153,9 +153,21 @@ export class App {
   serializeAnnotation(): SerAnnoLayer[] { return [...this.annoLayers.values()].map((L) => ({ name: L.name, source: L.source, categories: L.categories.slice(), codes: Array.from(L.codes as Int32Array), records: L.records, provenance: L.provenance })); }
   restoreAnnotation(layers: SerAnnoLayer[]): void { for (const s of layers) { try { this.commitLayer({ name: s.name, source: s.source as any, codes: Int32Array.from(s.codes), categories: s.categories.slice(), records: s.records || {}, provenance: s.provenance } as AnnotationLayer, false); } catch { /* a malformed layer must not abort the rest */ } } }
 
+  // The CHAT LOG: the agent's raw context (liveMessages — bounded ~40 turns, lets it CONTINUE after reopen) + the
+  // user-visible timeline (history — drives the HISTORY rail + docked chat). Part of the session → saved/restored.
+  serializeConversation() { return { messages: Array.isArray(this.liveMessages) ? this.liveMessages : [], history: this.history }; }
+  restoreConversation(conv?: { messages: any[]; history: any[] }): void {
+    if (!conv) return;
+    if (Array.isArray(conv.messages)) this.liveMessages = conv.messages;
+    if (Array.isArray(conv.history) && conv.history.length) { this.history = conv.history.map((h: any, i: number) => ({ ...h, i })); this.viewing = -1; this.renderSpine(); if (this.threadDocked) this.agent.renderThread(); }
+  }
   persistSession() {
     const userWS = this.wsOrder.filter((n) => !this.builtinWS.has(n) && this.WS[n]).map((n) => ({ name: n, ws: this.WS[n] }));
-    try { localStorage.setItem(SESSION_KEY, serializeSession({ store: this.currentStore(), fingerprint: this.datasetFingerprint(), currentWS: this.currentWS, colorBy: this.coord.state.colorBy, canvas: this.captureLayout(), userWS, annotation: this.serializeAnnotation() })); } catch { /* quota / private mode — non-fatal */ }
+    const base = { store: this.currentStore(), fingerprint: this.datasetFingerprint(), currentWS: this.currentWS, colorBy: this.coord.state.colorBy, canvas: this.captureLayout(), userWS, annotation: this.serializeAnnotation() };
+    // Try the full doc (incl. the chat log); if it busts the ~5MB quota, retry WITHOUT the conversation so views +
+    // annotation still persist (the chat is the biggest + most droppable part — it's also in the exportable file).
+    try { localStorage.setItem(SESSION_KEY, serializeSession({ ...base, conversation: this.serializeConversation() })); }
+    catch { try { localStorage.setItem(SESSION_KEY, serializeSession(base)); } catch { /* private mode / still over — non-fatal */ } }
   }
   restoreSession() {
     this.widgetLib = loadWidgets(localStorage.getItem(WIDGETS_KEY));   // the widget LIBRARY is dataset-agnostic — always load it
@@ -163,6 +175,7 @@ export class App {
     if (!doc || doc.store !== this.currentStore()) return;   // no session, or one from a DIFFERENT dataset → keep this store's default layout (no redundant re-render)
     this.applySessionViews(doc);
     if (doc.annotation && !fingerprintMismatch(doc.fingerprint, this.datasetFingerprint())) this.restoreAnnotation(doc.annotation);   // cell-indexed → only when the dataset still aligns
+    this.restoreConversation(doc.conversation);   // the chat log survives a reload (not cell-indexed → no fingerprint gate)
     this.fullRender();
   }
   // Apply the VIEW layer of a session doc (workspaces + current WS + colour + canvas). Shared by localStorage restore
@@ -177,7 +190,7 @@ export class App {
   // ---- the portable session DOCUMENT (file) — see persist.ts. A bundle = the session + the widget library it uses.
   buildBundle(): string {
     const userWS = this.wsOrder.filter((n) => !this.builtinWS.has(n) && this.WS[n]).map((n) => ({ name: n, ws: this.WS[n] }));
-    const session = parseSession(serializeSession({ store: this.currentStore(), fingerprint: this.datasetFingerprint(), currentWS: this.currentWS, colorBy: this.coord.state.colorBy, canvas: this.captureLayout(), userWS, annotation: this.serializeAnnotation() }))!;
+    const session = parseSession(serializeSession({ store: this.currentStore(), fingerprint: this.datasetFingerprint(), currentWS: this.currentWS, colorBy: this.coord.state.colorBy, canvas: this.captureLayout(), userWS, annotation: this.serializeAnnotation(), conversation: this.serializeConversation() }))!;
     return serializeBundle({ session, widgets: this.widgetLib, savedAt: Date.now() });
   }
   applyBundle(raw: string): { ok: boolean; msg: string } {
@@ -189,10 +202,12 @@ export class App {
     if (b.widgets.length) try { localStorage.setItem(WIDGETS_KEY, JSON.stringify({ widgets: this.widgetLib })); } catch { /* */ }
     this.applySessionViews(b.session);
     if (b.session.annotation && !mism) this.restoreAnnotation(b.session.annotation);
+    this.restoreConversation(b.session.conversation);   // chat log travels with the file (not cell-indexed)
     this.fullRender(); this.renderWS(); this.scheduleSave();
     const parts = [`opened — ${b.session.canvas.length} panel(s)`];
     if (added) parts.push(`${added} widget(s)`);
     if (b.session.annotation?.length) parts.push(mism ? `annotation NOT applied (${mism})` : "annotation restored");
+    if (b.session.conversation?.history?.length) parts.push(`${b.session.conversation.history.length} chat exchange(s)`);
     return { ok: true, msg: parts.join(" · ") };
   }
   async exportSessionToFile(): Promise<void> {
@@ -1156,7 +1171,7 @@ export class App {
       <div class="acsec"><div class="aclabel">CUSTOM WIDGETS · ${this.widgetLib.length}</div><div class="acwidgets">${widgets}</div></div>
       <div class="acsec"><div class="aclabel">SESSION</div>
         <div class="acseg"><button data-a="export">Save to file…</button><button data-a="import">Open file…</button></div>
-        <div class="acsub" style="margin:5px 2px 0">A portable .json (layout + annotation + widgets) — reopen anywhere or share.</div>
+        <div class="acsub" style="margin:5px 2px 0">A portable .json (layout + annotation + widgets + chat) — reopen anywhere or share.</div>
         <button class="acbtn" data-a="reset" style="margin-top:7px">Reset layout &amp; reload</button></div>`;
     const b = this.$("acctBtn").getBoundingClientRect();
     c.style.left = Math.max(8, Math.min(b.right - 280, innerWidth - 288)) + "px"; c.style.top = (b.bottom + 6) + "px"; c.classList.add("show");

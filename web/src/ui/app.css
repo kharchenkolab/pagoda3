@@ -101,7 +101,8 @@ button{font-family:inherit}
 .facetsub{font-size:9px;letter-spacing:1.2px;text-transform:uppercase;color:var(--faint);padding:9px 10px 3px;position:sticky;top:0;background:var(--panel);z-index:1}
 .facetf{display:flex;align-items:center;gap:6px;padding:5px 8px 5px 10px;cursor:pointer;border-top:1px solid var(--line2)}
 .facetf:hover{background:var(--inset)}
-.facetf .fchev{width:12px;color:var(--faint);font-size:10px;flex:0 0 auto;text-align:center}
+.facetf .fchev{width:14px;color:var(--dim);font-size:11px;flex:0 0 auto;text-align:center;display:inline-block;transition:transform .15s ease}
+.facetf .fchev.open{transform:rotate(90deg)}   /* ▶ → points down when the category is expanded (clear orientation, not a dot) */
 .facetf .fname{font-weight:500;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .facetf .fcount{font-size:10px;color:var(--faint);font-family:var(--mono)}
 .facetf .fnum{font-size:11px;color:var(--faint);font-family:var(--mono)}
@@ -216,7 +217,7 @@ button{font-family:inherit}
 .cxhead{display:flex;align-items:flex-start;gap:8px;cursor:pointer}
 .cxhead .ava{flex:0 0 auto;width:19px;height:19px;border-radius:5px;font-family:var(--mono);font-size:10px;display:flex;align-items:center;justify-content:center;background:var(--panel);color:var(--dim)}
 .cxhead .q{flex:1;font-size:12.5px;color:var(--text);line-height:1.4}
-.cxhead .caret{flex:0 0 auto;color:var(--faint);font-size:11px;margin-top:3px;transition:transform .15s ease}
+.cxhead .caret{flex:0 0 auto;color:var(--dim);font-size:10px;margin-top:3px;transition:transform .15s ease;display:inline-block}
 .cxex.exp .cxhead .caret{transform:rotate(90deg)}
 .cxsum{display:flex;gap:8px;margin-top:6px}
 .cxsum .ava{flex:0 0 auto;width:19px;height:19px;border-radius:5px;font-family:var(--mono);font-size:10px;display:flex;align-items:center;justify-content:center;background:rgba(63,182,178,.16);color:var(--teal)}
@@ -271,8 +272,8 @@ button{font-family:inherit}
 .tlhd{display:flex;align-items:center;height:26px;padding:0 12px;cursor:pointer;gap:8px}
 .tlhd .t{font-family:var(--mono);font-size:10px;letter-spacing:1.4px;color:var(--dim)}
 .tlhd .dockbtn{margin-left:auto;font-size:10px;color:var(--faint);cursor:pointer;font-family:var(--mono)} .tlhd .dockbtn:hover{color:var(--cyan)}
-.tlhd .chev{margin-left:10px;color:var(--faint);font-size:11px;transition:.2s}
-.timeline.collapsed .ckpts{display:none} .timeline.collapsed .chev{transform:rotate(-90deg)}
+.tlhd .chev{margin-left:10px;color:var(--dim);font-size:10px;transition:transform .2s;display:inline-block}
+.timeline.collapsed .ckpts{display:none} .timeline:not(.collapsed) .chev{transform:rotate(90deg)}   /* ▶ collapsed (points right) → ▼ when the HISTORY rail is open */
 .ckpts{display:flex;gap:8px;overflow-x:auto;padding:0 12px 11px}
 .ckpt{flex:0 0 auto;max-width:172px;border:1px solid var(--line);border-radius:8px;padding:6px 9px;background:var(--inset);cursor:pointer}
 .ckpt:hover{border-color:var(--cyan)} .ckpt.on{border-color:var(--cyan);box-shadow:0 0 0 1px var(--cyan) inset}
