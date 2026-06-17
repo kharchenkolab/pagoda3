@@ -69,6 +69,12 @@ export interface PreviewSim { selection?: SelectionInfo | null; selCells?: numbe
 // state), and an in-flight counter so the preview waits for data/fetch/lib to settle before snapshotting. `__emitted`
 // collects the coordination the widget tried to drive; `pending()` reports outstanding async ops. Reads (data/theme)
 // still resolve against the real app, so previews use real data.
+// Data kinds that DEFAULT to "the current selection" when no explicit cell set is given (cf. makeWidgetHost.data:
+// rankGenes resolves a.cells | a.field+a.value | else ctx.selectedCells()). In a preview these must see the SIMULATED
+// selection, not the live (empty) one — otherwise a "rankGenes over the current selection" widget tests as empty and
+// the agent chases a phantom (it cost ~3 iterations in a real session). Extend this set as such kinds are added.
+const SELECTION_DEFAULTING = new Set(["rankGenes"]);
+
 export function previewHost(app: App, sim?: PreviewSim): WidgetHost & { __emitted: string[]; pending: () => number } {
   const base = makeWidgetHost(app);
   const emitted: string[] = [];
@@ -82,7 +88,15 @@ export function previewHost(app: App, sim?: PreviewSim): WidgetHost & { __emitte
     hint: (): HintInfo => (hasHint ? (sim!.hint ?? null) : base.hint()),
     subscribe: base.subscribe,
     apply: (m: WidgetMsg) => { emitted.push(emitSummary(m)); },   // capture for the agent; never mutate the live session
-    data: (kind, args) => { if (kind === "selectedCells" && sim && sim.selCells) return track(Promise.resolve(sim.selCells.slice())); return track(base.data(kind, args)); },
+    data: (kind, args) => {
+      const a = args || {};
+      if (sim && sim.selCells) {
+        if (kind === "selectedCells") return track(Promise.resolve(sim.selCells.slice()));
+        // a selection-defaulting kind invoked WITHOUT an explicit cell set → feed it the simulated selection's cells
+        if (SELECTION_DEFAULTING.has(kind) && !Array.isArray(a.cells) && a.field == null && a.value == null) return track(base.data(kind, { ...a, cells: sim.selCells }));
+      }
+      return track(base.data(kind, a));
+    },
     fetchExternal: base.fetchExternal ? (u, o) => track(base.fetchExternal!(u, o)) : undefined,
     loadLib: base.loadLib ? (n) => track(base.loadLib!(n)) : undefined,
     __emitted: emitted,
