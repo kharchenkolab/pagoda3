@@ -43,7 +43,7 @@ export interface PanelHooks {
   onCoord: (fn: (s: any, changed: string[]) => void) => void;  // managed coord subscription (colorBy/selection/focus reactivity); cleaned up on fullRender
   focusCategory: (field: string, value: string) => void;       // restrict the workspace to a metadata value (focus + chip)
   addPanel: (spec: any) => void;                               // add a panel to the workbench (e.g. → composition hand-off)
-  openSelectionMenu: (anchor: { left: number; top: number }) => void;   // open the selection ops menu (DE/label/ask) for the current selection
+  openSelectionMenu: (anchor: { left: number; top: number; right?: number }) => void;   // open the selection ops menu (DE/label/ask); `right` right-aligns it to a right-side trigger
   onConfigurePanel: (panelId: number, patch: any) => void;     // a panel reconfiguring itself (e.g. dismissing pinned genes)
   registerGeneHover: (fn: (sym: string | null) => void) => void;   // a panel that highlights a gene's row on cross-panel geneHint
   annotate: (cellIds: ArrayLike<number>, label: string, layer?: string) => void;   // write a label onto a cell set in an annotation layer (default the working draft)
@@ -462,7 +462,7 @@ async function facetsBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltB
       const lbl = sel.kind === "category" ? (sel as any).value : `${selCells.length.toLocaleString()} cells`;
       const banner = mk("div", "facetfilter");
       banner.innerHTML = `<span class="fftext"><b>${esc(lbl)}</b> · ${selCells.length.toLocaleString()} cells selected</span><button class="ffact mini" title="operations on this selection: run DE, label / create a group, ask">actions ▾</button><span class="ffclear" title="clear the selection">✕</span>`;
-      (banner.querySelector(".ffact") as HTMLElement).onclick = (e) => { e.stopPropagation(); const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); hooks.openSelectionMenu({ left: r.left, top: r.bottom + 4 }); };   // anchor under the BUTTON (right-aligned), not the full-width banner
+      (banner.querySelector(".ffact") as HTMLElement).onclick = (e) => { e.stopPropagation(); const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); hooks.openSelectionMenu({ left: r.left, top: r.bottom + 4, right: r.right }); };   // right-align the menu under the BUTTON (stays inside the panel)
       (banner.querySelector(".ffclear") as HTMLElement).onclick = () => ctx.coord.setSelection(null);
       host.appendChild(banner);
     }

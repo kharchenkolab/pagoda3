@@ -54,7 +54,7 @@ export class App {
   caveatsCollapsed = new Set<string>();   // caveat handles the user clicked to collapse (stay collapsed across renders)
   // presence
   thread: any = null; threadDocked = false; nudgePending: any = null; apTimer: any = null; apIndex = 0;
-  scope: Scope | null = null; hot = 0; filtered: any[] = []; lastSelAnchor = { left: 0, top: 0 };
+  scope: Scope | null = null; hot = 0; filtered: any[] = []; lastSelAnchor: { left: number; top: number; right?: number } = { left: 0, top: 0 };
   proposalWhy = "";
 
   constructor(ctx: Ctx) {
@@ -1147,7 +1147,13 @@ export class App {
         `<div class="it" data-a="de"><span class="ic">≢</span>Run DE on selection</div>` +
         `<div class="it" data-a="label"><span class="ic">✎</span>Label as…</div>` +
         `<div class="it" data-a="clear"><span class="ic">✕</span>Clear selection</div>`;
-      sp.style.left = Math.min(this.lastSelAnchor.left + 8, innerWidth - 210) + "px"; sp.style.top = this.lastSelAnchor.top + "px"; sp.classList.add("show");
+      sp.classList.add("show");
+      // position with the menu's REAL width: if the anchor carries a `right` (a right-aligned trigger like the facet
+      // "actions" button), align the menu's right edge to it so it stays inside the panel; else open to the right of
+      // the anchor. Clamp within the window with an 8px margin either way (never bleed to the very edge).
+      const a = this.lastSelAnchor; const wpx = sp.offsetWidth || 210;
+      const left = a.right != null ? a.right - wpx : a.left + 8;
+      sp.style.left = Math.max(8, Math.min(left, innerWidth - wpx - 8)) + "px"; sp.style.top = a.top + "px";
       sp.querySelectorAll<HTMLElement>(".it").forEach((it) => it.onclick = () => { const a = it.dataset.a;
         if (a === "label") { this.selpopLabelInput(Array.from(ids)); return; }   // sub-state — keep the popover open
         this.hideSelpop();
