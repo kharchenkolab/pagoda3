@@ -336,6 +336,7 @@ svg{display:block;width:100%;height:auto}
 .axis{fill:var(--faint);font-family:var(--mono);font-size:9px} .gl{stroke:var(--line);stroke-width:1}
 /* composition cross-panel link — two tiers. hover = light (soft dim, thin cyan cue); select = strong
    (heavy dim, bold outline). select dominates when both are present. ribbons drawn in the .cribbons group. */
+.vgscope{font-size:11px;color:var(--dim);padding:5px 10px;flex:0 0 auto;border-bottom:1px solid var(--line2)}
 .comphost .cseg{fill-opacity:.9;transition:fill-opacity .1s,stroke-width .1s}
 .comphost .cseg.hovdim{fill-opacity:.5}
 .comphost .cseg.hov{fill-opacity:1;stroke:var(--cyan);stroke-width:.5}

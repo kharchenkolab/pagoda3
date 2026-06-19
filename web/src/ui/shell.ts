@@ -1168,6 +1168,7 @@ export class App {
       { name: "Embedding", about: "UMAP scatter of all cells", spec: { type: "Embedding", title: "Embedding", bind: "embedding:main" } },
       { name: "Marker dot-plot", about: "top marker genes per group", spec: { type: "Heatmap", title: "Marker genes", cap: "top genes per group", group: defGrp } },
       { name: "Composition", about: "stacked cluster proportions per sample", spec: { type: "CompositionBars", title: "Composition", cap: "by sample", bind: "composition:bySample" } },
+      { name: "Variable genes", about: "top overdispersed genes for the current selection (live)", spec: { type: "VariableGenes", title: "Variable genes", cap: "overdispersion" } },
       { name: "Metadata facets", about: "browse / filter / cross-filter metadata", spec: { type: "MetadataFacets", title: "Metadata", cap: "browse facets", bind: "facets:all" } },
     ];
     const row = (key: string, name: string, kind: string, add: string, del?: string) =>

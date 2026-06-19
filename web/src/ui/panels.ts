@@ -82,6 +82,7 @@ export async function bodyFor(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bu
     case "AnnoRecord": return annoRecordBody(p, ctx, hooks);
     case "SplitHeat": return splitHeatBody(p);
     case "GeneList": return geneListBody(p, hooks);
+    case "VariableGenes": return variableGenesBody(p, ctx, hooks);
     case "Widget": return widgetBody(p, ctx, hooks);
     case "Note": { const d = mk("div", "notebody"); d.innerHTML = p.text || ""; d.style.cssText = "font-size:12.5px;line-height:1.5"; return { el: d }; }
     default: return { el: mk("div", undefined, p.type) };
@@ -179,7 +180,8 @@ async function categoryLabels(ctx: Ctx, colorBy: string, emb: Float32Array = ctx
 type GCol = { key: string; label: string; num?: boolean; get: (r: any) => any; fmt?: (v: any, r: any) => string; cls?: (v: any) => string };
 const GTABLE_CAP = 200;   // max ROWS rendered at once — the table holds the FULL ranked list (all tested genes) for
                           // search, but only renders the top slice / matches so the DOM stays light on big gene sets.
-function geneTable(rows: any[], cols: GCol[], onPick: (symbol: string) => void): BuiltBody {
+function geneTable(initial: any[], cols: GCol[], onPick: (symbol: string) => void): BuiltBody & { setRows: (r: any[]) => void } {
+  let rows = initial;   // mutable so a reactive panel (Variable genes) can swap the list in place, keeping the search box + its text
   const wrap = mk("div", "gtable");
   const search = Object.assign(document.createElement("input"), { className: "gsearch", placeholder: "filter genes…" }) as HTMLInputElement;
   const scroll = mk("div", "gscroll"), table = document.createElement("table");
@@ -201,7 +203,40 @@ function geneTable(rows: any[], cols: GCol[], onPick: (symbol: string) => void):
       : q ? `${rs.length.toLocaleString()} match${rs.length === 1 ? "" : "es"}` : (rows.length ? `${rows.length.toLocaleString()} genes` : "");
   };
   search.oninput = render; render();
-  return { el: wrap, headerControls: search };
+  return { el: wrap, headerControls: search, setRows: (r: any[]) => { rows = r; render(); } };
+}
+
+// Reactive "Variable genes" panel: top OVERDISPERSED genes for the current selection (or all cells), recomputed
+// kernel-side (ctx.view.overdispersedGenes — the same path the `compute` tool uses) whenever the selection changes.
+// Reuses geneTable, so it has the full gene list + the header search/render-cap; updates rows in place (setRows).
+function variableGenesBody(p: Panel, ctx: Ctx, hooks: PanelHooks): BuiltBody {
+  const gt = geneTable([], [
+    { key: "symbol", label: "gene", get: (r: any) => r.symbol },
+    { key: "score", label: "overdispersion", num: true, get: (r: any) => r.score ?? 0, fmt: (v: number) => v.toFixed(2), cls: () => "up" },
+  ], hooks.onGeneClick);
+  const w = mk("div"); w.style.cssText = "position:absolute;inset:0;display:flex;flex-direction:column;overflow:hidden";
+  const scope = mk("div", "vgscope"); w.appendChild(scope); w.appendChild(gt.el);
+  let busy = false, again = false;
+  const recompute = async () => {
+    if (busy) { again = true; return; } busy = true;
+    try {
+      const sc = p.view?.scope ? ctx.refToCells(p.view.scope) : null;   // a pinned panel scope wins; else the live selection; else all cells
+      const sel = ctx.coord.state.selection;
+      let ids: number[], label: string;
+      if (sc && sc.length) { ids = Array.from(sc); label = (p.view!.scope as any).value || "scope"; }
+      else if (sel) { ids = Array.from(ctx.refToCells(sel)); label = sel.kind === "category" ? (sel as any).value : "selection"; }
+      else { ids = Array.from({ length: ctx.n }, (_, i) => i); label = "all cells"; }
+      scope.textContent = `${label} · ${ids.length.toLocaleString()} cells · top overdispersed genes`;
+      const hv = await ctx.view.overdispersedGenes(ids, 1e9);
+      gt.setRows(hv.map((h: any) => ({ symbol: h.symbol, score: h.resid })));
+      if (!hv.length) scope.textContent = `${label} — no overdispersion (this store has no cell-major counts panel)`;
+    } finally { busy = false; if (again) { again = false; recompute(); } }
+  };
+  recompute();
+  return { el: w, headerControls: gt.headerControls, afterAttach: () => {
+    const pb = w.parentElement as HTMLElement | null; if (pb) { pb.style.position = "relative"; if (pb.clientHeight < 80) pb.style.height = "320px"; }   // anchor the absolute body to THIS panel (mirrors facetsBody)
+    hooks.onCoord((_s: any, changed: string[]) => { if (changed.some((k) => k === "selection" || k === "focus")) recompute(); });
+  } };
 }
 
 // Subsample DE is fold-change RANKING (no p-value by design — see the caveat), so we show the real effect
