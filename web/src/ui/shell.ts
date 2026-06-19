@@ -1162,16 +1162,27 @@ export class App {
   openAccountMenu() {
     const c = this.$("acct"); const light = document.documentElement.classList.contains("light");
     const esc = (s: string) => String(s).replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]!));
-    const widgets = this.widgetLib.length
-      ? this.widgetLib.map((w) => `<div class="acwrow"><span class="acwname" title="${esc(w.name)}">${esc(w.name)}</span><span class="acwadd" data-add="${w.id}" title="add to workbench">add</span><span class="acwdel" data-del="${w.id}" title="delete from library">✕</span></div>`).join("")
-      : `<div class="acempty">No saved widgets yet — ask the agent to build one, or describe it in ⌘K.</div>`;
+    // ADD TO WORKBENCH = standard built-in panels + the custom-widget library, one searchable list.
+    const defGrp = (() => { try { return this.ctx.defaultGrouping(); } catch { return "leiden"; } })();
+    const standard: { name: string; about: string; spec: Partial<Panel> }[] = [
+      { name: "Embedding", about: "UMAP scatter of all cells", spec: { type: "Embedding", title: "Embedding", bind: "embedding:main" } },
+      { name: "Marker dot-plot", about: "top marker genes per group", spec: { type: "Heatmap", title: "Marker genes", cap: "top genes per group", group: defGrp } },
+      { name: "Composition", about: "stacked cluster proportions per sample", spec: { type: "CompositionBars", title: "Composition", cap: "by sample", bind: "composition:bySample" } },
+      { name: "Metadata facets", about: "browse / filter / cross-filter metadata", spec: { type: "MetadataFacets", title: "Metadata", cap: "browse facets", bind: "facets:all" } },
+    ];
+    const row = (key: string, name: string, kind: string, add: string, del?: string) =>
+      `<div class="acwrow" data-search="${esc(key.toLowerCase())}"><span class="acwname" title="${esc(name)}">${esc(name)}</span><span class="acwkind">${kind}</span><span class="acwadd" ${add} title="add to workbench">add</span>${del ? `<span class="acwdel" ${del} title="delete from library">✕</span>` : ""}</div>`;
+    const stdRows = standard.map((s, i) => row(`${s.name} ${s.about}`, s.name, "panel", `data-std="${i}"`)).join("");
+    const widgets = stdRows + this.widgetLib.map((w) => row(w.name, w.name, "widget", `data-add="${w.id}"`, `data-del="${w.id}"`)).join("");
     c.innerHTML = `
       <div class="acsec"><div class="aclabel">ACCOUNT</div>
         <div class="acrow"><span class="acava">G</span><div><div class="acname">Guest</div><div class="acsub">Local session · not signed in</div></div></div>
         <button class="acbtn" data-a="signin">Sign in</button></div>
       <div class="acsec"><div class="aclabel">THEME</div>
         <div class="acseg"><button data-a="dark" class="${light ? "" : "on"}">Dark</button><button data-a="light" class="${light ? "on" : ""}">Light</button></div></div>
-      <div class="acsec"><div class="aclabel">CUSTOM WIDGETS · ${this.widgetLib.length}</div><div class="acwidgets">${widgets}</div></div>
+      <div class="acsec"><div class="aclabel">ADD TO WORKBENCH</div>
+        <input class="acwsearch" id="acwsearch" placeholder="search panels & widgets…">
+        <div class="acwidgets" id="acwlist">${widgets}</div></div>
       <div class="acsec"><div class="aclabel">SESSION</div>
         <div class="acseg"><button data-a="export">Save to file…</button><button data-a="import">Open file…</button></div>
         <div class="acsub" style="margin:5px 2px 0">A portable .json (layout + annotation + widgets + chat) — reopen anywhere or share.</div>
@@ -1184,8 +1195,11 @@ export class App {
       else if (a === "export") { c.classList.remove("show"); void this.exportSessionToFile(); }
       else if (a === "import") { c.classList.remove("show"); void this.importSessionFromFile(); }
       else if (a === "reset") { try { localStorage.removeItem(SESSION_KEY); } catch { /* */ } location.reload(); } });   // clear the saved layout AND reboot to the dataset's default (recovers a stuck view; keeps the widget library + theme)
+    c.querySelectorAll<HTMLElement>("[data-std]").forEach((el) => el.onclick = () => { const s = standard[Number(el.dataset.std)]; if (s) { this.addPanel({ ...s.spec }); this.toast(`Added ${s.name}`, null); } c.classList.remove("show"); });
     c.querySelectorAll<HTMLElement>("[data-add]").forEach((el) => el.onclick = () => { const w = this.widgetLib.find((x) => x.id === el.dataset.add); if (w) { this.addWidgetPanel(w.source, w.name, w.controls); this.toast(`Added widget “${w.name}”`, null); } c.classList.remove("show"); });
     c.querySelectorAll<HTMLElement>("[data-del]").forEach((el) => el.onclick = (e) => { e.stopPropagation(); this.deleteWidgetFromLibrary(el.dataset.del!); this.openAccountMenu(); });   // re-render the list in place
+    const sb = c.querySelector<HTMLInputElement>("#acwsearch");   // filter the combined list in place (no menu re-render → keeps focus)
+    if (sb) sb.oninput = () => { const q = sb.value.trim().toLowerCase(); c.querySelectorAll<HTMLElement>(".acwrow").forEach((el) => { el.style.display = !q || (el.dataset.search || "").includes(q) ? "" : "none"; }); };
   }
 
   // ---------- checkpoints ----------
