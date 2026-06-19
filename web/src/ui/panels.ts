@@ -948,7 +948,7 @@ async function renderCapRecord(host: HTMLElement, layer: AnnotationLayer, label:
       ${suggestedBadge}
       <span id="arsaved" style="color:var(--good,#6bbf73);font-size:11px;opacity:0;transition:opacity .2s">saved ✓</span>
       <button id="arsuggest" class="mini" title="ask the agent to propose a name, category, ontology term, markers + rationale from this cluster's genes" style="margin-left:auto;border-color:var(--amber,#e0a458);color:var(--amber,#e0a458)">✨ Suggest</button>
-      ${opts?.onCollapse ? `<button id="armin" class="mini" title="hide the record (more room for the table / matrix)" style="padding:3px 8px">–</button>` : ""}</div>
+      ${opts?.onCollapse ? `<button id="armin" class="mini" title="hide the record (more room for the table / matrix)" style="padding:3px 8px">▾</button>` : ""}</div>
     ${opts?.context ? `<div style="font-size:10.5px;color:var(--faint);margin:-4px 0 8px">${opts.context}</div>` : ""}
     ${opts?.accept ? `<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:0 0 9px;font-size:11px"><span style="color:var(--faint)">set from source:</span>${opts.accept.options.map((o, i) => { const on = o.label === opts.accept!.current; return `<button class="mini rcacc" data-acc="${i}" title="set ${esc(opts!.accept!.cluster)}'s working label to “${esc(o.label)}” (${esc(o.sources.join(", "))})"${on ? " disabled" : ""} style="${on ? "border-color:var(--good,#6bbf73);color:var(--good,#6bbf73)" : ""}">${esc(o.label)} ${on ? "✓" : `<span style="color:var(--faint)">· ${esc(o.sources.join(","))}</span>`}</button>`; }).join("")}</div>` : ""}
     <div style="display:flex;align-items:center;gap:8px;margin:0 0 10px;font-size:11px">
