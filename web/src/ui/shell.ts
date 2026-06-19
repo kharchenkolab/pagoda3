@@ -93,7 +93,7 @@ export class App {
     this.agent = new Agent(this);
     this.root.innerHTML = `
       <div class="top">
-        <div class="logo">L<span>⋆</span></div>
+        <div class="logo">L<span>★</span></div>
         <div class="wstabs" id="wstabs"></div>
         <div class="focuschip" id="focuschip" style="display:none"></div>
         <div class="spacer"></div>
