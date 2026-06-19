@@ -3,7 +3,7 @@
 **An agent-driven, browser-native viewer for single-cell data.** Point it at any
 [L\* / lstar](../lstar) store — or hand it an AnnData / Seurat / SingleCellExperiment object and let
 lstar convert it — and explore it through a shared *coordination space* driven by an Anthropic (Opus)
-copilot. Designed in [`docs/design.md`](docs/design.md), mocked in [`docs/mockup.html`](docs/mockup.html).
+copilot.
 
 pagoda3 views **any** single-cell object (via lstar's converters); it is not tied to pagoda
 analysis output. Think "cellxgene for L\*", but agent-driven and generative.
@@ -65,7 +65,6 @@ py/              python package "pagoda3": write_viewer (prep) + view() launcher
 r/               R package "pagoda3": write_viewer + view()
 server/          proxy.mjs — local agent proxy (Anthropic Messages API relay)
 examples/        demo data-prep scripts (make_dev_store.py, real-data pipelines)
-docs/            design.md (the viewer design), roadmap.md, mockup.html, design-brief.md
 ```
 
 ## Status
@@ -73,4 +72,4 @@ docs/            design.md (the viewer design), roadmap.md, mockup.html, design-
 Working locally on real data: a Seurat integration of two GSE192391 PBMC samples
 (`examples/02_process_seurat_integrated.R` → 12,221 cells, 21 cell types). Remote zarr-over-HTTP
 (cell_order + cell-block sharding + a shard-aware stratified sampler) and browser OAuth sign-in are
-the next steps — see [`docs/roadmap.md`](docs/roadmap.md).
+the next steps.

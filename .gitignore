@@ -29,3 +29,9 @@ r/src/*.so
 
 # local scratch / design notes (kept locally, not tracked)
 /misc/
+
+# claude code dev-harness config (local)
+/.claude/
+
+# example input data (raw 10x; the paired matrices are gitignored above)
+/examples/data/
