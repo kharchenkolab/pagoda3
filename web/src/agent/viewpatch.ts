@@ -9,13 +9,19 @@
 
 export type HeatMode = "heat" | "dot";
 
+// The workbench grid can hold up to this many side-by-side columns. Not a conceptual limit — a practical
+// width ceiling so a stray col:50 can't shred the layout into unreadable slivers. Generous enough that a
+// normal ask ("three columns") never trips it; exceeding it clamps with a note rather than refusing.
+export const MAX_COLS = 4;
+const clampCol = (c: number): number => Math.max(0, Math.min(MAX_COLS - 1, Math.floor(c)));
+
 // One panel operation: create (`add` = type), remove (`remove` + id), or configure (id + fields).
 export interface RawPanelOp {
   id?: number;
   add?: string;            // create a panel of this TYPE (mutually exclusive with id)
   remove?: boolean;        // remove panel `id`
   title?: string;
-  col?: number;            // pin to a workbench column (0 left, 1 right) — stack panels in one column
+  col?: number;            // pin to a workbench column (0 = leftmost) — same col stacks panels; grid grows to fit
   full?: boolean;          // span the full width (two full panels stack one under another)
   colorBy?: string;        // per-panel colour handle (meta:/gene:/qc:/geneset:)
   scopeGrouping?: string;
@@ -38,12 +44,12 @@ export interface RawViewPatch {
   display?: { labels?: boolean; legend?: boolean; alpha?: number; winsor?: number };
   panels?: RawPanelOp[];
   facet?: { by?: string; panel?: number; values?: string[]; layout?: string };   // split one panel into aligned copies
-  arrange?: { rows?: number[][]; columns?: number[][] };   // place EXISTING panels into a 2-col grid (pure reposition)
+  arrange?: { rows?: number[][]; columns?: number[][] };   // place EXISTING panels into an N-col grid (pure reposition)
 }
 
 export interface Scope { grouping: string; value: string; }
-export interface PanelSpec { type: string; title?: string; col?: 0 | 1; full?: boolean; colorBy?: string; scope?: Scope; embedding?: string; colormap?: string; group?: string; heatMode?: HeatMode; genes?: string[]; }
-export interface PanelPatch { title?: string; col?: 0 | 1; full?: boolean; colorBy?: string; scope?: Scope | null; embedding?: string; colormap?: string; heatMode?: HeatMode; genes?: string[]; group?: string; }
+export interface PanelSpec { type: string; title?: string; col?: number; full?: boolean; colorBy?: string; scope?: Scope; embedding?: string; colormap?: string; group?: string; heatMode?: HeatMode; genes?: string[]; }
+export interface PanelPatch { title?: string; col?: number; full?: boolean; colorBy?: string; scope?: Scope | null; embedding?: string; colormap?: string; heatMode?: HeatMode; genes?: string[]; group?: string; }
 
 export type NormOp =
   | { kind: "color"; handle: string }
@@ -56,7 +62,7 @@ export type NormOp =
   | { kind: "configPanel"; id: number; patch: PanelPatch }
   | { kind: "removePanel"; id: number }
   | { kind: "facet"; by: string; values: string[]; panel?: number; layout: "stack" | "side" | "auto" }
-  | { kind: "arrange"; place: { id: number; col?: 0 | 1; full: boolean }[] };
+  | { kind: "arrange"; place: { id: number; col?: number; full: boolean }[] };
 
 // Everything the reducer needs to know about the live app — supplied by the caller so the reducer stays pure.
 // `categoricals` are the colour-/scope-/focus-able metadata fields (cell_type, leiden, sample, condition…);
@@ -164,7 +170,7 @@ export function normalizeViewPatch(patch: RawViewPatch, w: World): NormResult {
       const isHeat = op.add === HEAT_TYPE;
       const spec: PanelSpec = { type: op.add };
       if (op.title) spec.title = op.title;
-      if (op.col === 0 || op.col === 1) spec.col = op.col;
+      if (typeof op.col === "number" && op.col >= 0) spec.col = clampCol(op.col);
       if (typeof op.full === "boolean") spec.full = op.full;
       if (typeof op.colorBy === "string" && op.colorBy) { const e = colorError(op.colorBy, w); if (e) rejected.push(`${where} colorBy: ${e}`); else spec.colorBy = op.colorBy; }
       if (op.scopeGrouping && op.scopeValue) { const s = scopeFrom(op.scopeGrouping, op.scopeValue, w, where, rejected); if (s) spec.scope = s; }
@@ -182,7 +188,7 @@ export function normalizeViewPatch(patch: RawViewPatch, w: World): NormResult {
     if (op.id == null || !w.panelExists(op.id)) { rejected.push(`panel #${op.id}: no such panel`); continue; }
     const pp: PanelPatch = {}; const ptype = w.panelType(op.id); const isHeat = ptype === HEAT_TYPE; const groupable = isHeat || ptype === "Reconcile";
     if (op.title) pp.title = op.title;
-    if (op.col === 0 || op.col === 1) pp.col = op.col;
+    if (typeof op.col === "number" && op.col >= 0) pp.col = clampCol(op.col);
     if (typeof op.full === "boolean") pp.full = op.full;
     if (typeof op.colorBy === "string" && op.colorBy) { const e = colorError(op.colorBy, w); if (e) rejected.push(`${where} colorBy: ${e}`); else pp.colorBy = op.colorBy; }
     if (op.clearScope) pp.scope = null;
@@ -227,36 +233,36 @@ export function normalizeViewPatch(patch: RawViewPatch, w: World): NormResult {
     }
   }
 
-  // ---- arrange: place EXISTING panels into the 2-column grid (pure reposition, never recreates) ----
+  // ---- arrange: place EXISTING panels into the grid (pure reposition, never recreates) ----
   // Lenient: accept arrange:{rows|columns}, arrange:[[…],…] (an array → rows), or top-level rows/columns.
+  // The grid grows to as many columns as the layout asks for (up to MAX_COLS) — no fixed 2-column cap.
   const arrRaw: any = patch.arrange;
   const aRows = Array.isArray(arrRaw) ? arrRaw : (arrRaw?.rows ?? (patch as any).rows);
   const aCols = arrRaw?.columns ?? (patch as any).columns;
   if (arrRaw != null || Array.isArray(aRows) || Array.isArray(aCols)) {
     const mode = Array.isArray(aRows) ? "rows" : Array.isArray(aCols) ? "columns" : null;
     const grid = (mode === "rows" ? aRows : aCols) as number[][] | undefined;
-    if (!mode || !grid) rejected.push("arrange: give rows:[[id,id],…] (each inner array is a grid ROW) or columns:[[…],[…]] (one array per COLUMN)");
+    if (!mode || !grid) rejected.push("arrange: give rows:[[id,…],…] (each inner array is a grid ROW, left→right) or columns:[[…],…] (one array per COLUMN, top→bottom)");
     else {
       const flat = grid.flat();
       const bad = flat.filter((id) => typeof id !== "number" || !w.panelExists(id));
       if (!flat.length) rejected.push("arrange: no panel ids given");
       else if (bad.length) rejected.push(`arrange: unknown panel(s) ${bad.join(", ")}`);
       else if (flat.length !== new Set(flat).size) rejected.push("arrange: a panel id appears more than once");
-      else if (mode === "rows" && grid.some((r) => r.length > 2)) rejected.push("arrange: a row can hold at most 2 panels (two columns) — use more rows");
-      else if (mode === "columns" && grid.length > 2) rejected.push("arrange: at most 2 columns");
+      else if (mode === "rows" && grid.some((r) => r.length > MAX_COLS)) rejected.push(`arrange: a row can hold at most ${MAX_COLS} panels (${MAX_COLS} columns) — use more rows, or stack a column via columns:[…]`);
+      else if (mode === "columns" && grid.length > MAX_COLS) rejected.push(`arrange: at most ${MAX_COLS} columns`);
       else {
-        const place: { id: number; col?: 0 | 1; full: boolean }[] = [];
+        // a row's panels fan out across columns 0..n-1; a lone-id row spans the full width. the grid's actual
+        // column count is derived later (from the widest row / highest col pin), so N columns just works.
+        const place: { id: number; col?: number; full: boolean }[] = [];
         if (mode === "rows") {
           for (const row of grid) {
-            if (row.length === 1) place.push({ id: row[0], full: true });
-            else { place.push({ id: row[0], col: 0, full: false }); place.push({ id: row[1], col: 1, full: false }); }
+            if (row.length <= 1) { if (row[0] != null) place.push({ id: row[0], full: true }); }
+            else row.forEach((id, c) => { if (id != null) place.push({ id, col: c, full: false }); });
           }
         } else {
-          const left = grid[0] || [], right = grid[1] || [], single = grid.length === 1;
-          for (let i = 0; i < Math.max(left.length, right.length); i++) {
-            if (left[i] != null) place.push(single ? { id: left[i], full: true } : { id: left[i], col: 0, full: false });
-            if (right[i] != null) place.push({ id: right[i], col: 1, full: false });
-          }
+          const single = grid.length === 1;   // one column → a full-width stack
+          grid.forEach((col, c) => col.forEach((id) => { if (id != null) place.push(single ? { id, full: true } : { id, col: c, full: false }); }));
         }
         ops.push({ kind: "arrange", place });
       }

@@ -18,6 +18,8 @@ function makeWorld(): World {
     4: { type: "Heatmap", genes: ["GNLY"] },
     5: { type: "Embedding", genes: [] },
     6: { type: "Heatmap", genes: [] },
+    7: { type: "Embedding", genes: [] },
+    8: { type: "Embedding", genes: [] },
   };
   return {
     panelTypes: ["Embedding", "Heatmap", "CompositionBars", "DeTable", "Note"],
@@ -190,7 +192,7 @@ test("facet: by-field expands to values; defaults to all; bad field/values handl
 });
 
 test("arrange: rows + columns place existing panels; bad ids / overflow rejected", () => {
-  const w = makeWorld();   // panels 4 (Heatmap), 5 (Embedding) exist
+  const w = makeWorld();   // panels 4 (Heatmap), 5 (Embedding), 6/7/8 exist
   const rows = normalizeViewPatch({ arrange: { rows: [[4, 5]] } }, w);
   assert.deepEqual(find(rows.ops, "arrange"), [{ kind: "arrange", place: [{ id: 4, col: 0, full: false }, { id: 5, col: 1, full: false }] }]);
 
@@ -200,9 +202,29 @@ test("arrange: rows + columns place existing panels; bad ids / overflow rejected
   const cols = normalizeViewPatch({ arrange: { columns: [[4], [5]] } }, w);  // two columns, one each
   assert.deepEqual((find(cols.ops, "arrange")[0] as any).place, [{ id: 4, col: 0, full: false }, { id: 5, col: 1, full: false }]);
 
-  assert.match(normalizeViewPatch({ arrange: { rows: [[4, 5, 6]] } }, w).rejected.join(" "), /at most 2 panels/);
+  // THREE columns side by side — no 2-column cap. rows:[[4,5,6]] fans across cols 0/1/2 …
+  const three = normalizeViewPatch({ arrange: { rows: [[4, 5, 6]] } }, w);
+  assert.deepEqual((find(three.ops, "arrange")[0] as any).place, [{ id: 4, col: 0, full: false }, { id: 5, col: 1, full: false }, { id: 6, col: 2, full: false }]);
+  // … and columns:[[4],[5],[6]] is the equivalent three-column form
+  const threeCols = normalizeViewPatch({ arrange: { columns: [[4], [5], [6]] } }, w);
+  assert.deepEqual((find(threeCols.ops, "arrange")[0] as any).place, [{ id: 4, col: 0, full: false }, { id: 5, col: 1, full: false }, { id: 6, col: 2, full: false }]);
+  // a deep column still stacks: columns:[[4,7],[5],[6]] → col 0 holds 4 then 7
+  const deepCol = normalizeViewPatch({ arrange: { columns: [[4, 7], [5], [6]] } }, w);
+  assert.deepEqual((find(deepCol.ops, "arrange")[0] as any).place, [{ id: 4, col: 0, full: false }, { id: 7, col: 0, full: false }, { id: 5, col: 1, full: false }, { id: 6, col: 2, full: false }]);
+
+  // beyond MAX_COLS (4) is the real ceiling now — five across / five columns is rejected
+  assert.match(normalizeViewPatch({ arrange: { rows: [[4, 5, 6, 7, 8]] } }, w).rejected.join(" "), /at most 4 panels/);
+  assert.match(normalizeViewPatch({ arrange: { columns: [[4], [5], [6], [7], [8]] } }, w).rejected.join(" "), /at most 4 columns/);
   assert.match(normalizeViewPatch({ arrange: { rows: [[4, 4]] } }, w).rejected.join(" "), /more than once/);
   assert.match(normalizeViewPatch({ arrange: { rows: [[404]] } }, w).rejected.join(" "), /unknown panel/);
+});
+
+test("panel col pin accepts a third column (clamped to MAX_COLS)", () => {
+  const w = makeWorld();
+  const third = normalizeViewPatch({ panels: [{ id: 5, col: 2 }] }, w);
+  assert.deepEqual(find(third.ops, "configPanel"), [{ kind: "configPanel", id: 5, patch: { col: 2 } }]);
+  const clamped = normalizeViewPatch({ panels: [{ id: 5, col: 99 }] }, w);   // absurd pin clamps, doesn't explode
+  assert.equal((find(clamped.ops, "configPanel")[0] as any).patch.col, 3);
 });
 
 test("a compound patch yields ops in order with no rejections", () => {

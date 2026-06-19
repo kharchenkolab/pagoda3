@@ -5,7 +5,7 @@ import { Panel, PanelView, PanelHooks, CompReactor, BuiltBody, bodyFor, paintEmb
 import { EmbeddingView } from "../render/embedding.ts";
 import { Agent, Scope, REGISTRY } from "../agent/agent.ts";
 import { checkLive } from "../agent/live.ts";
-import { normalizeViewPatch, RawViewPatch, World, PanelSpec, PanelPatch } from "../agent/viewpatch.ts";
+import { normalizeViewPatch, RawViewPatch, World, PanelSpec, PanelPatch, MAX_COLS } from "../agent/viewpatch.ts";
 import { validateCellSet, resolveCellSet, describeCellSet, CellSet, CellWorld, CellEnv } from "../agent/cellset.ts";
 import { validateComputeResult, runInWorker } from "../agent/codeapi.ts";
 import { setCodeValues, setConfValues, invalidateColor } from "../render/colors.ts";
@@ -302,7 +302,7 @@ export class App {
     wb.innerHTML = "";
     const afters: (() => void)[] = [];
     for (const b of built) { wb.appendChild(b.dom); if (b.afterAttach) afters.push(b.afterAttach); }
-    this.layoutCanvas(wb);   // place panels into two columns (row-major by default; per-panel col pins override)
+    this.layoutCanvas(wb);   // place panels into the N-column grid (row-major by default; per-panel col pins override)
     // FLIP for surviving panels
     wb.querySelectorAll<HTMLElement>(".panel[data-pid]").forEach((el) => {
       const o = old[el.dataset.pid!]; if (!o) return; const n = el.getBoundingClientRect(); const dx = o.left - n.left, dy = o.top - n.top; if (!dx && !dy) return;
@@ -405,7 +405,7 @@ export class App {
     d.addEventListener("dragleave", () => d.classList.remove("dragover"));
     d.addEventListener("drop", (e) => { e.preventDefault(); d.classList.remove("dragover");
       const r = d.getBoundingClientRect(); const after = (e as DragEvent).clientY > r.top + r.height / 2;   // lower half → drop UNDER the target
-      const col = d.dataset.col === "1" ? 1 : d.dataset.col === "0" ? 0 : undefined;                          // join the target's column
+      const col = d.dataset.col != null && d.dataset.col !== "" ? Number(d.dataset.col) : undefined;            // join the target's column (0-based)
       this.reorderTo((this as any)._drag, p.id, after, col); });
     d.oncontextmenu = (e) => { e.preventDefault(); this.openCtx(e.clientX, e.clientY, p); };
     return { dom: d, afterAttach: () => {
@@ -430,33 +430,35 @@ export class App {
     handle.onManifest((m) => { p.controls = (m?.controls || []); p.controls.forEach((c) => addBtn(c, true)); });   // first/updated manifest
   }
 
-  // Place the canvas into a two-column grid. Default is row-major (panel i → column i%2); a panel's `col` pins it
-  // to a column, so you can stack two panels in one column (e.g. 3 panels = 1 left + 2 right). The shorter
-  // column's last panel spans the leftover rows so there's never an empty hole. `full` panels span both columns.
+  // Place the canvas into an N-column grid. The column count grows to fit the layout's deepest pin — default 2
+  // (the friendly auto-balance width), but pin a panel to col 2 and the grid becomes three columns, so "three
+  // side-by-side columns" is just col 0/1/2 (capped at MAX_COLS so a stray pin can't shred it into slivers).
+  // Unpinned panels drop into the SHORTEST column so a new one doesn't pile onto a full one and scroll off; each
+  // column's last panel spans the leftover rows so there's never an empty hole. `full` panels span the width.
   layoutCanvas(wb: HTMLElement) {
-    let rowL = 1, rowR = 1; let lastLeft: HTMLElement | null = null, lastRight: HTMLElement | null = null;
     const lone = this.canvas.length === 1;
+    const pins = this.canvas.filter((p) => !p.full && typeof p.col === "number" && p.col >= 0).map((p) => p.col!);
+    const ncol = Math.min(MAX_COLS, Math.max(2, ...(pins.length ? pins.map((c) => c + 1) : [2])));
+    wb.style.gridTemplateColumns = `repeat(${ncol}, 1fr)`;
+    const rowAt = new Array<number>(ncol).fill(1);                 // next free row in each column
+    const last: (HTMLElement | null)[] = new Array(ncol).fill(null);
     for (const p of this.canvas) {
       const el = wb.querySelector<HTMLElement>(`.panel[data-pid="${p.id}"]`); if (!el) continue;
-      if (p.full || lone) { const r = Math.max(rowL, rowR); el.style.gridColumn = "1 / -1"; el.style.gridRow = String(r); delete el.dataset.col; rowL = rowR = r + 1; lastLeft = lastRight = null; continue; }
-      // pinned → its column; unpinned → the SHORTER column so panels stay balanced (a new panel doesn't pile onto
-      // an already-full column and scroll off — the stacked-dotplots-plus-UMAP case).
-      const col = p.col === 0 || p.col === 1 ? p.col : (rowL <= rowR ? 0 : 1);
-      if (col === 0) { el.style.gridColumn = "1"; el.style.gridRow = String(rowL++); el.dataset.col = "0"; lastLeft = el; }
-      else { el.style.gridColumn = "2"; el.style.gridRow = String(rowR++); el.dataset.col = "1"; lastRight = el; }
+      if (p.full || lone) { const r = Math.max(...rowAt); el.style.gridColumn = "1 / -1"; el.style.gridRow = String(r); delete el.dataset.col; rowAt.fill(r + 1); last.fill(null); continue; }
+      const col = typeof p.col === "number" && p.col >= 0 ? Math.min(ncol - 1, p.col) : rowAt.indexOf(Math.min(...rowAt));
+      el.style.gridColumn = String(col + 1); el.style.gridRow = String(rowAt[col]++); el.dataset.col = String(col); last[col] = el;
     }
-    const maxRow = Math.max(rowL, rowR) - 1;
-    if (lastLeft && rowL - 1 < maxRow) lastLeft.style.gridRow = lastLeft.style.gridRow + " / " + (maxRow + 1);
-    if (lastRight && rowR - 1 < maxRow) lastRight.style.gridRow = lastRight.style.gridRow + " / " + (maxRow + 1);
+    const maxRow = Math.max(...rowAt) - 1;
+    for (let c = 0; c < ncol; c++) { const el = last[c]; if (el && rowAt[c] - 1 < maxRow) el.style.gridRow = el.style.gridRow + " / " + (maxRow + 1); }
   }
 
   // Move a dragged panel next to a target, into the target's column (so you can drop a panel UNDER another to
   // stack it in that column). `after` = dropped on the lower half of the target.
-  reorderTo(fromId: number, toId: number, after: boolean, col?: 0 | 1) {
+  reorderTo(fromId: number, toId: number, after: boolean, col?: number) {
     if (fromId == null || fromId === toId) return;
     const from = this.canvas.findIndex((z) => z.id === fromId); if (from < 0) return;
     const [m] = this.canvas.splice(from, 1);
-    if (col === 0 || col === 1) m.col = col;
+    if (typeof col === "number" && col >= 0) m.col = col;
     let to = this.canvas.findIndex((z) => z.id === toId); if (to < 0) to = this.canvas.length;
     if (after) to++;
     this.canvas.splice(to, 0, m);
@@ -495,10 +497,10 @@ export class App {
   // Mutate ONE panel's model from a patch (no render). colorBy/scope/embedding live on .view; heatMode/genes/title
   // are top-level. Returns whether the change needs a body REBUILD (vs a cheap repaint). Shared by the per-panel
   // dropdown and the declarative patcher, so both treat a panel identically.
-  applyPanelModel(p: Panel, patch: { title?: string; col?: 0 | 1; full?: boolean; colorBy?: string; scope?: EntityRef | null; embedding?: string; colormap?: string; heatMode?: "heat" | "dot"; genes?: string[]; group?: string }): boolean {
+  applyPanelModel(p: Panel, patch: { title?: string; col?: number; full?: boolean; colorBy?: string; scope?: EntityRef | null; embedding?: string; colormap?: string; heatMode?: "heat" | "dot"; genes?: string[]; group?: string }): boolean {
     let rebuild = false;
     if (patch.title != null && patch.title !== p.title) { p.title = patch.title; rebuild = true; }   // title shows in the header (panelEl) → rebuild
-    if (patch.col === 0 || patch.col === 1) { if (patch.col !== p.col) rebuild = true; p.col = patch.col;
+    if (typeof patch.col === "number" && patch.col >= 0) { if (patch.col !== p.col) rebuild = true; p.col = patch.col;
       if (patch.full === undefined && p.full) { p.full = false; rebuild = true; } }   // a column pin means NOT full-width — clear full (it would otherwise override col and the pin would silently no-op)
     if (typeof patch.full === "boolean" && patch.full !== p.full) { p.full = patch.full; rebuild = true; }   // full-width → re-layout
     if (patch.colorBy != null) { this.noteColor(patch.colorBy); if (p.type !== "Embedding") rebuild = true; }   // recolouring a non-embedding (e.g. composition restack) needs a rebuild
@@ -571,7 +573,7 @@ export class App {
               const view: PanelView = { ...(src!.view || {}) };
               view.scope = { kind: "category", grouping: op.by, value: val } as EntityRef;
               const spec: Partial<Panel> = { type: src!.type, title: base, cap: src!.cap, group: src!.group, heatMode: src!.heatMode, genes: src!.genes ? [...src!.genes] : undefined, bind: src!.bind, view };
-              if (layout === "stack") spec.full = true; else { spec.col = (k % 2) as 0 | 1; spec.full = false; }
+              if (layout === "stack") spec.full = true; else { spec.col = k % 2; spec.full = false; }
               return this.newPanel(spec);
             });
             this.canvas.splice(idx, 1, ...facets);
