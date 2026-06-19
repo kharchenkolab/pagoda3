@@ -1195,12 +1195,30 @@ export class App {
       else if (a === "theme") { this.applyTheme(document.documentElement.classList.contains("light") ? "dark" : "light"); this.openAccountMenu(); }   // toggle + re-render the icon
       else if (a === "export") { c.classList.remove("show"); void this.exportSessionToFile(); }
       else if (a === "import") { c.classList.remove("show"); void this.importSessionFromFile(); }
-      else if (a === "reset") { try { localStorage.removeItem(SESSION_KEY); } catch { /* */ } location.reload(); } });   // clear the saved layout AND reboot to the dataset's default (recovers a stuck view; keeps the widget library + theme)
+      else if (a === "reset") { c.classList.remove("show"); this.confirmReset(); } });   // confirm first — reset wipes the saved session
     c.querySelectorAll<HTMLElement>("[data-std]").forEach((el) => el.onclick = () => { const s = standard[Number(el.dataset.std)]; if (s) { this.addPanel({ ...s.spec }); this.toast(`Added ${s.name}`, null); } c.classList.remove("show"); });
     c.querySelectorAll<HTMLElement>("[data-add]").forEach((el) => el.onclick = () => { const w = this.widgetLib.find((x) => x.id === el.dataset.add); if (w) { this.addWidgetPanel(w.source, w.name, w.controls); this.toast(`Added widget “${w.name}”`, null); } c.classList.remove("show"); });
     c.querySelectorAll<HTMLElement>("[data-del]").forEach((el) => el.onclick = (e) => { e.stopPropagation(); this.deleteWidgetFromLibrary(el.dataset.del!); this.openAccountMenu(); });   // re-render the list in place
     const sb = c.querySelector<HTMLInputElement>("#acwsearch");   // filter the combined list in place (no menu re-render → keeps focus)
     if (sb) sb.oninput = () => { const q = sb.value.trim().toLowerCase(); c.querySelectorAll<HTMLElement>(".acwrow").forEach((el) => { el.style.display = !q || (el.dataset.search || "").includes(q) ? "" : "none"; }); };
+  }
+  // Reset wipes the saved session (it's destructive + irreversible once reloaded), so confirm first via a modal that
+  // spells out exactly what's lost vs kept, and points at "Save to file…" as the escape.
+  confirmReset() {
+    const esc = (s: string) => String(s).replace(/[&<>]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[ch]!));
+    const store = this.currentStore();
+    const ov = mk("div", "modal");
+    ov.innerHTML = `<div class="modalcard">
+      <div class="mtitle">Reset this session?</div>
+      <div class="mbody">This permanently clears everything saved for <b>${esc(store)}</b> — your <b>panel layout</b>, any <b>widgets you added</b> to the workbench, the <b>working annotation draft</b>, and the <b>chat history</b> — then reloads to the dataset's default.<br><br>Your saved widget <i>library</i> and theme are kept. To keep this session, <b>Save to file…</b> first instead.</div>
+      <div class="macts"><button class="mcancel">Cancel</button><button class="mok">Reset &amp; reload</button></div></div>`;
+    const close = () => { ov.remove(); document.removeEventListener("keydown", onKey); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
+    ov.onclick = (e) => { if (e.target === ov) close(); };   // click the backdrop to cancel
+    (ov.querySelector(".mcancel") as HTMLElement).onclick = close;
+    (ov.querySelector(".mok") as HTMLElement).onclick = () => { try { localStorage.removeItem(SESSION_KEY); } catch { /* */ } location.reload(); };
+    document.body.appendChild(ov); document.addEventListener("keydown", onKey);
+    (ov.querySelector(".mcancel") as HTMLElement).focus();
   }
 
   // ---------- checkpoints ----------
