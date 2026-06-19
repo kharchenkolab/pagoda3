@@ -310,6 +310,8 @@ button{font-family:inherit}
 .acbtn{margin-top:9px;width:100%;font:inherit;font-size:12px;color:var(--text);background:var(--inset);border:1px solid var(--line);border-radius:7px;padding:6px;cursor:pointer}
 .acbtn:hover{border-color:var(--cyan);color:var(--cyan)}
 .acseg{display:flex;gap:6px}
+.acicons{display:flex;gap:6px;margin-top:8px}
+.acicons button{flex:1;font-size:15px;line-height:1;color:var(--dim);background:var(--inset);border:1px solid var(--line);border-radius:7px;padding:7px 0;cursor:pointer} .acicons button:hover{color:var(--cyan);border-color:var(--cyan)}
 .acseg button{flex:1;font:inherit;font-size:12px;color:var(--dim);background:var(--inset);border:1px solid var(--line);border-radius:7px;padding:6px;cursor:pointer}
 .acseg button.on{color:var(--on-accent);background:var(--cyan);border-color:var(--cyan)}
 .acwidgets{display:flex;flex-direction:column;gap:2px;max-height:180px;overflow:auto}

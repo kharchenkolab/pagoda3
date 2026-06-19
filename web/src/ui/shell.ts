@@ -1177,21 +1177,21 @@ export class App {
     c.innerHTML = `
       <div class="acsec"><div class="aclabel">ACCOUNT</div>
         <div class="acrow"><span class="acava">G</span><div><div class="acname">Guest</div><div class="acsub">Local session · not signed in</div></div></div>
-        <button class="acbtn" data-a="signin">Sign in</button></div>
-      <div class="acsec"><div class="aclabel">THEME</div>
-        <div class="acseg"><button data-a="dark" class="${light ? "" : "on"}">Dark</button><button data-a="light" class="${light ? "on" : ""}">Light</button></div></div>
+        <button class="acbtn" data-a="signin">Sign in</button>
+        <div class="acicons">
+          <button data-a="theme" title="${light ? "Light theme · switch to dark" : "Dark theme · switch to light"}">${light ? "☀" : "☾"}</button>
+          <button data-a="export" title="Save session to a file (.json)">⤓</button>
+          <button data-a="import" title="Open a session file">⤒</button>
+          <button data-a="reset" title="Reset layout &amp; reload">↺</button>
+        </div></div>
       <div class="acsec"><div class="aclabel">ADD TO WORKBENCH</div>
         <input class="acwsearch" id="acwsearch" placeholder="search panels & widgets…">
-        <div class="acwidgets" id="acwlist">${widgets}</div></div>
-      <div class="acsec"><div class="aclabel">SESSION</div>
-        <div class="acseg"><button data-a="export">Save to file…</button><button data-a="import">Open file…</button></div>
-        <div class="acsub" style="margin:5px 2px 0">A portable .json (layout + annotation + widgets + chat) — reopen anywhere or share.</div>
-        <button class="acbtn" data-a="reset" style="margin-top:7px">Reset layout &amp; reload</button></div>`;
+        <div class="acwidgets" id="acwlist">${widgets}</div></div>`;
     const b = this.$("acctBtn").getBoundingClientRect();
     c.style.left = Math.max(8, Math.min(b.right - 280, innerWidth - 288)) + "px"; c.style.top = (b.bottom + 6) + "px"; c.classList.add("show");
     c.querySelectorAll<HTMLElement>("[data-a]").forEach((el) => el.onclick = () => { const a = el.dataset.a!;
       if (a === "signin") { this.toast("Sign-in is coming soon — your session + widgets are saved locally for now.", null); c.classList.remove("show"); }
-      else if (a === "dark" || a === "light") { this.applyTheme(a as "dark" | "light"); this.openAccountMenu(); }   // re-render to move the highlight
+      else if (a === "theme") { this.applyTheme(document.documentElement.classList.contains("light") ? "dark" : "light"); this.openAccountMenu(); }   // toggle + re-render the icon
       else if (a === "export") { c.classList.remove("show"); void this.exportSessionToFile(); }
       else if (a === "import") { c.classList.remove("show"); void this.importSessionFromFile(); }
       else if (a === "reset") { try { localStorage.removeItem(SESSION_KEY); } catch { /* */ } location.reload(); } });   // clear the saved layout AND reboot to the dataset's default (recovers a stuck view; keeps the widget library + theme)
