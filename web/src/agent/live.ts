@@ -9,6 +9,7 @@ import { previewWidget } from "../widget/runtime.ts";
 import { previewHost, PreviewSim } from "../widget/apphost.ts";
 import { listRecipes, findRecipes, getRecipe, recipeSource } from "../widget/recipes.ts";
 import { applyEdits } from "../widget/edits.ts";
+import { getProvider, providerModel, adapterFor } from "./providers.ts";
 
 const PROXY = "/api/agent/stream";
 
@@ -275,13 +276,15 @@ export async function runLive(app: App, userText: string, abort: AbortSignal): P
   app.thread = { kind: "live", live: true, entries: [{ role: "user", text: userText }] };
   ag.renderThread(); app.setPip("working", "thinking");
   const sys = await systemPrompt(app);
+  const provider = getProvider(); const adapter = adapterFor(provider); const model = providerModel(provider);
 
   let emptyRetries = 0;
   for (let turn = 0; turn < 12; turn++) {   // headroom for multi-step flows like widget authoring (template → preview → fix → save)
     if (abort.aborted) break;
-    const res = await fetch(PROXY, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ system: sys, messages, tools: TOOLS, model: "claude-opus-4-8", max_tokens: 8192, client: "app", runId: liveRunId(), store: app.currentStore() }), signal: abort });
+    const res = await fetch(PROXY, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...adapter.buildBody({ system: sys, messages, tools: TOOLS, maxTokens: 8192 }), provider, model, client: "app", runId: liveRunId(), store: app.currentStore() }), signal: abort });
     if (!res.ok || !res.body) { app.thread.entries.push({ role: "agent", text: "(agent unreachable — using local fallback)" }); ag.renderThread(); throw new Error("live unreachable"); }
     const assistant: any[] = []; let curText = ""; let curTool: any = null; let curJson = ""; let textEntry: any = null; let stop = "";
+    const pstate = adapter.newState();
     const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = "";
     for (;;) {
       const { done, value } = await reader.read(); if (done) break;
@@ -290,10 +293,16 @@ export async function runLive(app: App, userText: string, abort: AbortSignal): P
         const line = buf.slice(0, nl); buf = buf.slice(nl + 1);
         if (!line.startsWith("data:")) continue;
         let ev: any; try { ev = JSON.parse(line.slice(5).trim()); } catch { continue; }
-        if (ev.type === "content_block_start") { if (ev.content_block.type === "tool_use") { curTool = { type: "tool_use", id: ev.content_block.id, name: ev.content_block.name, input: {} }; curJson = ""; } else if (ev.content_block.type === "text") { curText = ""; textEntry = { role: "agent", text: "" }; app.thread.entries.push(textEntry); } }
-        else if (ev.type === "content_block_delta") { if (ev.delta.type === "text_delta") { curText += ev.delta.text; if (textEntry) { textEntry.text = curText; ag.renderThread(); } } else if (ev.delta.type === "input_json_delta") { curJson += ev.delta.partial_json; } }
-        else if (ev.type === "content_block_stop") { if (curTool) { try { curTool.input = curJson ? JSON.parse(curJson) : {}; } catch { curTool.input = {}; } assistant.push(curTool); app.thread.entries.push({ tool: curTool.name, label: toolLabel(curTool), status: "active" }); ag.renderThread(); curTool = null; } else if (textEntry) { assistant.push({ type: "text", text: curText }); textEntry = null; } }
-        else if (ev.type === "message_delta") { if (ev.delta?.stop_reason) stop = ev.delta.stop_reason; }
+        // provider adapter normalizes the SSE (Anthropic content_block_* OR OpenAI chat.completion.chunk) into the
+        // same op stream; the fold below is provider-agnostic and builds the canonical assistant blocks + UI.
+        for (const o of adapter.parseEvent(ev, pstate)) {
+          if (o.op === "toolStart") { curTool = { type: "tool_use", id: o.id, name: o.name, input: {} }; curJson = ""; }
+          else if (o.op === "textStart") { curText = ""; textEntry = { role: "agent", text: "" }; app.thread.entries.push(textEntry); }
+          else if (o.op === "text") { curText += o.text; if (textEntry) { textEntry.text = curText; ag.renderThread(); } }
+          else if (o.op === "toolArgs") { curJson += o.json; }
+          else if (o.op === "blockStop") { if (curTool) { try { curTool.input = curJson ? JSON.parse(curJson) : {}; } catch { curTool.input = {}; } assistant.push(curTool); app.thread.entries.push({ tool: curTool.name, label: toolLabel(curTool), status: "active" }); ag.renderThread(); curTool = null; } else if (textEntry) { assistant.push({ type: "text", text: curText }); textEntry = null; } }
+          else if (o.op === "stop") { stop = o.reason; }
+        }
       }
     }
     // A 200 with no content (no tool_use, no text) is a transient API hiccup — retry the turn rather than silently

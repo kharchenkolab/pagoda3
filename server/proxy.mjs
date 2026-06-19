@@ -17,6 +17,10 @@ const TOKEN_URL = "https://console.anthropic.com/v1/oauth/token";
 const REFRESH_SKEW = 120;
 // Byte-exact first system block the API requires for OAuth bearer on non-Haiku models.
 const CC_MARKER = { type: "text", text: "You are a Claude agent, built on Anthropic's Claude Agent SDK." };
+// Second upstream: a local OpenAI-compatible server (vLLM/qwen3) for the swappable agent provider. No auth by default
+// (it's local, behind an SSH tunnel); the client tags the turn provider:"openai" and sends an already-OpenAI body.
+const OPENAI_BASE_URL = (process.env.OPENAI_BASE_URL || "http://localhost:8001/v1").replace(/\/+$/, "");
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 
 function loadStore() { try { return JSON.parse(fs.readFileSync(OAUTH_STORE, "utf8")); } catch { return null; } }
 
@@ -42,6 +46,40 @@ function writeDebug(rec) {
     const id = String(rec.runId || "session").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 40) || "session";
     fs.appendFileSync(`${DEBUG_DIR}/sess-${id}.jsonl`, JSON.stringify({ t: rec.t, store: rec.store, turn: rec.turnIndex, stop: rec.stop, usage: rec.usage, user: rec.lastUser, assistant: rec.response }) + "\n");
   } catch { /* non-fatal */ }
+}
+
+// Tee-parse a buffered SSE stream → { usage, tools, stop, textChars, dbgText, dbgTools } for telemetry + debug. One
+// per provider (the wire formats differ); the byte relay itself is provider-agnostic.
+function teeAnthropic(raw) {
+  let usage = {}, tools = [], stop = "", textChars = 0, dbgText = "", dbgTools = [], curTool = null, curJson = "";
+  for (const line of raw.split("\n")) { if (!line.startsWith("data:")) continue; let ev; try { ev = JSON.parse(line.slice(5).trim()); } catch { continue; }
+    if (ev.type === "message_start") usage = { ...(ev.message && ev.message.usage || {}) };
+    else if (ev.type === "content_block_start" && ev.content_block && ev.content_block.type === "tool_use") { tools.push(ev.content_block.name); curTool = { name: ev.content_block.name, input: undefined }; curJson = ""; }
+    else if (ev.type === "content_block_delta" && ev.delta && ev.delta.type === "text_delta") { textChars += (ev.delta.text || "").length; dbgText += ev.delta.text || ""; }
+    else if (ev.type === "content_block_delta" && ev.delta && ev.delta.type === "input_json_delta") curJson += ev.delta.partial_json || "";
+    else if (ev.type === "content_block_stop" && curTool) { try { curTool.input = curJson ? JSON.parse(curJson) : {}; } catch { curTool.input = curJson; } dbgTools.push(curTool); curTool = null; }
+    else if (ev.type === "message_delta") { if (ev.usage) usage = { ...usage, ...ev.usage }; if (ev.delta && ev.delta.stop_reason) stop = ev.delta.stop_reason; }
+  }
+  return { usage, tools, stop, textChars, dbgText, dbgTools };
+}
+function teeOpenAI(raw) {
+  let usage = {}, tools = [], stop = "", textChars = 0, dbgText = "", dbgTools = [], curName = null, curJson = "", curIdx = -1;
+  const flush = () => { if (curName != null) { let inp; try { inp = curJson ? JSON.parse(curJson) : {}; } catch { inp = curJson; } dbgTools.push({ name: curName, input: inp }); curName = null; curJson = ""; } };
+  for (const line of raw.split("\n")) { if (!line.startsWith("data:")) continue; const d = line.slice(5).trim(); if (d === "[DONE]") continue; let ev; try { ev = JSON.parse(d); } catch { continue; }
+    const ch = ev.choices && ev.choices[0];
+    if (ch && ch.delta) {
+      if (typeof ch.delta.content === "string") { textChars += ch.delta.content.length; dbgText += ch.delta.content; }
+      const tcs = ch.delta.tool_calls;
+      if (Array.isArray(tcs)) for (const tc of tcs) {
+        if ((tc.id || (tc.function && tc.function.name)) && (tc.index == null || tc.index !== curIdx)) { flush(); curIdx = tc.index == null ? curIdx : tc.index; curName = (tc.function && tc.function.name) || ""; tools.push(curName); }
+        if (tc.function && typeof tc.function.arguments === "string") curJson += tc.function.arguments;
+      }
+    }
+    if (ch && ch.finish_reason) { flush(); stop = ch.finish_reason === "tool_calls" ? "tool_use" : ch.finish_reason === "stop" ? "end_turn" : ch.finish_reason; }
+    if (ev.usage) usage = ev.usage;
+  }
+  flush();
+  return { usage, tools, stop, textChars, dbgText, dbgTools };
 }
 
 // ---- web fetch (for the agent's fetch_url tool: consult an external viz/technique reference) ----
@@ -114,63 +152,60 @@ const server = http.createServer(async (req, res) => {
 
   if (url.pathname === "/api/agent/stream" && req.method === "POST") {
     let body = ""; req.on("data", (c) => (body += c)); req.on("end", async () => {
-      let auth;
-      try { auth = await bearer(); } catch (e) { res.statusCode = 503; return res.end(JSON.stringify({ error: String(e.message || e) })); }
       let payload; try { payload = JSON.parse(body); } catch { res.statusCode = 400; return res.end(JSON.stringify({ error: "bad json" })); }
-      const sys = [];
-      if (auth.mode === "oauth") sys.push(CC_MARKER);
-      if (payload.system) sys.push({ type: "text", text: String(payload.system) });
-      const out = {
-        model: payload.model || "claude-opus-4-8",
-        max_tokens: payload.max_tokens || 4096,
-        stream: true,
-        system: sys,
-        messages: payload.messages || [],
-      };
-      if (payload.tools) out.tools = payload.tools;
-      // PROMPT CACHING: the system prompt + tool definitions are large and stable across a conversation's turns —
-      // mark the last block of each so Anthropic caches them (5-min TTL), so they're written once and read (cheap)
-      // on every follow-up turn instead of re-billed in full. Transparent to results.
-      if (out.system && out.system.length) out.system[out.system.length - 1] = { ...out.system[out.system.length - 1], cache_control: { type: "ephemeral" } };
-      if (out.tools && out.tools.length) out.tools[out.tools.length - 1] = { ...out.tools[out.tools.length - 1], cache_control: { type: "ephemeral" } };
-      // also cache the CONVERSATION prefix: mark the LAST message so each turn READS the cached prior turns instead of
-      // reprocessing the whole growing history (the dominant cost of a multi-turn authoring loop). 3 of 4 breakpoints.
-      if (out.messages && out.messages.length) {
-        const lm = out.messages[out.messages.length - 1];
-        if (typeof lm.content === "string") lm.content = [{ type: "text", text: lm.content, cache_control: { type: "ephemeral" } }];
-        else if (Array.isArray(lm.content) && lm.content.length) lm.content[lm.content.length - 1] = { ...lm.content[lm.content.length - 1], cache_control: { type: "ephemeral" } };
+      const provider = payload.provider === "openai" ? "openai" : "anthropic";
+      let url2, headers, out;
+      if (provider === "openai") {
+        // Pass the client's already-OpenAI-shaped body straight through to the local vLLM server. No OAuth, no CC
+        // marker, no cache_control / anthropic headers (vLLM rejects unknown fields). The relay below is identical.
+        const { provider: _p, client: _c, runId: _r, store: _s, ...rest } = payload;
+        out = { ...rest, stream: true };
+        if (typeof out.stream_options === "undefined") out.stream_options = { include_usage: true };
+        headers = { "content-type": "application/json" };
+        if (OPENAI_API_KEY) headers["authorization"] = `Bearer ${OPENAI_API_KEY}`;
+        url2 = `${OPENAI_BASE_URL}/chat/completions`;
+      } else {
+        let auth;
+        try { auth = await bearer(); } catch (e) { res.statusCode = 503; return res.end(JSON.stringify({ error: String(e.message || e) })); }
+        const sys = [];
+        if (auth.mode === "oauth") sys.push(CC_MARKER);
+        if (payload.system) sys.push({ type: "text", text: String(payload.system) });
+        out = { model: payload.model || "claude-opus-4-8", max_tokens: payload.max_tokens || 4096, stream: true, system: sys, messages: payload.messages || [] };
+        if (payload.tools) out.tools = payload.tools;
+        // PROMPT CACHING: the system prompt + tool definitions are large and stable across a conversation's turns —
+        // mark the last block of each so Anthropic caches them (5-min TTL): written once, read (cheap) on follow-ups.
+        if (out.system && out.system.length) out.system[out.system.length - 1] = { ...out.system[out.system.length - 1], cache_control: { type: "ephemeral" } };
+        if (out.tools && out.tools.length) out.tools[out.tools.length - 1] = { ...out.tools[out.tools.length - 1], cache_control: { type: "ephemeral" } };
+        // also cache the CONVERSATION prefix: mark the LAST message so each turn READS the cached prior turns.
+        if (out.messages && out.messages.length) {
+          const lm = out.messages[out.messages.length - 1];
+          if (typeof lm.content === "string") lm.content = [{ type: "text", text: lm.content, cache_control: { type: "ephemeral" } }];
+          else if (Array.isArray(lm.content) && lm.content.length) lm.content[lm.content.length - 1] = { ...lm.content[lm.content.length - 1], cache_control: { type: "ephemeral" } };
+        }
+        if (payload.thinking) out.thinking = payload.thinking;
+        headers = { "content-type": "application/json", "anthropic-version": "2023-06-01" };
+        if (auth.mode === "oauth") { headers["authorization"] = `Bearer ${auth.token}`; headers["anthropic-beta"] = "oauth-2025-04-20"; }
+        else headers["x-api-key"] = auth.key;
+        url2 = "https://api.anthropic.com/v1/messages";
       }
-      if (payload.thinking) out.thinking = payload.thinking;
-      const headers = { "content-type": "application/json", "anthropic-version": "2023-06-01" };
-      if (auth.mode === "oauth") { headers["authorization"] = `Bearer ${auth.token}`; headers["anthropic-beta"] = "oauth-2025-04-20"; }
-      else headers["x-api-key"] = auth.key;
       let up;
-      try { up = await fetch("https://api.anthropic.com/v1/messages", { method: "POST", headers, body: JSON.stringify(out) }); }
+      try { up = await fetch(url2, { method: "POST", headers, body: JSON.stringify(out) }); }
       catch (e) { res.statusCode = 502; return res.end(JSON.stringify({ error: String(e) })); }
       const t0 = Date.now();
       res.statusCode = up.status;
       res.setHeader("content-type", up.headers.get("content-type") || "text/event-stream");
-      if (!up.ok) { const t = await up.text(); logAgent({ t: new Date().toISOString(), ms: Date.now() - t0, client: payload.client || "?", msgs: out.messages.length, error: up.status, body: t.slice(0, 160) }); return res.end(t); }
+      if (!up.ok) { const t = await up.text(); logAgent({ t: new Date().toISOString(), ms: Date.now() - t0, client: payload.client || "?", provider, msgs: (out.messages || []).length, error: up.status, body: t.slice(0, 200) }); return res.end(t); }
       const reader = up.body.getReader(); const dec = new TextDecoder(); let raw = "";
       const pump = async () => {
         for (;;) { const { done, value } = await reader.read(); if (done) break; res.write(Buffer.from(value)); raw += dec.decode(value, { stream: true }); }
         res.end();
-        // tee-parse the buffered SSE for usage / tool calls / stop reason → one log line per turn. When DEBUG, also
-        // accumulate the FULL assistant response (text + tool_use inputs) for the content dump.
-        let usage = {}, tools = [], stop = "", textChars = 0;
-        let dbgText = "", dbgTools = [], curTool = null, curJson = "";
-        for (const line of raw.split("\n")) { if (!line.startsWith("data:")) continue; let ev; try { ev = JSON.parse(line.slice(5).trim()); } catch { continue; }
-          if (ev.type === "message_start") usage = { ...(ev.message && ev.message.usage || {}) };
-          else if (ev.type === "content_block_start" && ev.content_block && ev.content_block.type === "tool_use") { tools.push(ev.content_block.name); if (DEBUG) { curTool = { name: ev.content_block.name, input: undefined }; curJson = ""; } }
-          else if (ev.type === "content_block_delta" && ev.delta && ev.delta.type === "text_delta") { textChars += (ev.delta.text || "").length; if (DEBUG) dbgText += ev.delta.text || ""; }
-          else if (ev.type === "content_block_delta" && ev.delta && ev.delta.type === "input_json_delta" && DEBUG) curJson += ev.delta.partial_json || "";
-          else if (ev.type === "content_block_stop" && DEBUG && curTool) { try { curTool.input = curJson ? JSON.parse(curJson) : {}; } catch { curTool.input = curJson; } dbgTools.push(curTool); curTool = null; }
-          else if (ev.type === "message_delta") { if (ev.usage) usage = { ...usage, ...ev.usage }; if (ev.delta && ev.delta.stop_reason) stop = ev.delta.stop_reason; }
-        }
-        logAgent({ t: new Date().toISOString(), ms: Date.now() - t0, client: payload.client || "?", runId: payload.runId || null, store: payload.store || null, model: out.model, msgs: out.messages.length,
-          tools, stop: stop || null, textChars, in: usage.input_tokens || 0, cr: usage.cache_read_input_tokens || 0, cc: usage.cache_creation_input_tokens || 0, out: usage.output_tokens || 0,
-          empty: tools.length === 0 && textChars === 0 });
-        if (DEBUG) { const msgs = payload.messages || []; writeDebug({ t: new Date().toISOString(), runId: payload.runId || "session", client: payload.client || "?", store: payload.store || null, model: out.model, turnIndex: msgs.length, stop: stop || null, usage, system: payload.system || "", messages: msgs, response: { text: dbgText, tools: dbgTools, stop: stop || null }, lastUser: msgs.length ? msgs[msgs.length - 1] : null }); }
+        // tee-parse the buffered SSE (provider-specific) for telemetry + the DEBUG content dump.
+        const r = provider === "openai" ? teeOpenAI(raw) : teeAnthropic(raw);
+        const u = r.usage || {};
+        logAgent({ t: new Date().toISOString(), ms: Date.now() - t0, client: payload.client || "?", provider, runId: payload.runId || null, store: payload.store || null, model: out.model, msgs: (out.messages || []).length,
+          tools: r.tools, stop: r.stop || null, textChars: r.textChars, in: u.input_tokens ?? u.prompt_tokens ?? 0, cr: u.cache_read_input_tokens || 0, cc: u.cache_creation_input_tokens || 0, out: u.output_tokens ?? u.completion_tokens ?? 0,
+          empty: r.tools.length === 0 && r.textChars === 0 });
+        if (DEBUG) { const msgs = payload.messages || []; writeDebug({ t: new Date().toISOString(), runId: payload.runId || "session", client: payload.client || "?", provider, store: payload.store || null, model: out.model, turnIndex: msgs.length, stop: r.stop || null, usage: u, system: payload.system || "", messages: msgs, response: { text: r.dbgText, tools: r.dbgTools, stop: r.stop || null }, lastUser: msgs.length ? msgs[msgs.length - 1] : null }); }
       };
       pump().catch(() => res.end());
     });
