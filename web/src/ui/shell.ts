@@ -1200,27 +1200,46 @@ export class App {
       else if (a === "reset") { c.classList.remove("show"); this.confirmReset(); } });   // confirm first — reset wipes the saved session
     c.querySelectorAll<HTMLElement>("[data-std]").forEach((el) => el.onclick = () => { const s = standard[Number(el.dataset.std)]; if (s) { this.addPanel({ ...s.spec }); this.toast(`Added ${s.name}`, null); } c.classList.remove("show"); });
     c.querySelectorAll<HTMLElement>("[data-add]").forEach((el) => el.onclick = () => { const w = this.widgetLib.find((x) => x.id === el.dataset.add); if (w) { this.addWidgetPanel(w.source, w.name, w.controls); this.toast(`Added widget “${w.name}”`, null); } c.classList.remove("show"); });
-    c.querySelectorAll<HTMLElement>("[data-del]").forEach((el) => el.onclick = (e) => { e.stopPropagation(); this.deleteWidgetFromLibrary(el.dataset.del!); this.openAccountMenu(); });   // re-render the list in place
+    c.querySelectorAll<HTMLElement>("[data-del]").forEach((el) => el.onclick = (e) => { e.stopPropagation();   // confirm first — deleting from the library is irreversible
+      const id = el.dataset.del!; const w = this.widgetLib.find((x) => x.id === id); const name = w ? w.name : "this widget";
+      this.confirmModal({
+        title: "Delete this widget?",
+        body: `Remove <b>${esc(name)}</b> from your widget library? This can't be undone. Any copy already on the workbench stays — this only removes it from the add list.`,
+        ok: "Delete",
+        onConfirm: () => { this.deleteWidgetFromLibrary(id); this.openAccountMenu(); },   // re-render the list with it gone (menu was kept open behind the modal)
+      }); });
     const sb = c.querySelector<HTMLInputElement>("#acwsearch");   // filter the combined list in place (no menu re-render → keeps focus)
     if (sb) sb.oninput = () => { const q = sb.value.trim().toLowerCase(); c.querySelectorAll<HTMLElement>(".acwrow").forEach((el) => { el.style.display = !q || (el.dataset.search || "").includes(q) ? "" : "none"; }); };
   }
-  // Reset wipes the saved session (it's destructive + irreversible once reloaded), so confirm first via a modal that
+  // A small confirmation modal for a destructive action: spells it out, defaults focus to Cancel, dismisses on
+  // Esc / backdrop / Cancel (→ onCancel), and runs onConfirm only on the explicit OK click. `title`/`body`/`ok`
+  // are HTML (the caller escapes any dynamic text). All clicks are kept INSIDE the overlay so the page's
+  // outside-click dismissers (e.g. the account-menu close on line ~1371) don't fire — that lets a menu stay open
+  // behind the modal and re-render itself in onConfirm. The OK button is danger-styled (.mok = var(--bad)).
+  confirmModal(o: { title: string; body: string; ok: string; onConfirm: () => void; onCancel?: () => void }) {
+    const ov = mk("div", "modal");
+    ov.innerHTML = `<div class="modalcard">
+      <div class="mtitle">${o.title}</div>
+      <div class="mbody">${o.body}</div>
+      <div class="macts"><button class="mcancel">Cancel</button><button class="mok">${o.ok}</button></div></div>`;
+    const close = () => { ov.remove(); document.removeEventListener("keydown", onKey); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { close(); o.onCancel?.(); } };
+    ov.onclick = (e) => { e.stopPropagation(); if (e.target === ov) { close(); o.onCancel?.(); } };   // backdrop = cancel; stopPropagation isolates from outside-click dismissers
+    (ov.querySelector(".mcancel") as HTMLElement).onclick = (e) => { e.stopPropagation(); close(); o.onCancel?.(); };
+    (ov.querySelector(".mok") as HTMLElement).onclick = (e) => { e.stopPropagation(); close(); o.onConfirm(); };
+    document.body.appendChild(ov); document.addEventListener("keydown", onKey);
+    (ov.querySelector(".mcancel") as HTMLElement).focus();
+  }
+  // Reset wipes the saved session (destructive + irreversible once reloaded), so confirm first via a modal that
   // spells out exactly what's lost vs kept, and points at "Save to file…" as the escape.
   confirmReset() {
     const esc = (s: string) => String(s).replace(/[&<>]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[ch]!));
-    const store = this.currentStore();
-    const ov = mk("div", "modal");
-    ov.innerHTML = `<div class="modalcard">
-      <div class="mtitle">Reset this session?</div>
-      <div class="mbody">This permanently clears everything saved for <b>${esc(store)}</b> — your <b>panel layout</b>, any <b>widgets you added</b> to the workbench, the <b>working annotation draft</b>, and the <b>chat history</b> — then reloads to the dataset's default.<br><br>Your saved widget <i>library</i> and theme are kept. To keep this session, <b>Save to file…</b> first instead.</div>
-      <div class="macts"><button class="mcancel">Cancel</button><button class="mok">Reset &amp; reload</button></div></div>`;
-    const close = () => { ov.remove(); document.removeEventListener("keydown", onKey); };
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
-    ov.onclick = (e) => { if (e.target === ov) close(); };   // click the backdrop to cancel
-    (ov.querySelector(".mcancel") as HTMLElement).onclick = close;
-    (ov.querySelector(".mok") as HTMLElement).onclick = () => { try { localStorage.removeItem(SESSION_KEY); } catch { /* */ } location.reload(); };
-    document.body.appendChild(ov); document.addEventListener("keydown", onKey);
-    (ov.querySelector(".mcancel") as HTMLElement).focus();
+    this.confirmModal({
+      title: "Reset this session?",
+      body: `This permanently clears everything saved for <b>${esc(this.currentStore())}</b> — your <b>panel layout</b>, any <b>widgets you added</b> to the workbench, the <b>working annotation draft</b>, and the <b>chat history</b> — then reloads to the dataset's default.<br><br>Your saved widget <i>library</i> and theme are kept. To keep this session, <b>Save to file…</b> first instead.`,
+      ok: "Reset &amp; reload",
+      onConfirm: () => { try { localStorage.removeItem(SESSION_KEY); } catch { /* */ } location.reload(); },
+    });
   }
 
   // ---------- checkpoints ----------
