@@ -215,7 +215,15 @@ export function normalizeViewPatch(patch: RawViewPatch, w: World): NormResult {
       notes.push(`${where}: heatMode/genes apply only to Heatmap panels`);
     }
     if (Object.keys(pp).length) ops.push({ kind: "configPanel", id: op.id, patch: pp });
-    else if (!movedFacet) rejected.push(`panel #${op.id}: nothing to change`);   // a hoisted-facet-only op is not "nothing"
+    else if (!movedFacet) {
+      // NEVER reject silently: say what this panel type DOES accept and, if the model tried to mutate `type`,
+      // point it at the real move (add a new panel). This is what lets a weak model recover instead of looping.
+      const valid = ptype === HEAT_TYPE ? "group, heatMode, genes, colorBy, scope, col, full"
+        : ptype === "Embedding" ? "colorBy, colormap, embedding, scope, col, full"
+        : "colorBy, scope, col, full";
+      const triedType = (op as any).type ? ` You can't change a panel's TYPE in place — to get a ${(op as any).type}, ADD a new panel (add:"${(op as any).type}").` : "";
+      rejected.push(`panel #${op.id} (${ptype}): no change — the field(s) you sent don't apply to a ${ptype}, which accepts: ${valid}.${triedType}`);
+    }
   }
 
   // ---- facet: split one panel into aligned copies that differ ONLY in scope ----

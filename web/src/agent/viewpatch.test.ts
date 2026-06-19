@@ -164,8 +164,18 @@ test("configure unknown panel id and empty patch are rejected", () => {
   const w = makeWorld();
   const badId = normalizeViewPatch({ panels: [{ id: 42, colorBy: "gene:CD3D" }] }, w);
   assert.match(badId.rejected[0], /no such panel/);
-  const empty = normalizeViewPatch({ panels: [{ id: 5 }] }, w);
-  assert.match(empty.rejected[0], /nothing to change/);
+  const empty = normalizeViewPatch({ panels: [{ id: 5 }] }, w);   // Embedding, no fields
+  assert.match(empty.rejected[0], /no change/);
+  assert.match(empty.rejected[0], /Embedding/);   // explains the panel TYPE…
+  assert.match(empty.rejected[0], /colorBy/);     // …and what it actually accepts
+});
+
+test("a rejected panel op always explains: type-mutation points at adding a new panel", () => {
+  const w = makeWorld();   // panel 5 = Embedding
+  const r = normalizeViewPatch({ panels: [{ id: 5, type: "Heatmap", heatMode: "dotplot", genes: ["CD3D"] } as any] }, w);
+  const msg = r.rejected.join(" ");
+  assert.match(msg, /can't change a panel's TYPE/i);
+  assert.match(msg, /add:"Heatmap"/);
 });
 
 test("facet: by-field expands to values; defaults to all; bad field/values handled", () => {
