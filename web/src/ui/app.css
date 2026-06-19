@@ -109,8 +109,8 @@ button{font-family:inherit}
 .facetf .fdrop{padding:1px 6px;font-size:12px;line-height:1;color:var(--faint);border-color:transparent;background:transparent}
 .facetf .fdrop:hover{color:var(--cyan);border-color:var(--line)}
 .facetf .fdrop.on{color:var(--on-accent);background:var(--cyan);border-color:var(--cyan)}
-.facetvals{padding:1px 10px 6px 22px}
-.facetv{display:flex;align-items:center;gap:7px;padding:2px 4px;border-radius:5px;cursor:pointer}
+.facetvals{padding:0 10px 4px 22px}
+.facetv{display:flex;align-items:center;gap:7px;padding:1px 4px;line-height:1.2;border-radius:4px;cursor:pointer}
 .facetv:hover{background:var(--inset)}
 .facetv.on{background:var(--sel)}
 .facetv .vsw{width:9px;height:9px;border-radius:2px;flex:0 0 auto;box-shadow:inset 0 0 0 1px rgba(128,128,128,.35)}
