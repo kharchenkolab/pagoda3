@@ -10,6 +10,7 @@ import { previewHost, PreviewSim } from "../widget/apphost.ts";
 import { listRecipes, findRecipes, getRecipe, recipeSource } from "../widget/recipes.ts";
 import { applyEdits } from "../widget/edits.ts";
 import { getProvider, providerModel, adapterFor } from "./providers.ts";
+import { newLoopState, isStuck } from "./loopguard.ts";
 
 const PROXY = "/api/agent/stream";
 
@@ -287,7 +288,7 @@ export async function runLive(app: App, userText: string, abort: AbortSignal): P
   const sys = await systemPrompt(app);
   const provider = getProvider(); const adapter = adapterFor(provider); const model = providerModel(provider);
 
-  let emptyRetries = 0;
+  let emptyRetries = 0; const loop = newLoopState();
   for (let turn = 0; turn < 12; turn++) {   // headroom for multi-step flows like widget authoring (template → preview → fix → save)
     if (abort.aborted) break;
     const res = await fetch(PROXY, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...adapter.buildBody({ system: sys, messages, tools: TOOLS, maxTokens: 8192 }), provider, model, client: "app", runId: liveRunId(), store: app.currentStore() }), signal: abort });
@@ -321,6 +322,9 @@ export async function runLive(app: App, userText: string, abort: AbortSignal): P
     messages.push({ role: "assistant", content: assistant.length ? assistant : [{ type: "text", text: curText || "" }] });
     const toolUses = assistant.filter((b) => b.type === "tool_use");
     if (!toolUses.length || stop !== "tool_use") break;
+    // LOOP-BREAKER: a weak model can get stuck re-issuing the EXACT same call after a "nothing to change"/rejection
+    // and spin out the whole turn budget (seen with qwen3: 11× the identical update_view) — bail on the 3rd identical.
+    const stuck = isStuck(toolUses.map((t) => t.name + ":" + JSON.stringify(t.input)).join("|"), loop);
     // execute tools, append results
     const results: any[] = [];
     for (const tu of toolUses) {
@@ -334,6 +338,7 @@ export async function runLive(app: App, userText: string, abort: AbortSignal): P
       ag.renderThread();
     }
     messages.push({ role: "user", content: results });
+    if (stuck) { const t = "(Stopped — I kept repeating an action the app rejects. Try rephrasing, or ask for a different change.)"; app.thread.entries.push({ role: "agent", text: t }); messages.push({ role: "assistant", content: [{ type: "text", text: t }] }); ag.renderThread(); break; }   // close on an assistant turn so the next ask's user message alternates cleanly
     app.setPip("working", "thinking");
   }
   app.setPip("idle");
