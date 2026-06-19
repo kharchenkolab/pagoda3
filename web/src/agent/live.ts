@@ -111,10 +111,19 @@ METHODOLOGY (cacoa — encode these, don't forget them):
 - To CONTRAST two groups (naive vs memory B, day0 vs day7), use compute(stat:de) with A and B cell sets — a direct A-vs-B test. NEVER answer a contrast with two separate get_markers (each vs rest): related groups share their lineage genes, so the vs-rest lists look identical; only the direct test shows what differs. For markers of one group, compute(stat:de, A={category…}) (B defaults to rest) or get_markers for the precomputed table.
 
 DATASET (read from the loaded store — do not assume any other dataset): ${brief}. Markers are precomputed for: ${app.ctx.groupings().join(", ") || "—"}.
+EMBEDDINGS available (update_view panels[].embedding): ${app.ctx.embeddingNames().join(", ") || "umap"}.
+Your current colour/selection/workspace and the live panel layout (with panel ids for update_view panels[].id) are at the END of the latest user turn — read them there.`;
+}
 
-CURRENT STATE: colouring by "${app.coord.state.colorBy}", workspace "${app.currentWS}", ${app.ctx.selectedCells().length ? app.ctx.selectedCells().length + " cells selected" : "no selection"}.
-LAYOUT (panel ids for update_view panels[].id): ${app.canvas.map((p) => `#${p.id} ${p.type}${p.heatMode === "dot" ? "(dotplot)" : ""}${p.view?.colorBy ? ` colorBy=${p.view.colorBy}` : ""}${p.view?.scope ? ` scope=${(p.view.scope as any).value}` : ""}${p.view?.embedding ? ` emb=${p.view.embedding}` : ""}`).join(", ") || "—"}.
-EMBEDDINGS available (update_view panels[].embedding): ${app.ctx.embeddingNames().join(", ") || "umap"}.`;
+// The VOLATILE per-turn context (current colour/selection/workspace + live panel layout). Deliberately kept OUT of the
+// system prompt and appended at the TAIL of the user turn, so the large stable system+tools prefix stays byte-identical
+// across asks. That's what lets vLLM's automatic prefix cache (and Anthropic's system cache) REUSE the ~10K-token
+// system+tools prefix instead of re-prefilling it every ask — volatile content anywhere before the tools poisons the
+// cache for everything after it. It belongs in the conversation anyway: it's append-only turn context, not a standing rule.
+function viewState(app: App): string {
+  const sel = app.ctx.selectedCells().length;
+  const layout = app.canvas.map((p) => `#${p.id} ${p.type}${p.heatMode === "dot" ? "(dotplot)" : ""}${p.view?.colorBy ? ` colorBy=${p.view.colorBy}` : ""}${p.view?.scope ? ` scope=${(p.view.scope as any).value}` : ""}${p.view?.embedding ? ` emb=${p.view.embedding}` : ""}`).join(", ") || "—";
+  return `[current view] colouring by "${app.coord.state.colorBy}", workspace "${app.currentWS}", ${sel ? sel + " cells selected" : "no selection"}. panels: ${layout}.`;
 }
 
 // The most recent source the agent previewed — so save_widget can reuse it without the agent re-emitting the whole
@@ -270,7 +279,7 @@ export async function runLive(app: App, userText: string, abort: AbortSignal): P
   // the user's next message "B" is understood as the answer, not a fresh request. The loop below appends the
   // assistant + tool-result turns to this same array, so it accumulates the whole dialogue.
   if (!app.liveMessages) app.liveMessages = [];
-  app.liveMessages.push({ role: "user", content: userText });
+  app.liveMessages.push({ role: "user", content: `${userText}\n\n${viewState(app)}` });   // volatile state at the TAIL → stable system+tools prefix caches
   trimLiveMessages(app.liveMessages);
   const messages = app.liveMessages;
   app.thread = { kind: "live", live: true, entries: [{ role: "user", text: userText }] };
