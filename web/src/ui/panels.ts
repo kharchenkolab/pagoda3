@@ -177,13 +177,16 @@ async function categoryLabels(ctx: Ctx, colorBy: string, emb: Float32Array = ctx
 // symbol; a header click sorts by that column (toggling asc/desc); a row click colours the embedding by that
 // gene. No sort initially, so the upstream ranking is preserved until the user asks for another order.
 type GCol = { key: string; label: string; num?: boolean; get: (r: any) => any; fmt?: (v: any, r: any) => string; cls?: (v: any) => string };
+const GTABLE_CAP = 200;   // max ROWS rendered at once — the table holds the FULL ranked list (all tested genes) for
+                          // search, but only renders the top slice / matches so the DOM stays light on big gene sets.
 function geneTable(rows: any[], cols: GCol[], onPick: (symbol: string) => void): BuiltBody {
   const wrap = mk("div", "gtable");
   const search = Object.assign(document.createElement("input"), { className: "gsearch", placeholder: "filter genes…" }) as HTMLInputElement;
   const scroll = mk("div", "gscroll"), table = document.createElement("table");
   const thead = document.createElement("thead"), tb = document.createElement("tbody");
   table.appendChild(thead); table.appendChild(tb); scroll.appendChild(table);
-  wrap.appendChild(scroll);   // the search box lives in the panel header (returned as headerControls)
+  const more = mk("div", "gmore");   // "showing N of M — filter to find any gene"
+  wrap.appendChild(scroll); wrap.appendChild(more);   // the search box lives in the panel header (returned as headerControls)
   let sortKey: string | null = null, dir = 1;
   const render = () => {
     thead.innerHTML = `<tr>${cols.map((c) => `<th data-k="${c.key}" class="sortable${sortKey === c.key ? " sorted" : ""}">${esc(c.label)}${sortKey === c.key ? (dir > 0 ? " ↑" : " ↓") : ""}</th>`).join("")}</tr>`;
@@ -191,8 +194,11 @@ function geneTable(rows: any[], cols: GCol[], onPick: (symbol: string) => void):
     const q = search.value.trim().toLowerCase();
     let rs = q ? rows.filter((r) => String(r.symbol).toLowerCase().includes(q)) : rows.slice();
     if (sortKey) { const c = cols.find((x) => x.key === sortKey)!; rs.sort((a, b) => { const av = c.get(a), bv = c.get(b); return (av < bv ? -1 : av > bv ? 1 : 0) * dir; }); }
-    tb.innerHTML = rs.map((r) => `<tr class="gene">${cols.map((c) => { const v = c.get(r); return `<td class="${c.cls ? c.cls(v) : ""}">${c.fmt ? c.fmt(v, r) : esc(String(v))}</td>`; }).join("")}</tr>`).join("");
-    [...tb.children].forEach((tr, i) => (tr as HTMLElement).onclick = () => { [...tb.children].forEach((x) => x.classList.remove("on")); tr.classList.add("on"); onPick(rs[i].symbol); });
+    const shown = rs.slice(0, GTABLE_CAP);   // cap the DOM; the full list stays searchable via `rows`
+    tb.innerHTML = shown.map((r) => `<tr class="gene">${cols.map((c) => { const v = c.get(r); return `<td class="${c.cls ? c.cls(v) : ""}">${c.fmt ? c.fmt(v, r) : esc(String(v))}</td>`; }).join("")}</tr>`).join("");
+    [...tb.children].forEach((tr, i) => (tr as HTMLElement).onclick = () => { [...tb.children].forEach((x) => x.classList.remove("on")); tr.classList.add("on"); onPick(shown[i].symbol); });
+    more.textContent = rs.length > GTABLE_CAP ? `showing top ${GTABLE_CAP} of ${rs.length.toLocaleString()}${q ? " matches" : ` genes`} — ${q ? "refine the filter" : "filter to find any gene"}`
+      : q ? `${rs.length.toLocaleString()} match${rs.length === 1 ? "" : "es"}` : (rows.length ? `${rows.length.toLocaleString()} genes` : "");
   };
   search.oninput = render; render();
   return { el: wrap, headerControls: search };

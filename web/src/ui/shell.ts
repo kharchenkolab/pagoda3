@@ -952,7 +952,7 @@ export class App {
     const place = (spec: Partial<Panel>) => { if (input.toCanvas) this.addPanel(spec); else this.agent.addRail(spec); };
 
     if (input.stat === "overdispersion") {
-      const hv = await ctx.view.overdispersedGenes(Aids, 100);
+      const hv = await ctx.view.overdispersedGenes(Aids, 1e9);   // ALL scored genes (topN caps the return; scoring is over every gene) — the panel filters/searches the full list
       if (!hv.length) return { error: "no overdispersion (store has no cell-major counts panel)" };
       const label = describeCellSet(input.A);
       place({ type: "GeneList", title: input.title || `Variable genes · ${label}`, cap: "overdispersion", bind: "hvg:scope", rows: hv.map((h) => ({ symbol: h.symbol, score: h.resid })) });
@@ -962,7 +962,7 @@ export class App {
     const Bids = [...resolveCellSet(Bexpr!, env)];
     if (!Bids.length) return { error: `B (${describeCellSet(Bexpr!)}) resolves to no cells` };
     const { ranked, panel } = await ctx.view.subsampleDE(Aids, Bids);
-    const rows = ranked.slice(0, 200).map((r: any) => ({ gene: r.gene, symbol: r.symbol, lfc: r.lfc, meanA: r.meanA, meanB: r.meanB }));
+    const rows = ranked.map((r: any) => ({ gene: r.gene, symbol: r.symbol, lfc: r.lfc, meanA: r.meanA, meanB: r.meanB }));   // ALL tested genes — the panel filters/searches the full list (render is capped)
     const aL = describeCellSet(input.A), bL = input.B ? describeCellSet(Bexpr!) : "rest";
     place({ type: "DeTable", title: input.title || `DE · ${aL} vs ${bL}`, cap: `${aL} vs ${bL}${panel ? " · panel" : " · approx"}`, bind: "de:between", aLabel: aL, bLabel: bL, rows });
     const up = rows.filter((r: any) => r.lfc > 0).slice(0, 6).map((r: any) => r.symbol).join(", ");
@@ -1109,7 +1109,10 @@ export class App {
     if (user) { this.toast("Switched to " + name, "A workspace is a named, reversible layout — your previous one is a step back in History."); this.checkpoint("workspace → " + name, "Deliberate workspace switch."); }
   }
 
-  captureLayout(): Partial<Panel>[] { return this.canvas.map((p) => ({ type: p.type, title: p.title, cap: p.cap, full: p.full, col: p.col, bind: p.bind, group: p.group, gene: p.gene, heatMode: p.heatMode, genes: p.genes, view: p.view ? JSON.parse(JSON.stringify(p.view)) : undefined, source: p.source, controls: p.controls ? JSON.parse(JSON.stringify(p.controls)) : undefined })); }
+  captureLayout(): Partial<Panel>[] { return this.canvas.map((p) => ({ type: p.type, title: p.title, cap: p.cap, full: p.full, col: p.col, bind: p.bind, group: p.group, gene: p.gene, heatMode: p.heatMode, genes: p.genes, view: p.view ? JSON.parse(JSON.stringify(p.view)) : undefined, rows: this.capRows(p), source: p.source, controls: p.controls ? JSON.parse(JSON.stringify(p.controls)) : undefined })); }
+  // Result tables now hold the FULL ranked gene list (all tested genes) for live search; cap what we PERSIST so a
+  // big-gene-set DE/overdispersion panel doesn't bloat the session doc (the tail is recomputable; live search keeps all).
+  private capRows(p: Panel): any[] | undefined { const r = p.rows; if (!r) return undefined; return (p.type === "DeTable" || p.type === "GeneList") && r.length > 500 ? r.slice(0, 500) : r; }
 
   // Add an author-written widget as a Widget panel on the workbench. Used by the agent's save_widget tool and the
   // custom-widget library menu. The iframe mounts via widgetBody; controls (if known) render in the header.

@@ -352,6 +352,7 @@ tr.gene{cursor:pointer} tr.gene:hover{background:var(--inset)} tr.gene.on{backgr
 .gsearch::placeholder{color:var(--faint)}
 .gsearch:focus{border-color:var(--cyan)}
 .gscroll{overflow:auto;max-height:min(60vh,480px)}
+.gmore{font-size:10px;color:var(--faint);padding:4px 8px 2px;font-family:var(--mono)} .gmore:empty{display:none}
 .gtable thead th{position:sticky;top:0;background:var(--panel)}
 th.sortable{cursor:pointer;user-select:none} th.sortable:hover{color:var(--text)} th.sorted{color:var(--cyan)}
 select.inline{background:var(--inset);color:var(--text);border:1px solid var(--line);border-radius:6px;font-size:11px;padding:2px 5px;font-family:var(--mono)}
