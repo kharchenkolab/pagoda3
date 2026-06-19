@@ -239,6 +239,20 @@ test("panel col pin accepts a third column (clamped to MAX_COLS)", () => {
   assert.equal((find(clamped.ops, "configPanel")[0] as any).patch.col, 3);
 });
 
+test("col + full are mutually exclusive — an explicit column beats a contradictory full:true", () => {
+  const w = makeWorld();
+  // the exact shape qwen looped on: col:2 + full:true → full would override col and span the width, breaking 3-col
+  const conflict = normalizeViewPatch({ panels: [{ id: 5, col: 2, full: true }] }, w);
+  assert.deepEqual(find(conflict.ops, "configPanel"), [{ kind: "configPanel", id: 5, patch: { col: 2, full: false } }]);
+  // a genuine full (no col) still works
+  const full = normalizeViewPatch({ panels: [{ id: 5, full: true }] }, w);
+  assert.deepEqual((find(full.ops, "configPanel")[0] as any).patch, { full: true });
+  // add a panel into a column with a stray full:true → still lands in the column
+  const addConflict = normalizeViewPatch({ panels: [{ add: "Embedding", col: 2, full: true }] }, w);
+  const spec = (find(addConflict.ops, "addPanel")[0] as any).spec;
+  assert.equal(spec.col, 2); assert.equal(spec.full, false);
+});
+
 test("a compound patch yields ops in order with no rejections", () => {
   const w = makeWorld();
   const r = normalizeViewPatch({

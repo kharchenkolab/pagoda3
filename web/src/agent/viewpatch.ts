@@ -171,8 +171,11 @@ export function normalizeViewPatch(patch: RawViewPatch, w: World): NormResult {
       const isHeat = op.add === HEAT_TYPE;
       const spec: PanelSpec = { type: op.add };
       if (op.title) spec.title = op.title;
-      if (typeof op.col === "number" && op.col >= 0) spec.col = clampCol(op.col);
-      if (typeof op.full === "boolean") spec.full = op.full;
+      // a column pin and full-width are mutually exclusive (full spans ALL columns, overriding col). When a model
+      // sends both (e.g. col:2 + full:true), the explicit column WINS — otherwise the pin silently no-ops full-width.
+      { const colPin = typeof op.col === "number" && op.col >= 0;
+        if (colPin) spec.col = clampCol(op.col);
+        if (typeof op.full === "boolean") spec.full = colPin && op.full ? false : op.full; }
       if (typeof op.colorBy === "string" && op.colorBy) { const e = colorError(op.colorBy, w); if (e) rejected.push(`${where} colorBy: ${e}`); else spec.colorBy = op.colorBy; }
       if (op.scopeGrouping && op.scopeValue) { const s = scopeFrom(op.scopeGrouping, op.scopeValue, w, where, rejected); if (s) spec.scope = s; }
       if (typeof op.embedding === "string" && op.embedding) { if (w.embeddings.includes(op.embedding)) spec.embedding = op.embedding; else rejected.push(`${where}: unknown embedding "${op.embedding}" (have: ${w.embeddings.join(", ") || "umap"})`); }
@@ -195,8 +198,10 @@ export function normalizeViewPatch(patch: RawViewPatch, w: World): NormResult {
     if (movedFacet && !hoistFacet) hoistFacet = { ...(op as any).facet, panel: op.id };
     else if (movedFacet) notes.push(`${where}: facet handles ONE panel per call — split the other panel in a separate update_view`);
     if (op.title) pp.title = op.title;
-    if (typeof op.col === "number" && op.col >= 0) pp.col = clampCol(op.col);
-    if (typeof op.full === "boolean") pp.full = op.full;
+    // col pin and full-width are mutually exclusive (full overrides col) — when both are given, the column wins
+    const colPin = typeof op.col === "number" && op.col >= 0;
+    if (colPin) pp.col = clampCol(op.col);
+    if (typeof op.full === "boolean") pp.full = colPin && op.full ? false : op.full;
     if (typeof op.colorBy === "string" && op.colorBy) { const e = colorError(op.colorBy, w); if (e) rejected.push(`${where} colorBy: ${e}`); else pp.colorBy = op.colorBy; }
     if (op.clearScope) pp.scope = null;
     else if (op.scopeGrouping && op.scopeValue) { const s = scopeFrom(op.scopeGrouping, op.scopeValue, w, where, rejected); if (s) pp.scope = s; }
