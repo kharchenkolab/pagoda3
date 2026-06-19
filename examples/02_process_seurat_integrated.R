@@ -7,7 +7,7 @@
 suppressMessages({ library(Seurat); library(SeuratObject); library(lstar); library(pagoda3) })
 
 SRC <- "/Users/peter.kharchenko/.aba/runtime/projects/prj_ab1b55fe/work/ana_237baddd/seurat_integrated.rds"
-OUT <- "/Users/peter.kharchenko/pagoda/pagoda3/web/public/pbmc_integrated.lstar.zarr"
+OUT <- "/Users/peter.kharchenko/pagoda/lstar-viewer/web/public/pbmc_integrated.lstar.zarr"
 
 o <- readRDS(SRC)
 # drop the dense scale.data layer (not needed by the viewer; avoids a multi-GB dense read)

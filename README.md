@@ -26,7 +26,7 @@ whole-dataset `od_score`, the cell-major counts orientation) so a large/remote s
 ```r
 # R: view a Seurat/SCE object, or an existing store
 library(pagoda3)
-view(seurat_obj, repo = "~/pagoda/pagoda3", prepare = TRUE)   # convert -> prepare -> open browser
+view(seurat_obj, repo = "~/pagoda/lstar-viewer", prepare = TRUE)   # convert -> prepare -> open browser
 ```
 ```python
 # Python: view an AnnData, an lstar.Dataset, or a store path

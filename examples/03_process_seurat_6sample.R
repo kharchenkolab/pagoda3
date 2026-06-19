@@ -5,7 +5,7 @@
 suppressMessages({ library(Seurat); library(SeuratObject); library(lstar); library(pagoda3) })
 
 SRC <- "/Users/peter.kharchenko/.aba/runtime/projects/prj_8143327c/work/ana_e92634df/seurat_integrated.rds"
-OUT <- "/Users/peter.kharchenko/pagoda/pagoda3/web/public/pbmc6.lstar.zarr"
+OUT <- "/Users/peter.kharchenko/pagoda/lstar-viewer/web/public/pbmc6.lstar.zarr"
 
 o <- readRDS(SRC)
 try(suppressWarnings({
