@@ -26,3 +26,6 @@ __pycache__/
 .Rcheck/
 r/src/*.o
 r/src/*.so
+
+# local scratch / design notes (kept locally, not tracked)
+/misc/
