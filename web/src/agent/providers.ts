@@ -37,8 +37,8 @@ export function providerModel(p: Provider): string { return MODELS[p] || MODELS.
 // node (where localStorage is undefined) — see window.p2.setProvider() in shell.ts to flip it.
 export const PROVIDER_KEY = "p3-agent-provider";
 export function getProvider(): Provider {
-  try { if (typeof localStorage !== "undefined" && localStorage.getItem(PROVIDER_KEY) === "openai") return "openai"; } catch { /* node / private mode */ }
-  return "anthropic";
+  try { const v = typeof localStorage !== "undefined" ? localStorage.getItem(PROVIDER_KEY) : null; if (v === "openai" || v === "anthropic") return v as Provider; } catch { /* node / private mode */ }
+  return "openai";   // TEMP active-testing default → local qwen/vLLM. p2.setProvider("anthropic") overrides per-browser; flip this line back to "anthropic" when done.
 }
 export function adapterFor(p: Provider): ProviderAdapter { return p === "openai" ? openaiAdapter : anthropicAdapter; }
 
