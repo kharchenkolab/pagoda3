@@ -158,6 +158,7 @@ export function normalizeViewPatch(patch: RawViewPatch, w: World): NormResult {
 
   // ---- panels ----
   const panels = patch.panels || [];
+  let hoistFacet: any = null;   // a `facet` misplaced INSIDE a panels[] op (a common model error) → hoisted to the top-level facet below
   for (let k = 0; k < panels.length; k++) {
     const op = panels[k]; const where = op.add ? `add ${op.add}` : `panel #${op.id}`;
     if (op.remove) {
@@ -187,6 +188,12 @@ export function normalizeViewPatch(patch: RawViewPatch, w: World): NormResult {
     // configure an existing panel
     if (op.id == null || !w.panelExists(op.id)) { rejected.push(`panel #${op.id}: no such panel`); continue; }
     const pp: PanelPatch = {}; const ptype = w.panelType(op.id); const isHeat = ptype === HEAT_TYPE; const groupable = isHeat || ptype === "Reconcile";
+    // `facet` is a TOP-LEVEL update_view field, but models (esp. smaller ones) routinely nest it inside a panel op
+    // (`panels:[{id, facet}]`) and then loop on the "nothing to change" rejection. Tolerate it: hoist to the top-level
+    // facet with panel = this id so the split just works.
+    const movedFacet = !!(op as any).facet;
+    if (movedFacet && !hoistFacet) hoistFacet = { ...(op as any).facet, panel: op.id };
+    else if (movedFacet) notes.push(`${where}: facet handles ONE panel per call — split the other panel in a separate update_view`);
     if (op.title) pp.title = op.title;
     if (typeof op.col === "number" && op.col >= 0) pp.col = clampCol(op.col);
     if (typeof op.full === "boolean") pp.full = op.full;
@@ -203,12 +210,12 @@ export function normalizeViewPatch(patch: RawViewPatch, w: World): NormResult {
       notes.push(`${where}: heatMode/genes apply only to Heatmap panels`);
     }
     if (Object.keys(pp).length) ops.push({ kind: "configPanel", id: op.id, patch: pp });
-    else rejected.push(`panel #${op.id}: nothing to change`);
+    else if (!movedFacet) rejected.push(`panel #${op.id}: nothing to change`);   // a hoisted-facet-only op is not "nothing"
   }
 
   // ---- facet: split one panel into aligned copies that differ ONLY in scope ----
   // Lenient: accept facet:"condition" (string) or {by|field|grouping:"condition"} — models reach for both shapes.
-  const facetRaw: any = patch.facet;
+  const facetRaw: any = patch.facet ?? hoistFacet;   // top-level facet, OR one hoisted out of a panels[] op above
   if (facetRaw != null && facetRaw !== "") {
     const f: any = typeof facetRaw === "string" ? { by: facetRaw } : (typeof facetRaw === "object" && !Array.isArray(facetRaw)) ? facetRaw : null;
     const by = f ? (typeof f.by === "string" ? f.by : typeof f.field === "string" ? f.field : typeof f.grouping === "string" ? f.grouping : "") : "";

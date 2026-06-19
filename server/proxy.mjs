@@ -146,8 +146,14 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
 
   if (url.pathname === "/api/health") {
-    try { const auth = await bearer(); const store = loadStore(); res.setHeader("content-type", "application/json"); return res.end(JSON.stringify({ ok: true, mode: auth.mode, expires_in: store?.expires_at ? Math.round(store.expires_at - Date.now() / 1000) : null })); }
-    catch (e) { res.statusCode = 503; res.setHeader("content-type", "application/json"); return res.end(JSON.stringify({ ok: false, error: String(e.message || e) })); }
+    res.setHeader("content-type", "application/json");
+    if (url.searchParams.get("provider") === "openai") {   // health of the LOCAL model backend, not Anthropic OAuth
+      const ac = new AbortController(); const to = setTimeout(() => ac.abort(), 4000);
+      try { const r = await fetch(`${OPENAI_BASE_URL}/models`, { signal: ac.signal }); clearTimeout(to); return res.end(JSON.stringify({ ok: r.ok, mode: "openai", base: OPENAI_BASE_URL })); }
+      catch (e) { clearTimeout(to); res.statusCode = 503; return res.end(JSON.stringify({ ok: false, mode: "openai", error: String(e.message || e) })); }
+    }
+    try { const auth = await bearer(); const store = loadStore(); return res.end(JSON.stringify({ ok: true, mode: auth.mode, expires_in: store?.expires_at ? Math.round(store.expires_at - Date.now() / 1000) : null })); }
+    catch (e) { res.statusCode = 503; return res.end(JSON.stringify({ ok: false, error: String(e.message || e) })); }
   }
 
   if (url.pathname === "/api/agent/stream" && req.method === "POST") {

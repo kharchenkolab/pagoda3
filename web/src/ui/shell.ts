@@ -5,6 +5,7 @@ import { Panel, PanelView, PanelHooks, CompReactor, BuiltBody, bodyFor, paintEmb
 import { EmbeddingView } from "../render/embedding.ts";
 import { Agent, Scope, REGISTRY } from "../agent/agent.ts";
 import { checkLive } from "../agent/live.ts";
+import { getProvider, providerModel } from "../agent/providers.ts";
 import { normalizeViewPatch, RawViewPatch, World, PanelSpec, PanelPatch, MAX_COLS } from "../agent/viewpatch.ts";
 import { validateCellSet, resolveCellSet, describeCellSet, CellSet, CellWorld, CellEnv } from "../agent/cellset.ts";
 import { validateComputeResult, runInWorker } from "../agent/codeapi.ts";
@@ -127,8 +128,15 @@ export class App {
     this.checkpoint("session start", "Baseline Metadata workspace.");
     this.restoreSession();   // restore the last session (layout incl. widget panels) + load the custom-widget library
     setTimeout(() => this.toast("Drag with Shift to select cells · ⌘K to ask · right-click a panel", null), 500);
-    // connect the live Anthropic planner if the proxy + token are reachable
-    checkLive().then((ok) => { this.agent.live = ok; if (ok) this.toast("Live agent connected · Opus", "The agent is the real Anthropic planner now — it drives the coordination space through tools, at the lowest sufficient rung."); });
+    // connect the live planner if its backend is reachable — checks the ACTIVE provider (Anthropic OAuth, or the
+    // local vLLM model) and labels with the real model so "live on …" never lies about which model is driving.
+    const prov = getProvider();
+    checkLive(prov).then((ok) => { this.agent.live = ok; if (ok) {
+      const model = prov === "openai" ? providerModel(prov) : "Opus";
+      this.toast("Live agent connected · " + model, prov === "openai"
+        ? "A LOCAL OpenAI-compatible model (vLLM) is driving the agent — switch back with p2.setProvider('anthropic')."
+        : "The agent is the real Anthropic planner now — it drives the coordination space through tools, at the lowest sufficient rung.");
+    } });
     // boot nudge (Mode 5) from a real confound in the data
     setTimeout(() => this.agent.armBootNudge(), 2600);
   }

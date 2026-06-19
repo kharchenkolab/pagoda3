@@ -19,8 +19,8 @@ const PROXY = "/api/agent/stream";
 let _liveRunId = "";
 function liveRunId(): string { if (!_liveRunId) _liveRunId = "r" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); return _liveRunId; }
 
-export async function checkLive(): Promise<boolean> {
-  try { const r = await fetch("/api/health"); const j = await r.json(); return !!j.ok; } catch { return false; }
+export async function checkLive(provider?: string): Promise<boolean> {
+  try { const r = await fetch("/api/health" + (provider ? "?provider=" + encodeURIComponent(provider) : "")); const j = await r.json(); return !!j.ok; } catch { return false; }
 }
 
 interface Tool { name: string; description: string; input_schema: any; }

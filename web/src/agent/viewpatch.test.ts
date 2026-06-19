@@ -191,6 +191,18 @@ test("facet: by-field expands to values; defaults to all; bad field/values handl
   assert.match(badPanel.rejected.join(" "), /no panel/);
 });
 
+test("facet misplaced inside a panels[] op is hoisted to a top-level facet (not rejected)", () => {
+  const w = makeWorld();   // panel 4 = Heatmap
+  const r = normalizeViewPatch({ panels: [{ id: 4, facet: { by: "condition", layout: "side" } }] }, w);
+  assert.deepEqual(find(r.ops, "facet"), [{ kind: "facet", by: "condition", values: ["disease", "control"], panel: 4, layout: "side" }]);
+  assert.equal(r.rejected.length, 0);   // NOT "panel #4: nothing to change"
+  assert.equal(find(r.ops, "configPanel").length, 0);
+  // a facet alongside real per-panel changes: both apply
+  const both = normalizeViewPatch({ panels: [{ id: 4, genes: ["GNLY"], facet: { by: "condition" } }] }, w);
+  assert.equal(find(both.ops, "facet").length, 1);
+  assert.equal(find(both.ops, "configPanel").length, 1);
+});
+
 test("arrange: rows + columns place existing panels; bad ids / overflow rejected", () => {
   const w = makeWorld();   // panels 4 (Heatmap), 5 (Embedding), 6/7/8 exist
   const rows = normalizeViewPatch({ arrange: { rows: [[4, 5]] } }, w);
