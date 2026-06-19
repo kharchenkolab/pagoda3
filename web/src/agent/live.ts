@@ -41,7 +41,7 @@ const TOOLS: Tool[] = [
         add: { type: "string", description: "create a panel of this type: Embedding | Heatmap | CompositionBars | VariableGenes (a live panel of the top overdispersed genes for the current selection, recomputed as the selection changes; scopeGrouping/scopeValue pins it to a population)" },
         remove: { type: "boolean" },
         title: { type: "string" },
-        col: { type: "number", minimum: 0, maximum: 3, description: "pin to a 0-based workbench column (0 = leftmost). The grid GROWS to fit the highest column you use (up to 4), so col:2 creates a THIRD column — that is how you build a three-column layout. Added panels auto-balance across the columns, so set this only for DELIBERATE placement. Put two panels in the SAME col to stack them one under another." },
+        col: { type: "number", minimum: 0, maximum: 3, description: "pin to a 0-based workbench column (0 = leftmost). The grid GROWS to fit the highest column you use (up to 4), so col:2 creates a THIRD column — that is how you build a three-column layout. To ADD a panel AS a new column, combine add:<type> with col (e.g. {add:'VariableGenes', col:2}); the EXISTING panels STAY and fill the other columns — NEVER remove them to 'make room'. Put two panels in the SAME col to stack them one under another." },
         full: { type: "boolean", description: "span the full width. Two full panels stack one under another (full-width) — the simplest 'one over the other' compare layout." },
         colorBy: { type: "string", description: "per-panel colour override (same handle forms as `color`)" },
         scopeGrouping: { type: "string" }, scopeValue: { type: "string", description: "restrict the panel to this field=value's cells" }, clearScope: { type: "boolean" },
@@ -123,8 +123,19 @@ Your current colour/selection/workspace and the live panel layout (with panel id
 // cache for everything after it. It belongs in the conversation anyway: it's append-only turn context, not a standing rule.
 function viewState(app: App): string {
   const sel = app.ctx.selectedCells().length;
-  const layout = app.canvas.map((p) => `#${p.id} ${p.type}${p.heatMode === "dot" ? "(dotplot)" : ""}${p.view?.colorBy ? ` colorBy=${p.view.colorBy}` : ""}${p.view?.scope ? ` scope=${(p.view.scope as any).value}` : ""}${p.view?.embedding ? ` emb=${p.view.embedding}` : ""}`).join(", ") || "—";
-  return `[current view] colouring by "${app.coord.state.colorBy}", workspace "${app.currentWS}", ${sel ? sel + " cells selected" : "no selection"}. panels: ${layout}.`;
+  // Group panels by their CURRENT rendered column (dataset.col, set by layoutCanvas). Without this the agent can't
+  // see the grid — a "make it a 3rd column" request flies blind and a weak model rebuilds/removes instead of adding.
+  const byCol = new Map<string, string[]>();
+  for (const p of app.canvas) {
+    const el = document.querySelector<HTMLElement>(`.panel[data-pid="${p.id}"]`);
+    const key = p.full || el?.style.gridColumn === "1 / -1" ? "full-width" : `col ${el?.dataset.col ?? (p.col ?? 0)}`;
+    const d = `#${p.id} ${p.type}${p.heatMode === "dot" ? "(dotplot)" : ""}${p.view?.colorBy ? ` colorBy=${p.view.colorBy}` : ""}${p.view?.scope ? ` scope=${(p.view.scope as any).value}` : ""}${p.view?.embedding ? ` emb=${p.view.embedding}` : ""}`;
+    if (!byCol.has(key)) byCol.set(key, []);
+    byCol.get(key)!.push(d);
+  }
+  const ncol = [...byCol.keys()].filter((k) => k.startsWith("col ")).length;
+  const grid = app.canvas.length ? `${ncol || 1} column${ncol > 1 ? "s" : ""} — ${[...byCol.entries()].map(([k, ps]) => `${k}: ${ps.join(", ")}`).join("; ")}` : "no panels";
+  return `[current view] colouring by "${app.coord.state.colorBy}", workspace "${app.currentWS}", ${sel ? sel + " cells selected" : "no selection"}. Panel layout: ${grid}.`;
 }
 
 // The most recent source the agent previewed — so save_widget can reuse it without the agent re-emitting the whole
