@@ -112,22 +112,24 @@ export const CAPABILITIES: Capability[] = [
     summary: "per-group MEAN expression + FRACTION expressing for a set of genes (the dot-plot / heatmap primitive)",
     whenToUse: "dot-plots, heatmaps, violins across the categories of a field. Pass the field + the genes. Do NOT loop raw expr per gene and bin it yourself.",
     params: { field: "the categorical field whose groups are the columns", genes: "string[] gene symbols (the rows)" },
-    returns: "{ groups:[category names], genes:[symbols], mean:[gene][group] (mean expression), frac:[gene][group] (fraction of cells expressing, 0..1) } — mean/frac are row-major (per gene, per group); drive a dot-plot from frac (dot size) + mean (colour)",
+    returns: "{ groups:[category names], genes:[symbols], mean:[gene][group] (mean expression), frac:[gene][group] (fraction of cells expressing, 0..1), missing:[symbols not in the dataset — zeros rows] } — mean/frac are row-major (per gene, per group); drive a dot-plot from frac (dot size) + mean (colour)",
     example: "await pagoda.compute('groupStats', {field:'cell_type', genes:['CD3D','MS4A1','NKG7']})",
     async run(ctx, a) {
       const m = await ctx.metaOf(String(a.field));
       if (m.kind !== "categorical") throw new Error(`'${a.field}' is not categorical`);
       const G = m.categories.length, codes = m.codes as Int32Array, genes: string[] = Array.isArray(a.genes) ? a.genes.map(String) : [];
-      const mean: number[][] = [], frac: number[][] = [];
+      const mean: number[][] = [], frac: number[][] = [], missing: string[] = [];
       for (const g of genes) {
         let vals: Float32Array | null = null;
-        try { vals = (await ctx.view.geneExpression(g)).values; } catch { mean.push(new Array(G).fill(0)); frac.push(new Array(G).fill(0)); continue; }
+        // a gene absent from the dataset is REPORTED in `missing` (its row is zeros) — so a widget can say "not in dataset"
+        // instead of mistaking it for a gene expressed at zero.
+        try { vals = (await ctx.view.geneExpression(g)).values; } catch { mean.push(new Array(G).fill(0)); frac.push(new Array(G).fill(0)); missing.push(g); continue; }
         const sum = new Array(G).fill(0), pos = new Array(G).fill(0), cnt = new Array(G).fill(0);
         for (let i = 0; i < codes.length; i++) { const c = codes[i]; if (c >= 0) { const v = vals[i]; sum[c] += v; if (v > 0) pos[c]++; cnt[c]++; } }
         mean.push(sum.map((s, j) => cnt[j] ? s / cnt[j] : 0));
         frac.push(pos.map((p, j) => cnt[j] ? p / cnt[j] : 0));
       }
-      return { groups: m.categories, genes, mean, frac };
+      return { groups: m.categories, genes, mean, frac, missing };
     },
   },
 ];

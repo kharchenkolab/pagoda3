@@ -67,6 +67,18 @@ test("groupStats: per-group mean + frac for genes", async () => {
   // vec=[0,2,0,4 | 1,0,3,0,0,5]; A(4 cells): mean=(0+2+0+4)/4=1.5, frac=2/4=0.5; B(6): mean=9/6=1.5, frac=3/6=0.5
   assert.deepEqual(r.mean[0], [1.5, 1.5]);
   assert.deepEqual(r.frac[0], [0.5, 0.5]);
+  assert.deepEqual(r.missing, []);   // G1 resolves (mock returns a vector for any gene)
+});
+
+test("groupStats: a gene the kernel can't resolve is reported in `missing` (zeros row)", async () => {
+  const ctx = mockCtx({ view: {
+    subsampleDE: async () => ({ ranked: [], nA: 0, approx: false }),
+    overdispersedGenes: async () => [],
+    geneExpression: async (g: string) => { if (g === "NOPE") throw new Error("no gene NOPE"); return { values: Float32Array.from([0, 2, 0, 4, 1, 0, 3, 0, 0, 5]) }; },
+  } as any });
+  const r = await runCapability(ctx, "groupStats", { field: "cell_type", genes: ["G1", "NOPE"] });
+  assert.deepEqual(r.missing, ["NOPE"]);
+  assert.deepEqual(r.mean[1], [0, 0]);   // missing gene → zeros row, not a crash
 });
 
 test("resolveCells: cells | category | default-selection", async () => {
