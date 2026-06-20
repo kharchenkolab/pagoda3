@@ -12,6 +12,9 @@ const STORE_URL = new URL(storeParam.endsWith("/") ? storeParam : storeParam + "
 async function boot() {
   const ds = await openLstar(fetchStore(STORE_URL));
   const view = new LstarView(ds);
+  const computePool = new ComputePool();   // off-main-thread kernel pool; view dispatches to it when cross-origin isolated, else runs the same core inline
+  view.setComputePool(computePool);
+  if (computePool.isolated) void computePool.ping();   // spawn + warm the worker at boot so the first real compute isn't cold (the spawn cost is paid off-thread, up front)
   const coord = new Coord();
   const ctx = new Ctx(view, coord);
   await ctx.init();
@@ -21,7 +24,6 @@ async function boot() {
   // the console: p2.setProvider("openai"). getProvider() is read at the start of every ask, so the NEXT ask uses it
   // (no reload needed). See web/src/agent/providers.ts.
   const setProvider = (p: Provider) => { try { localStorage.setItem(PROVIDER_KEY, p === "openai" ? "openai" : "anthropic"); } catch { /* */ } return "agent provider → " + getProvider() + " (applies on next ask)"; };
-  const computePool = new ComputePool();   // off-main-thread kernel pool (S0+; used when cross-origin isolated, else view.ts falls back)
   (window as any).p2 = { ds, view, coord, ctx, app, getProvider, setProvider, computePool };
 }
 

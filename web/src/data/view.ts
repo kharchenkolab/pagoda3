@@ -3,6 +3,9 @@
 import type { LstarDataset } from "./store.ts";
 import { kernels } from "./kernels.ts";
 import { DIM_RGB, DIM_A, themeIsDark } from "../render/theme.ts";   // theme-aware non-focus dot colour (live binding)
+import { sample, overdispersedCore } from "../compute/odcore.ts";   // pure kernel core (shared by the fallback, the worker, and node tests)
+import type { ComputePool } from "../compute/pool.ts";
+import { isolationAvailable } from "../compute/pool.ts";
 
 export type Metadata =
   | { kind: "categorical"; codes: Int32Array; categories: string[]; colors?: number[] }   // colors = per-category palette INDEX (annotation layers use a stable name→colour map)
@@ -35,6 +38,17 @@ function reorderNumericCategorical(m: { kind: "categorical"; codes: Int32Array; 
   return { kind: "categorical", codes, categories: order.map((i) => m.categories[i]) };
 }
 
+// Copy a typed array into a SharedArrayBuffer-backed view so the compute worker can map it ZERO-COPY (post the .buffer →
+// it's shared, not cloned). Only when cross-origin isolated; otherwise returns the array unchanged (main-thread path).
+// One-time cost at panel load; the matrix then lives ONCE, shared by the main thread + every worker.
+function toShared<T extends Float64Array | Int32Array>(arr: T): T {
+  if (!isolationAvailable() || arr.buffer instanceof SharedArrayBuffer) return arr;
+  const Ctor = arr.constructor as { new (b: SharedArrayBuffer): T };
+  const view = new Ctor(new SharedArrayBuffer(arr.byteLength));
+  (view as Float64Array | Int32Array).set(arr as any);
+  return view;
+}
+
 export class LstarView {
   ds: LstarDataset;
   private geneLabels?: string[];
@@ -43,7 +57,11 @@ export class LstarView {
   // cell-major counts panel (viewer profile): undefined = not checked, null = absent in this store.
   // `lognorm` = values already log1p (legacy) vs raw (log1p on read); `geneCol` maps the panel's
   // gene axis to global gene indices when it's a subset (legacy od_genes), else null (all genes).
-  private dePanelCache?: { data: Float64Array; indices: Int32Array; indptr: Int32Array; symbols: string[]; geneCol: Int32Array | null; nGenes: number; lognorm: boolean } | null;
+  private dePanelCache?: { data: Float64Array; indices: Int32Array; indptr: Int32Array; symbols: string[]; geneCol: Int32Array | null; nGenes: number; lognorm: boolean; shared: boolean } | null;
+  // Off-main-thread compute pool (S1+). Set by main.ts after construction; kernels dispatch to it when isolation is
+  // available + the panel is SAB-backed, else they run the SAME pure core inline (so the app is correct either way).
+  private computePool?: ComputePool;
+  setComputePool(p: ComputePool) { this.computePool = p; }
 
   constructor(ds: LstarDataset) { this.ds = ds; }
 
@@ -320,11 +338,12 @@ export class LstarView {
       const cc = await this.countsCSC();                  // counts CSC (cells,genes) -> CSR cell-major
       const r = M.cscToCsr(cc.data, cc.indices, cc.indptr, this.nCells, cc.nGenes);
       const symbols = await this.genes();
+      const data = toShared(r.data instanceof Float64Array ? r.data : Float64Array.from(r.data as any));
       this.dePanelCache = {
-        data: r.data instanceof Float64Array ? r.data : Float64Array.from(r.data as any),
-        indices: r.indices instanceof Int32Array ? r.indices : Int32Array.from(r.indices as any),
-        indptr: r.indptr instanceof Int32Array ? r.indptr : Int32Array.from(r.indptr as any),
-        symbols, geneCol: null, nGenes: symbols.length, lognorm: false,
+        data,
+        indices: toShared(r.indices instanceof Int32Array ? r.indices : Int32Array.from(r.indices as any)),
+        indptr: toShared(r.indptr instanceof Int32Array ? r.indptr : Int32Array.from(r.indptr as any)),
+        symbols, geneCol: null, nGenes: symbols.length, lognorm: false, shared: isolationAvailable() && data.buffer instanceof SharedArrayBuffer,
       };
       return this.dePanelCache;
     }
@@ -335,11 +354,12 @@ export class LstarView {
     let geneCol: Int32Array | null = null;
     if (!allGenes) { await this.genes(); geneCol = Int32Array.from(symbols.map((s) => this.geneIndex!.get(s) ?? -1)); }
     const sp = await this.ds.fieldSparse(name);
+    const data = toShared(sp.data instanceof Float64Array ? sp.data : Float64Array.from(sp.data as any));
     this.dePanelCache = {
-      data: sp.data instanceof Float64Array ? sp.data : Float64Array.from(sp.data as any),
-      indices: sp.indices instanceof Int32Array ? sp.indices : Int32Array.from(sp.indices as any),
-      indptr: sp.indptr instanceof Int32Array ? sp.indptr : Int32Array.from(sp.indptr as any),
-      symbols, geneCol, nGenes: symbols.length, lognorm: fm.state === "lognorm",
+      data,
+      indices: toShared(sp.indices instanceof Int32Array ? sp.indices : Int32Array.from(sp.indices as any)),
+      indptr: toShared(sp.indptr instanceof Int32Array ? sp.indptr : Int32Array.from(sp.indptr as any)),
+      symbols, geneCol, nGenes: symbols.length, lognorm: fm.state === "lognorm", shared: isolationAvailable() && data.buffer instanceof SharedArrayBuffer,
     };
     return this.dePanelCache;
   }
@@ -354,112 +374,24 @@ export class LstarView {
       Promise<{ gene: number; symbol: string; mean: number; varr: number; resid: number; nobs: number }[]> {
     const dp = await this.dePanel();
     if (!dp) return [];
-    const { data, indices, indptr, symbols, geneCol, nGenes, lognorm } = dp;
-    const cells = sample(cellIds, maxCells);
-    const n = Math.max(cells.length, 1);
-    const sum = new Float64Array(nGenes), sumsq = new Float64Array(nGenes), nobs = new Int32Array(nGenes);
-    for (const i of cells) for (let k = indptr[i]; k < indptr[i + 1]; k++) {
-      const g = indices[k], v = lognorm ? data[k] : Math.log1p(data[k]);
-      sum[g] += v; sumsq[g] += v * v; nobs[g]++;
+    // OFF the main thread when isolated + the panel is SAB-backed (posting it SHARES, no copy); else run the SAME core
+    // inline. Both paths call overdispersedCore → byte-identical; only the thread differs. The core returns the PANEL
+    // gene index g; we map g -> {global gene, symbol} HERE (so no symbol table crosses to the worker).
+    let raw: { g: number; mean: number; varr: number; resid: number; nobs: number }[];
+    if (this.computePool?.isolated && dp.shared) {
+      raw = await this.computePool.run("overdispersion", {
+        panel: { data: dp.data.buffer, indices: dp.indices.buffer, indptr: dp.indptr.buffer, nGenes: dp.nGenes, lognorm: dp.lognorm },
+        cellIds: Array.from(cellIds), topN, maxCells,
+      });
+    } else {
+      raw = overdispersedCore({ data: dp.data, indices: dp.indices, indptr: dp.indptr, nGenes: dp.nGenes, lognorm: dp.lognorm }, cellIds, topN, maxCells);
     }
-    const mean = new Float64Array(nGenes), varr = new Float64Array(nGenes);
-    const xs: number[] = [], ys: number[] = [], gi: number[] = [];   // fit the trend on expressed genes
-    for (let g = 0; g < nGenes; g++) {
-      const m = sum[g] / n, vv = Math.max(sumsq[g] / n - (sum[g] / n) ** 2, 0);
-      mean[g] = m; varr[g] = vv;
-      if (m > 0 && vv > 0 && nobs[g] >= 3) { xs.push(Math.log(m)); ys.push(Math.log(vv)); gi.push(g); }   // need ≥3 expressing cells for a meaningful variance
-    }
-    const trend = lowess(xs, ys);                                    // log(v) ~ smooth(log(m))
-    const out = gi.map((g, j) => {
-      const res = ys[j] - trend(xs[j]);                              // residual: log(variance) above the trend
-      // pagoda2 adjustVariance: test the variance ratio exp(res) against F(nobs, nobs). The EFFECTIVE d.o.f.
-      // is the number of EXPRESSING cells, so F(small,small) is wide and a sparsely-expressed gene (e.g. IGLV1-36)
-      // can't reach significance despite a large raw residual. Score = -log p (↑ = more overdispersed).
-      const lp = logFupperTail(Math.exp(res), nobs[g], nobs[g]);
-      return { gene: geneCol ? geneCol[g] : g, symbol: symbols[g], mean: mean[g], varr: varr[g], resid: -lp, nobs: nobs[g] };
-    });
-    out.sort((a, b) => b.resid - a.resid);
-    return out.slice(0, topN);
+    return raw.map((r) => ({ gene: dp.geneCol ? dp.geneCol[r.g] : r.g, symbol: dp.symbols[r.g], mean: r.mean, varr: r.varr, resid: r.resid, nobs: r.nobs }));
   }
 }
 
-// Compact LOWESS: tricube-weighted local linear fit of y~x, evaluated at `nAnchor` anchors across
-// the x-range and linearly interpolated. `span` = fraction of points per window. Returns a predictor.
-function lowess(xs: number[], ys: number[], span = 0.3, nAnchor = 200): (x: number) => number {
-  const n = xs.length;
-  if (n < 3) { const my = ys.reduce((s, v) => s + v, 0) / Math.max(n, 1); return () => my; }
-  const ord = Array.from({ length: n }, (_, i) => i).sort((a, b) => xs[a] - xs[b]);
-  const sx = ord.map((i) => xs[i]), sy = ord.map((i) => ys[i]);
-  const win = Math.max(2, Math.floor(span * n));
-  const ax: number[] = [], ay: number[] = [];
-  for (let a = 0; a < nAnchor; a++) {
-    const x0 = sx[0] + (sx[n - 1] - sx[0]) * a / (nAnchor - 1);
-    let l = Math.max(0, lowerBound(sx, x0) - (win >> 1)); const r = Math.min(n, l + win); l = Math.max(0, r - win);
-    let maxd = 1e-9; for (let i = l; i < r; i++) maxd = Math.max(maxd, Math.abs(sx[i] - x0));
-    let sw = 0, swx = 0, swy = 0, swxx = 0, swxy = 0;
-    for (let i = l; i < r; i++) {
-      const d = Math.abs(sx[i] - x0) / maxd, w = (1 - d * d * d) ** 3, xi = sx[i], yi = sy[i];
-      sw += w; swx += w * xi; swy += w * yi; swxx += w * xi * xi; swxy += w * xi * yi;
-    }
-    const denom = sw * swxx - swx * swx;
-    ay.push(Math.abs(denom) < 1e-12 ? swy / sw : ((swy - (sw * swxy - swx * swy) / denom * swx) / sw) + (sw * swxy - swx * swy) / denom * x0);
-    ax.push(x0);
-  }
-  return (x: number) => {
-    if (x <= ax[0]) return ay[0];
-    if (x >= ax[ax.length - 1]) return ay[ax.length - 1];
-    const j = lowerBound(ax, x);
-    return ay[j - 1] + (ay[j] - ay[j - 1]) * (x - ax[j - 1]) / (ax[j] - ax[j - 1]);
-  };
-}
-function lowerBound(arr: number[], x: number): number {
-  let lo = 0, hi = arr.length;
-  while (lo < hi) { const m = (lo + hi) >> 1; if (arr[m] < x) lo = m + 1; else hi = m; }
-  return lo;
-}
-
-// ----- overdispersion F-test (matches pagoda2 adjustVariance: pf(var-ratio, nobs, nobs, upper, log)) -----
-function lgammaFn(x: number): number {
-  const c = [76.18009172947146, -86.50532032941677, 24.01409824083091, -1.231739572450155, 0.1208650973866179e-2, -0.5395239384953e-5];
-  let y = x; let tmp = x + 5.5; tmp -= (x + 0.5) * Math.log(tmp); let ser = 1.000000000190015;
-  for (let j = 0; j < 6; j++) { y += 1; ser += c[j] / y; }
-  return -tmp + Math.log(2.5066282746310005 * ser / x);
-}
-function betacf(a: number, b: number, x: number): number {
-  const FPMIN = 1e-300, EPS = 3e-12, MAXIT = 300, qab = a + b, qap = a + 1, qam = a - 1;
-  let c = 1, d = 1 - qab * x / qap; if (Math.abs(d) < FPMIN) d = FPMIN; d = 1 / d; let h = d;
-  for (let m = 1; m <= MAXIT; m++) {
-    const m2 = 2 * m;
-    let aa = m * (b - m) * x / ((qam + m2) * (a + m2));
-    d = 1 + aa * d; if (Math.abs(d) < FPMIN) d = FPMIN; c = 1 + aa / c; if (Math.abs(c) < FPMIN) c = FPMIN; d = 1 / d; h *= d * c;
-    aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2));
-    d = 1 + aa * d; if (Math.abs(d) < FPMIN) d = FPMIN; c = 1 + aa / c; if (Math.abs(c) < FPMIN) c = FPMIN; d = 1 / d; const del = d * c; h *= del;
-    if (Math.abs(del - 1) < EPS) break;
-  }
-  return h;
-}
-// log of the regularised incomplete beta I_x(a,b)
-function logIncBeta(a: number, b: number, x: number): number {
-  if (x <= 0) return -Infinity; if (x >= 1) return 0;
-  const logbt = lgammaFn(a + b) - lgammaFn(a) - lgammaFn(b) + a * Math.log(x) + b * Math.log1p(-x);
-  return x < (a + 1) / (a + b + 2)
-    ? logbt + Math.log(betacf(a, b, x) / a)
-    : Math.log1p(-Math.exp(logbt + Math.log(betacf(b, a, 1 - x) / b)));
-}
-// log of the upper-tail F p-value: log P(F_{d1,d2} > f)
-function logFupperTail(f: number, d1: number, d2: number): number {
-  if (f <= 0) return 0;
-  return logIncBeta(d2 / 2, d1 / 2, d2 / (d2 + d1 * f));
-}
-
-function sample(arr: number[], k: number): number[] {
-  if (arr.length <= k) return arr;
-  const out: number[] = [], used = new Set<number>(), n = arr.length;
-  // deterministic-ish reservoir via stride to avoid Math.random nondeterminism noise
-  const stride = Math.max(1, Math.floor(n / k));
-  for (let i = 0; i < n && out.length < k; i += stride) { out.push(arr[i]); used.add(i); }
-  return out;
-}
+// (LOWESS, the overdispersion F-test, and the deterministic `sample` now live in compute/odcore.ts — shared by the
+// main-thread fallback, the compute worker, and node tests.)
 
 // ----- color helpers -----
 const RAMP_LO = [27, 34, 48], RAMP_HI = [224, 164, 88]; // inset -> amber (matches the mock)
