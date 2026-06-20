@@ -5,6 +5,7 @@ import { colorsFor, focusMaskFor, categoryColorOf } from "../render/colors.ts";
 import { themeIsDark } from "../render/theme.ts";
 import { getStyle, resolveStyle } from "../render/style.ts";
 import { EmbeddingStyle } from "../render/embedding.style.ts";
+import "./heatmap.style.ts";   // side-effect: the Heatmap panel's style descriptor self-registers
 import { catColor } from "../data/view.ts";
 import type { EntityRef } from "../data/coord.ts";
 import { reconcile, crosstab, ReconRow, AnnotationLayer, CapRecord, labelChain } from "../anno/model.ts";
@@ -1134,6 +1135,7 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
   const rows = [...pinnedRows, ...markerRows.filter((r) => !pinnedSet.has(r.gene))];
   const nPinned = pinnedRows.length;
   const G = gs.groups.length, R = rows.length, x0 = 70, y0 = 6;
+  const s = resolvePanelStyleFor(ctx, "Heatmap", p.view);   // the panel's resolved style (dot/cell/font/ramp/highlight)
   const xLabMax = Math.max(1, ...gs.groups.map((s) => s.length));   // longest column label — drives rotate vs horizontal
   const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
   let mode: "heat" | "dot" = p.heatMode === "heat" ? "heat" : "dot";   // dotplot is the default; "heat" only when explicitly set
@@ -1170,12 +1172,12 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
   const paintCols = () => {
     const svg = host.querySelector("svg"); if (!svg) return;
     const hl = svg.querySelector(".hcolhl"); if (!hl) return;
-    let s = "";
+    let hlSvg = "";
     gs.groups.forEach((grp, c) => {
       const sel = !!selGroups?.has(grp), hov = !sel && !!hovGroups?.has(grp);
-      if (sel || hov) s += `<rect x="${(x0 + c * geomCw).toFixed(1)}" y="${y0}" width="${geomCw.toFixed(1)}" height="${(R * geomCh).toFixed(1)}" fill="rgba(92,200,255,${sel ? 0.22 : 0.10})" pointer-events="none"/>`;
+      if (sel || hov) hlSvg += `<rect x="${(x0 + c * geomCw).toFixed(1)}" y="${y0}" width="${geomCw.toFixed(1)}" height="${(R * geomCh).toFixed(1)}" fill="rgba(92,200,255,${sel ? s.highlight.selOpacity : s.highlight.hovOpacity})" pointer-events="none"/>`;
     });
-    hl.innerHTML = s;
+    hl.innerHTML = hlSvg;
     svg.querySelectorAll<SVGElement>(".hgrp").forEach((el) => { const grp = gs.groups[+el.getAttribute("data-c")!]; const sel = !!selGroups?.has(grp), hov = !sel && !!hovGroups?.has(grp); el.style.fill = sel ? "var(--cyan)" : ""; el.style.fontWeight = sel ? "600" : ""; el.style.opacity = sel || hov ? "1" : ""; });
   };
 
@@ -1193,34 +1195,34 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
   // hover can read the names. Re-runs on resize against the panel body's live dimensions.
   const draw = () => {
     const availW = host.clientWidth - 4, availH = host.clientHeight - 2;   // the GIVEN box; w is absolute so the svg can never grow it
-    const cw = clamp((availW - x0 - 6) / G, 6, 40);
+    const cw = clamp((availW - x0 - 6) / G, s.cell.colMin, s.cell.colMax);
     // x-axis labels: horizontal when they fit a column, else rotate −45° (scanpy/Seurat style) so every group
     // stays legible without thinning. Reserve bottom space for the rotated band, capped so it can't eat the plot.
     const estLabW = xLabMax * 5.4;   // ≈ mono char width at 9px
     const rotX = estLabW > cw - 1;
     const axisH = rotX ? clamp(estLabW * 0.72 + 10, 22, Math.max(40, availH * 0.42)) : 16;
-    const ch = clamp((availH - y0 - axisH) / R, 7, 26);
+    const ch = clamp((availH - y0 - axisH) / R, s.cell.rowMin, s.cell.rowMax);
     geomCw = cw; geomCh = ch;   // remember live column size so paintCols can place the highlight bands
     const W = x0 + G * cw + 6, H = y0 + R * ch + axisH;
     let g = "";
-    const maxR = Math.max(1.4, Math.min(cw, ch) / 2 - 1.2);   // dot radius at 100% expressing
+    const maxR = Math.max(1.4, Math.min(cw, ch) / 2 - 1.2) * s.dot.sizeScale;   // dot radius at 100% expressing (× a user size scale)
     // Adaptive label density (both axes): shrink the font to the available pitch first; when even the floor
     // font would collide, THIN (render every Nth label). Hover still reads any hidden label. FLOOR = legibility.
-    const FLOOR = 5;
-    const geneFs = Math.max(FLOOR, Math.min(9, ch * 0.92));                                   // gene rows: fit the row height
+    const FLOOR = s.font.floor;
+    const geneFs = Math.max(FLOOR, Math.min(s.font.max, ch * 0.92));                          // gene rows: fit the row height
     const grpPitch = rotX ? cw * 0.707 : cw;                                                  // (rotated) column labels: perpendicular spacing
-    const grpFs = rotX ? Math.max(FLOOR, Math.min(9, grpPitch)) : Math.max(FLOOR, Math.min(9, (cw - 2) / Math.max(1, xLabMax) / 0.6));
+    const grpFs = rotX ? Math.max(FLOOR, Math.min(s.font.max, grpPitch)) : Math.max(FLOOR, Math.min(s.font.max, (cw - 2) / Math.max(1, xLabMax) / 0.6));
     const grpStride = grpPitch >= FLOOR ? 1 : Math.max(1, Math.ceil(FLOOR / grpPitch));       // groups: hide every Nth when too dense
     const geneStride = ch >= FLOOR ? 1 : Math.max(1, Math.ceil(FLOOR / ch));                  // genes: same (rare — rows are ≥7px, then scroll)
     rows.forEach((r, ri) => {
       if (r.pinned) g += `<rect x="${x0.toFixed(1)}" y="${(y0 + ri * ch).toFixed(2)}" width="${(G * cw).toFixed(1)}" height="${(ch - 0.5).toFixed(2)}" fill="rgba(92,200,255,.12)" pointer-events="none"/>`;
       let mx = 1e-6; for (let c = 0; c < G; c++) mx = Math.max(mx, gs.mean[c * gs.nGenes + r.gene]);
       for (let c = 0; c < G; c++) { const t = Math.min(1, gs.mean[c * gs.nGenes + r.gene] / mx);
-        if (mode === "dot") { const fr = gs.frac[c * gs.nGenes + r.gene]; const rad = Math.max(0.5, Math.sqrt(fr) * maxR);   // area ∝ fraction expressing
+        if (mode === "dot") { const fr = gs.frac[c * gs.nGenes + r.gene]; const rad = Math.max(s.dot.minRadius, Math.sqrt(fr) * maxR);   // area ∝ fraction expressing
           // visible dot is decorative; a full-cell transparent rect on top carries the hover/click so even tiny dots stay hittable
-          g += `<circle cx="${(x0 + c * cw + cw / 2).toFixed(2)}" cy="${(y0 + ri * ch + ch / 2).toFixed(2)}" r="${rad.toFixed(2)}" fill="${ramp(t)}" pointer-events="none"/>`;
+          g += `<circle cx="${(x0 + c * cw + cw / 2).toFixed(2)}" cy="${(y0 + ri * ch + ch / 2).toFixed(2)}" r="${rad.toFixed(2)}" fill="${ramp(t, s.ramp)}" pointer-events="none"/>`;
           g += `<rect class="hcell" data-ri="${ri}" data-c="${c}" x="${(x0 + c * cw).toFixed(2)}" y="${(y0 + ri * ch).toFixed(2)}" width="${(cw - 0.5).toFixed(2)}" height="${(ch - 0.5).toFixed(2)}" fill="transparent" pointer-events="all"/>`; }
-        else g += `<rect class="hcell" data-ri="${ri}" data-c="${c}" x="${(x0 + c * cw).toFixed(2)}" y="${(y0 + ri * ch).toFixed(2)}" width="${(cw - 0.5).toFixed(2)}" height="${(ch - 0.5).toFixed(2)}" fill="${ramp(t)}"/>`; }
+        else g += `<rect class="hcell" data-ri="${ri}" data-c="${c}" x="${(x0 + c * cw).toFixed(2)}" y="${(y0 + ri * ch).toFixed(2)}" width="${(cw - 0.5).toFixed(2)}" height="${(ch - 0.5).toFixed(2)}" fill="${ramp(t, s.ramp)}"/>`; }
       if (ri % geneStride === 0 || r.pinned) g += `<text class="axis hgene" data-ri="${ri}" x="${x0 - 4}" y="${(y0 + ri * ch + ch * 0.72).toFixed(1)}" text-anchor="end" style="font-size:${geneFs.toFixed(1)}px${r.pinned ? ";fill:var(--cyan);font-weight:600" : ""}">${r.pinned ? "● " : ""}${esc(r.symbol)}</text>`;
     });
     if (nPinned > 0 && nPinned < R) g += `<line x1="${x0.toFixed(1)}" y1="${(y0 + nPinned * ch).toFixed(1)}" x2="${(x0 + G * cw).toFixed(1)}" y2="${(y0 + nPinned * ch).toFixed(1)}" stroke="var(--cyan)" stroke-opacity="0.4" stroke-width="0.6"/>`;
@@ -1288,8 +1290,8 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
 
 // dotplot/heatmap fill ramp — theme-aware: on dark, low fades into the dark canvas (slate→amber); on white, low
 // fades into white (paper→deep orange), so low expression stays faint and high reads, instead of inverting.
-function ramp(t: number): string {
+function ramp(t: number, override?: { lo: number[]; hi: number[] }): string {
   const dark = themeIsDark();
-  const a = dark ? [27, 34, 48] : [244, 240, 228], b = dark ? [224, 164, 88] : [186, 96, 22];
+  const a = override?.lo || (dark ? [27, 34, 48] : [244, 240, 228]), b = override?.hi || (dark ? [224, 164, 88] : [186, 96, 22]);
   return `rgb(${a.map((x, i) => Math.round(x + (b[i] - x) * t)).join(",")})`;
 }
