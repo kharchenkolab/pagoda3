@@ -1188,7 +1188,11 @@ export class App {
         const empty = requested.filter((c) => !got.includes(c));
         warn = ` Note: ${empty.length} requested category(ies) ended up EMPTY (${empty.join(", ")}) — every cell fell into ${got.length === 1 ? `"${got[0]}"` : "the others"}. If that's unexpected, the cutoff is likely on the wrong SCALE (a QC field like mito may be a PERCENT 0–100, not a fraction 0–1 — inspect the field's min/max and re-create with a fitting threshold).`;
       }
-      return { ok: `created categorical field "${res.name}" (${got.length} categories: ${shown}) and coloured the embedding by it — facet/annotate by it, or edit it with manage_category.${warn}${note}` };
+      // Coverage: a SUBSET category (codes left at -1) is legitimate but looks "empty" when most cells are unlabeled —
+      // disclose it so neither the agent nor the user mistakes a sparse field for a broken one.
+      let unassigned = 0; for (let i = 0; i < layer.codes.length; i++) if (layer.codes[i] < 0) unassigned++;
+      const cov = unassigned ? ` ${(this.ctx.n - unassigned).toLocaleString()}/${this.ctx.n.toLocaleString()} cells are labeled — ${unassigned.toLocaleString()} are left UNASSIGNED (they fall in no category; to put them in a bucket, assign them a value too).` : "";
+      return { ok: `created categorical field "${res.name}" (${got.length} categories: ${shown}) and coloured the embedding by it — facet/annotate by it, or edit it with manage_category.${cov}${warn}${note}` };
     }
     this.coord.setSelection({ kind: "cells", ids: Int32Array.from(res.ids) });   // cells → selection
     return { ok: `selected ${res.ids.length} cells${res.label ? ` (${res.label})` : ""}.${note}` };
