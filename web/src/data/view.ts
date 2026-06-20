@@ -41,11 +41,11 @@ function reorderNumericCategorical(m: { kind: "categorical"; codes: Int32Array; 
 // Copy a typed array into a SharedArrayBuffer-backed view so the compute worker can map it ZERO-COPY (post the .buffer →
 // it's shared, not cloned). Only when cross-origin isolated; otherwise returns the array unchanged (main-thread path).
 // One-time cost at panel load; the matrix then lives ONCE, shared by the main thread + every worker.
-function toShared<T extends Float64Array | Int32Array>(arr: T): T {
+function toShared<T extends Float64Array | Float32Array | Int32Array>(arr: T): T {
   if (!isolationAvailable() || arr.buffer instanceof SharedArrayBuffer) return arr;
   const Ctor = arr.constructor as { new (b: SharedArrayBuffer): T };
   const view = new Ctor(new SharedArrayBuffer(arr.byteLength));
-  (view as Float64Array | Int32Array).set(arr as any);
+  (view as Float64Array | Float32Array | Int32Array).set(arr as any);
   return view;
 }
 
@@ -53,11 +53,11 @@ export class LstarView {
   ds: LstarDataset;
   private geneLabels?: string[];
   private geneIndex?: Map<string, number>;
-  private cscCache?: { data: Float64Array; indices: Int32Array; indptr: Int32Array; nGenes: number };
+  private cscCache?: { data: Float32Array; indices: Int32Array; indptr: Int32Array; nGenes: number };   // data downcast to Float32 (raw counts → lossless) to halve the SAB
   // cell-major counts panel (viewer profile): undefined = not checked, null = absent in this store.
   // `lognorm` = values already log1p (legacy) vs raw (log1p on read); `geneCol` maps the panel's
   // gene axis to global gene indices when it's a subset (legacy od_genes), else null (all genes).
-  private dePanelCache?: { data: Float64Array; indices: Int32Array; indptr: Int32Array; symbols: string[]; geneCol: Int32Array | null; nGenes: number; lognorm: boolean; shared: boolean } | null;
+  private dePanelCache?: { data: Float32Array; indices: Int32Array; indptr: Int32Array; symbols: string[]; geneCol: Int32Array | null; nGenes: number; lognorm: boolean; shared: boolean } | null;   // data Float32 to halve the SAB
   // Off-main-thread compute pool (S1+). Set by main.ts after construction; kernels dispatch to it when isolation is
   // available + the panel is SAB-backed, else they run the SAME pure core inline (so the app is correct either way).
   private computePool?: ComputePool;
@@ -148,7 +148,7 @@ export class LstarView {
       // api.meanVar can run the WASM kernel over them in the worker, zero-copy. indices stays regular (not needed
       // for colMeanVar; saves the extra SAB). Transparent to the main-thread fallback callers.
       this.cscCache = {
-        data: toShared(sp.data instanceof Float64Array ? sp.data : Float64Array.from(sp.data as any)),
+        data: toShared(Float32Array.from(sp.data as any)),   // Float32: halves the SAB; raw counts are exact in Float32, kernels accumulate in f64
         indices: sp.indices instanceof Int32Array ? sp.indices : Int32Array.from(sp.indices as any),
         indptr: toShared(sp.indptr instanceof Int32Array ? sp.indptr : Int32Array.from(sp.indptr as any)),
         nGenes: sp.shape[1],
@@ -348,7 +348,7 @@ export class LstarView {
       const cc = await this.countsCSC();                  // counts CSC (cells,genes) -> CSR cell-major
       const r = M.cscToCsr(cc.data, cc.indices, cc.indptr, this.nCells, cc.nGenes);
       const symbols = await this.genes();
-      const data = toShared(r.data instanceof Float64Array ? r.data : Float64Array.from(r.data as any));
+      const data = toShared(Float32Array.from(r.data as any));
       this.dePanelCache = {
         data,
         indices: toShared(r.indices instanceof Int32Array ? r.indices : Int32Array.from(r.indices as any)),
@@ -364,7 +364,7 @@ export class LstarView {
     let geneCol: Int32Array | null = null;
     if (!allGenes) { await this.genes(); geneCol = Int32Array.from(symbols.map((s) => this.geneIndex!.get(s) ?? -1)); }
     const sp = await this.ds.fieldSparse(name);
-    const data = toShared(sp.data instanceof Float64Array ? sp.data : Float64Array.from(sp.data as any));
+    const data = toShared(Float32Array.from(sp.data as any));
     this.dePanelCache = {
       data,
       indices: toShared(sp.indices instanceof Int32Array ? sp.indices : Int32Array.from(sp.indices as any)),

@@ -7,7 +7,7 @@ import { overdispersedCore, deCore, groupStatsForCellsCore, type ODPanel } from 
 
 // Reconstruct a panel from SAB-backed buffers posted by the main thread (mapped ZERO-COPY — the buffers are shared).
 function panelFrom(p: any): ODPanel {
-  return { data: new Float64Array(p.data), indices: new Int32Array(p.indices), indptr: new Int32Array(p.indptr), nGenes: p.nGenes, lognorm: p.lognorm };
+  return { data: new Float32Array(p.data), indices: new Int32Array(p.indices), indptr: new Int32Array(p.indptr), nGenes: p.nGenes, lognorm: p.lognorm };
 }
 
 // Load the real libstar WASM kernels IN the worker (lazy, cached) — same module the main thread loads, so native C++
@@ -92,7 +92,7 @@ function runWidgetCode(args: any): Promise<any> {
     meanVar: counts ? async (lognorm = true) => {
       const M = await wasm();
       if (!M) throw new Error("WASM kernels unavailable in the worker");
-      const r = M.colMeanVar(new Float64Array(counts.data), new Int32Array(counts.indptr), counts.nCells, 1, !!lognorm);
+      const r = M.colMeanVar(new Float32Array(counts.data), new Int32Array(counts.indptr), counts.nCells, 1, !!lognorm);
       const cs = counts.symbols; const out = [];
       for (let g = 0; g < r.mean.length; g++) out.push({ symbol: cs ? cs[g] : g, mean: r.mean[g], var: r.var[g], nnz: r.nnz[g] });
       return out;
