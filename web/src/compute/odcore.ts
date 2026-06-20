@@ -74,6 +74,24 @@ export function deCore(panel: ODPanel, A: ArrayLike<number>, B: ArrayLike<number
   return ranked;
 }
 
+// Per-(group, GLOBAL gene) mean(log1p) + fraction-expressing over a CELL SUBSET — the faceted-dotplot kernel. `codes`
+// maps each cell to its group index (G groups); `geneCol` maps the panel's gene axis to global gene ids (null = identity,
+// i.e. an all-genes panel); `ngGlobal` = the global gene count (the output's gene axis). Mirrors view.groupStatsForCells.
+export function groupStatsForCellsCore(
+  panel: ODPanel, geneCol: ArrayLike<number> | null, ngGlobal: number, codes: ArrayLike<number>, G: number, cellIds: ArrayLike<number>,
+): { mean: Float32Array; frac: Float32Array; n: Int32Array } {
+  const { data, indices, indptr, lognorm } = panel;
+  const mean = new Float32Array(G * ngGlobal), frac = new Float32Array(G * ngGlobal), n = new Int32Array(G);
+  const sum = new Float64Array(G * ngGlobal), nz = new Float64Array(G * ngGlobal);
+  for (let j = 0; j < cellIds.length; j++) {
+    const i = cellIds[j], grp = codes[i]; if (grp < 0 || grp >= G) continue; n[grp]++;
+    const base = grp * ngGlobal;
+    for (let k = indptr[i]; k < indptr[i + 1]; k++) { const gc = geneCol ? geneCol[indices[k]] : indices[k]; sum[base + gc] += lognorm ? data[k] : Math.log1p(data[k]); nz[base + gc]++; }
+  }
+  for (let grp = 0; grp < G; grp++) { const cnt = Math.max(n[grp], 1), base = grp * ngGlobal; for (let g = 0; g < ngGlobal; g++) { mean[base + g] = sum[base + g] / cnt; frac[base + g] = nz[base + g] / cnt; } }
+  return { mean, frac, n };
+}
+
 // ----- LOWESS: tricube-weighted local linear fit of y~x at anchors, linearly interpolated -----
 function lowess(xs: number[], ys: number[], span = 0.3, nAnchor = 200): (x: number) => number {
   const n = xs.length;

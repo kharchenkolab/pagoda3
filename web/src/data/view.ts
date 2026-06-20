@@ -3,7 +3,7 @@
 import type { LstarDataset } from "./store.ts";
 import { kernels } from "./kernels.ts";
 import { DIM_RGB, DIM_A, themeIsDark } from "../render/theme.ts";   // theme-aware non-focus dot colour (live binding)
-import { sample, overdispersedCore, deCore } from "../compute/odcore.ts";   // pure kernel cores (shared by the fallback, the worker, and node tests)
+import { sample, overdispersedCore, deCore, groupStatsForCellsCore } from "../compute/odcore.ts";   // pure kernel cores (shared by the fallback, the worker, and node tests)
 import type { ComputePool } from "../compute/pool.ts";
 import { isolationAvailable } from "../compute/pool.ts";
 
@@ -219,17 +219,22 @@ export class LstarView {
   // cell to its group index; G = number of groups. Genes are global indices (matches markers' gene ids).
   async groupStatsForCells(codes: ArrayLike<number>, G: number, cellIds: ArrayLike<number>): Promise<{ mean: Float32Array; frac: Float32Array; n: Int32Array }> {
     const ng = this.nGenes;
-    const mean = new Float32Array(G * ng), frac = new Float32Array(G * ng), n = new Int32Array(G);
-    const dp = await this.dePanel(); if (!dp) return { mean, frac, n };   // no cell-major panel → no faceting (caller falls back)
-    const { data, indices, indptr, geneCol, lognorm } = dp;
-    const sum = new Float64Array(G * ng), nz = new Float64Array(G * ng);
-    for (let j = 0; j < cellIds.length; j++) {
-      const i = cellIds[j], grp = codes[i]; if (grp < 0 || grp >= G) continue; n[grp]++;
-      const base = grp * ng;
-      for (let k = indptr[i]; k < indptr[i + 1]; k++) { const gc = geneCol ? geneCol[indices[k]] : indices[k]; sum[base + gc] += lognorm ? data[k] : Math.log1p(data[k]); nz[base + gc]++; }
+    const dp = await this.dePanel();
+    if (!dp) return { mean: new Float32Array(G * ng), frac: new Float32Array(G * ng), n: new Int32Array(G) };   // no cell-major panel → no faceting (caller falls back)
+    const panel = { data: dp.data, indices: dp.indices, indptr: dp.indptr, nGenes: dp.nGenes, lognorm: dp.lognorm };
+    const inline = () => groupStatsForCellsCore(panel, dp.geneCol, ng, codes, G, cellIds);
+    if (this.computePool?.isolated && dp.shared) {
+      try {
+        return await this.computePool.run("groupStatsForCells", {
+          panel: { data: dp.data.buffer, indices: dp.indices.buffer, indptr: dp.indptr.buffer, nGenes: dp.nGenes, lognorm: dp.lognorm },
+          geneCol: dp.geneCol ? Array.from(dp.geneCol) : null,   // null for an all-genes panel (the common case); small otherwise
+          ngGlobal: ng, G,
+          codes: codes instanceof Int32Array ? codes : Int32Array.from(codes),
+          cellIds: cellIds instanceof Int32Array ? cellIds : Int32Array.from(cellIds),
+        });
+      } catch { return inline(); }
     }
-    for (let grp = 0; grp < G; grp++) { const cnt = Math.max(n[grp], 1), base = grp * ng; for (let g = 0; g < ng; g++) { mean[base + g] = sum[base + g] / cnt; frac[base + g] = nz[base + g] / cnt; } }
-    return { mean, frac, n };
+    return inline();
   }
 
   // Ranked marker genes per group. Reads the precomputed table when present, else derives markers

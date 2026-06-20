@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { sample, overdispersedCore, deCore, logFupperTail, type ODPanel } from "./odcore.ts";
+import { sample, overdispersedCore, deCore, groupStatsForCellsCore, logFupperTail, type ODPanel } from "./odcore.ts";
 
 // Build a cell-major CSR panel from a dense [cell][gene] matrix (stores only nonzeros, like the real panel).
 function buildPanel(dense: number[][], lognorm = true): ODPanel {
@@ -63,6 +63,25 @@ test("deCore: A-high gene has lfc>0, B-high lfc<0; ranked by |logFC|; group mean
   for (let i = 1; i < out.length; i++) assert.ok(Math.abs(out[i - 1].lfc) >= Math.abs(out[i].lfc));   // |lfc| desc
   assert.equal(out[2].g, 2, "the flat gene ranks last");
   assert.deepEqual(deCore(panel, A, B), out);   // deterministic
+});
+
+test("groupStatsForCellsCore: per-group mean(log1p) + fraction-expressing over a cell subset", () => {
+  // 6 cells × 2 genes. codes: cells 0-2 = group 0, cells 3-5 = group 1. geneCol null (all-genes panel), ngGlobal = 2.
+  const dense = [[2, 1], [2, 0], [2, 1], [0, 3], [4, 3], [0, 3]];
+  const panel = buildPanel(dense);
+  const codes = Int32Array.from([0, 0, 0, 1, 1, 1]);
+  const r = groupStatsForCellsCore(panel, null, 2, codes, 2, [0, 1, 2, 3, 4, 5]);
+  const near = (a: number, b: number) => assert.ok(Math.abs(a - b) < 1e-5, `${a} ≈ ${b}`);
+  assert.deepEqual(Array.from(r.n), [3, 3]);
+  // layout = [g0·gene0, g0·gene1, g1·gene0, g1·gene1]
+  near(r.mean[0], 2);          // g0 gene0: (2+2+2)/3
+  near(r.mean[1], 2 / 3);      // g0 gene1: (1+0+1)/3
+  near(r.mean[2], 4 / 3);      // g1 gene0: (0+4+0)/3
+  near(r.mean[3], 3);          // g1 gene1: (3+3+3)/3
+  near(r.frac[0], 1);          // g0 gene0 expressed in all 3
+  near(r.frac[2], 1 / 3);      // g1 gene0 expressed in 1 of 3
+  // determinism
+  assert.deepEqual(groupStatsForCellsCore(panel, null, 2, codes, 2, [0, 1, 2, 3, 4, 5]), r);
 });
 
 test("logFupperTail: monotone — a larger variance ratio is more significant (more negative log p)", () => {
