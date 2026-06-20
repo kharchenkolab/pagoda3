@@ -85,6 +85,16 @@ test("display alpha is clamped; booleans pass through", () => {
   assert.deepEqual((find(flags.ops, "display")[0] as any).patch, { labels: false, legend: true });
 });
 
+test("recolor: per-value colour overrides normalize; blank colours dropped; clear + empty handled", () => {
+  const w = makeWorld();
+  const r = normalizeViewPatch({ recolor: { field: "cell_type", colors: { low: "lightgrey", "": "#ccc", bad: "  " } } }, w);
+  const op = find(r.ops, "catColors")[0] as any;
+  assert.equal(op.field, "cell_type");
+  assert.deepEqual(op.colors, { low: "lightgrey", "": "#ccc" });   // blank-string colour dropped; "" (unassigned) kept
+  assert.equal((find(normalizeViewPatch({ recolor: { clear: true } }, w).ops, "catColors")[0] as any).clear, true);
+  assert.equal(find(normalizeViewPatch({ recolor: { colors: {} } }, w).ops, "catColors").length, 0);   // nothing to do → no op
+});
+
 test("add panel: valid type with config; unknown type rejected", () => {
   const w = makeWorld();
   const ok = normalizeViewPatch({ panels: [{ add: "Embedding", title: "X", colorBy: "gene:CD3D", embedding: "umap.unintegrated" }] }, w);

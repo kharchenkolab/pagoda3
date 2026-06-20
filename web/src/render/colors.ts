@@ -70,6 +70,31 @@ export function setConfValues(label: string, values: Float32Array): void {
   confStore.set(label, { values, max: mx || 1 }); winsorCache.clear();   // values changed → drop stale winsor bounds
 }
 
+// PER-VALUE category COLOUR overrides — recolour ONE value of a categorical field (e.g. "low" → light-grey) or the
+// UNASSIGNED cells (value ""), without touching the stable palette. Keyed `field \n value`; consulted by colorsFor
+// (embedding + legend) and the facets swatch so the override shows everywhere, and persisted with the session. This
+// is what makes "change the colour of these cells" a real, drivable knob instead of a focus/recolour workaround.
+export type RGB = [number, number, number];
+const catColorStore = new Map<string, RGB>();
+const ccKey = (field: string, value: string) => field + "\n" + value;   // value "" targets the UNASSIGNED (-1) cells
+export function setCategoryColor(field: string, value: string, rgb: RGB | null): void {
+  const k = ccKey(field, value);
+  if (rgb) catColorStore.set(k, rgb); else catColorStore.delete(k);
+  invalidateColor(field);   // drop the cached metadata snapshot so the next paint reflects the new colour
+}
+export function clearCategoryColors(field?: string): void {
+  if (!field) { const had = catColorStore.size; catColorStore.clear(); if (had) invalidateColor(); return; }
+  for (const k of [...catColorStore.keys()]) if (k.slice(0, k.indexOf("\n")) === field) catColorStore.delete(k);
+  invalidateColor(field);
+}
+// The per-category RGB override array (+ the unassigned override) for a field — built once per paint by colorsFor.
+export function categoryColorOverrides(field: string, categories: string[]): { perCat: (RGB | null)[]; unassigned: RGB | null } {
+  return { perCat: categories.map((c) => catColorStore.get(ccKey(field, c)) || null), unassigned: catColorStore.get(ccKey(field, "")) || null };
+}
+export function categoryColorOf(field: string, value: string): RGB | null { return catColorStore.get(ccKey(field, value)) || null; }
+export function serializeCategoryColors(): Record<string, RGB> { const o: Record<string, RGB> = {}; for (const [k, v] of catColorStore) o[k] = v; return o; }
+export function restoreCategoryColors(o?: Record<string, RGB> | null): void { catColorStore.clear(); if (o) for (const k of Object.keys(o)) { const v = (o as any)[k]; if (Array.isArray(v) && v.length === 3) catColorStore.set(k, [v[0] | 0, v[1] | 0, v[2] | 0]); } }
+
 export async function colorsFor(view: LstarView, colorBy: string, focusMask?: Uint8Array, colormap?: string, winsor: number = 0): Promise<{ rgba: Uint8Array; legend: Legend }> {
   const pal = PALETTES[normalizePalette(colormap || "") || defaultNumericPalette()];   // chosen palette for numeric colourings; default is theme-aware (amber on dark, amberLight on white)
   // every numeric branch maps through this — winsorBounds clips outliers (keyed by colorBy so the sort is cached)
@@ -78,9 +103,10 @@ export async function colorsFor(view: LstarView, colorBy: string, focusMask?: Ui
   if (kind === "meta") {
     const m = await md(view, rest);
     if (m.kind === "categorical") {
+      const ov = categoryColorOverrides(rest, m.categories);   // per-value colour overrides (+ unassigned)
       return {
-        rgba: codesToRGBA(m.codes, focusMask, m.colors),
-        legend: { kind: "categorical", title: rest, items: m.categories.map((c, i) => ({ label: c, rgb: catColor(m.colors?.[i] ?? i) })) },
+        rgba: codesToRGBA(m.codes, focusMask, m.colors, ov.perCat, ov.unassigned),
+        legend: { kind: "categorical", title: rest, items: m.categories.map((c, i) => ({ label: c, rgb: ov.perCat[i] || catColor(m.colors?.[i] ?? i) })) },
       };
     }
     return { rgba: numRGBA(m.values, m.max), legend: numericLegend(rest, pal) };

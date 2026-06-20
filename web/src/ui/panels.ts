@@ -1,7 +1,7 @@
 import { mk, S } from "./dom.ts";
 import { Ctx } from "../data/ctx.ts";
 import { EmbeddingView } from "../render/embedding.ts";
-import { colorsFor, focusMaskFor } from "../render/colors.ts";
+import { colorsFor, focusMaskFor, categoryColorOf } from "../render/colors.ts";
 import { themeIsDark } from "../render/theme.ts";
 import { catColor } from "../data/view.ts";
 import type { EntityRef } from "../data/coord.ts";
@@ -414,12 +414,12 @@ async function facetsBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltB
     // too drastic for a lightweight highlight. Counts/bars stay over ALL cells; the selected value just gets a subtle
     // row shade (.facetv.on). (The banner above announces the selection + its actions.)
     const t = tally(G, F, null);                                // counts (+ segments) over all cells, always
-    const Fcol = F ? F.categories.map((_: any, i: number) => `rgb(${catColor(F.colors?.[i] ?? i).join(",")})`) : null;
+    const Fcol = F ? F.categories.map((c: string, i: number) => `rgb(${(categoryColorOf(act, c) || catColor(F.colors?.[i] ?? i)).join(",")})`) : null;   // colour-by segments honour per-value overrides
     const idx = new Map<string, number>(G.categories.map((c: string, i: number) => [c, i]));
     const maxC = order.reduce((mx: number, r: any) => Math.max(mx, t.counts[idx.get(r.value)!]), 1);
     const wrap = mk("div", "facetvals");
     wrap.innerHTML = order.map((r: any) => {
-      const gi = idx.get(r.value)!; const cnt = t.counts[gi]; const self = `rgb(${catColor(r.ci).join(",")})`;
+      const gi = idx.get(r.value)!; const cnt = t.counts[gi]; const self = `rgb(${(categoryColorOf(f.name, r.value) || catColor(r.ci)).join(",")})`;   // the value's swatch honours a per-value override
       const seg = (F && cnt > 0) ? F.categories.map((_: any, fi: number) => { const s = t.seg![gi][fi]; return s ? `<i style="width:${(s / cnt * 100).toFixed(2)}%;background:${Fcol![fi]}" title="${esc(r.value)} › ${esc(F.categories[fi])}: ${s.toLocaleString()} (${(s / cnt * 100).toFixed(0)}%)"></i>` : ""; }).join("")
                                  : (cnt > 0 ? `<i style="width:100%;background:${self}"></i>` : "");
       const selfOn = sel && sel.kind === "category" && sel.grouping === f.name && sel.value === r.value;

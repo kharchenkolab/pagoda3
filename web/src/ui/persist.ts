@@ -34,16 +34,16 @@ export interface SerAnnoLayer { name: string; source: string; categories: string
 export interface SerConversation { messages: any[]; history: any[]; }
 // `store` scopes the session to its DATASET — a session saved for one store must NOT be restored onto another (it would
 // clobber the new dataset's view with a stale colorBy/scope/widget). Restore only when the store matches.
-export interface SessionDoc { v: number; store: string; fingerprint?: Fingerprint; currentWS: string; colorBy: string; canvas: any[]; userWS: { name: string; ws: any }[]; annotation?: SerAnnoLayer[]; conversation?: SerConversation; }
+export interface SessionDoc { v: number; store: string; fingerprint?: Fingerprint; currentWS: string; colorBy: string; canvas: any[]; userWS: { name: string; ws: any }[]; annotation?: SerAnnoLayer[]; conversation?: SerConversation; catColors?: Record<string, [number, number, number]>; }
 
-export function serializeSession(d: { store: string; fingerprint?: Fingerprint; currentWS: string; colorBy: string; canvas: any[]; userWS: { name: string; ws: any }[]; annotation?: SerAnnoLayer[]; conversation?: SerConversation }): string {
-  return JSON.stringify({ v: VERSION, store: d.store, fingerprint: d.fingerprint, currentWS: d.currentWS, colorBy: d.colorBy, canvas: d.canvas, userWS: d.userWS, annotation: d.annotation, conversation: d.conversation });
+export function serializeSession(d: { store: string; fingerprint?: Fingerprint; currentWS: string; colorBy: string; canvas: any[]; userWS: { name: string; ws: any }[]; annotation?: SerAnnoLayer[]; conversation?: SerConversation; catColors?: Record<string, [number, number, number]> }): string {
+  return JSON.stringify({ v: VERSION, store: d.store, fingerprint: d.fingerprint, currentWS: d.currentWS, colorBy: d.colorBy, canvas: d.canvas, userWS: d.userWS, annotation: d.annotation, conversation: d.conversation, catColors: d.catColors });
 }
 // Tolerant parse: anything malformed / from an older version → null (start fresh, never throw on boot).
 export function parseSession(raw: string | null): SessionDoc | null {
   if (!raw) return null;
   try { const o = JSON.parse(raw); if (!o || o.v !== VERSION || !Array.isArray(o.canvas)) return null;
-    return { v: o.v, store: String(o.store || ""), fingerprint: parseFingerprint(o.fingerprint), currentWS: String(o.currentWS || ""), colorBy: String(o.colorBy || ""), canvas: o.canvas, userWS: Array.isArray(o.userWS) ? o.userWS : [], annotation: parseAnnotation(o.annotation), conversation: parseConversation(o.conversation) };
+    return { v: o.v, store: String(o.store || ""), fingerprint: parseFingerprint(o.fingerprint), currentWS: String(o.currentWS || ""), colorBy: String(o.colorBy || ""), canvas: o.canvas, userWS: Array.isArray(o.userWS) ? o.userWS : [], annotation: parseAnnotation(o.annotation), conversation: parseConversation(o.conversation), catColors: (o.catColors && typeof o.catColors === "object") ? o.catColors : undefined };
   } catch { return null; }
 }
 function parseConversation(c: any): SerConversation | undefined {

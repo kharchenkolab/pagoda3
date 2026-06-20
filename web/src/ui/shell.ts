@@ -9,7 +9,7 @@ import { getProvider, providerModel } from "../agent/providers.ts";
 import { normalizeViewPatch, RawViewPatch, World, PanelSpec, PanelPatch, MAX_COLS } from "../agent/viewpatch.ts";
 import { validateCellSet, resolveCellSet, describeCellSet, CellSet, CellWorld, CellEnv } from "../agent/cellset.ts";
 import { validateComputeResult, runInWorker, buildComputeSnapshot } from "../agent/codeapi.ts";
-import { setCodeValues, setConfValues, invalidateColor } from "../render/colors.ts";
+import { setCodeValues, setConfValues, invalidateColor, setCategoryColor, clearCategoryColors, serializeCategoryColors, restoreCategoryColors } from "../render/colors.ts";
 import { setThemeColors } from "../render/theme.ts";
 import { installOverflow } from "./overflow.ts";
 import { makeWidgetHost } from "../widget/apphost.ts";
@@ -28,6 +28,22 @@ import { LRModel, lrFinalize } from "../anno/celltypist.ts";
 
 interface Checkpoint { i: number; q: string; why: string; state: any; kind?: "ask" | "act"; exchange?: { kind: string; entries?: any[]; turns?: any[] }; }
 interface WS { colorBy: string; panels: Partial<Panel>[]; }
+
+// Parse ANY CSS colour string → [r,g,b] via the canvas (so "lightgrey", "#ccc", "rgb(…)", "hsl(…)" all work) — used
+// by update_view's `recolor` knob. The two-defaults trick detects an INVALID colour: a valid one normalises the same
+// regardless of the prior fillStyle, an invalid one leaves the default unchanged (so the two reads differ).
+function parseCssColorToRGB(s: string): [number, number, number] | null {
+  try {
+    const cx = document.createElement("canvas").getContext("2d"); if (!cx) return null;
+    cx.fillStyle = "#000"; cx.fillStyle = s; const a = cx.fillStyle;
+    cx.fillStyle = "#fff"; cx.fillStyle = s; const b = cx.fillStyle;
+    if (a !== b) return null;
+    if (typeof a === "string" && a[0] === "#") return [parseInt(a.slice(1, 3), 16), parseInt(a.slice(3, 5), 16), parseInt(a.slice(5, 7), 16)];
+    const m = typeof a === "string" ? a.match(/rgba?\(([^)]+)\)/) : null;
+    if (m) { const p = m[1].split(",").map((x) => parseFloat(x)); return [p[0] | 0, p[1] | 0, p[2] | 0]; }
+    return null;
+  } catch { return null; }
+}
 
 const COLOR_OPTS: [string, string][] = [
   ["meta:leiden", "leiden"], ["meta:cell_type", "cell type"], ["meta:condition", "condition"],
@@ -188,7 +204,7 @@ export class App {
   }
   persistSession() {
     const userWS = this.wsOrder.filter((n) => !this.builtinWS.has(n) && this.WS[n]).map((n) => ({ name: n, ws: this.WS[n] }));
-    const base = { store: this.currentStore(), fingerprint: this.datasetFingerprint(), currentWS: this.currentWS, colorBy: this.coord.state.colorBy, canvas: this.captureLayout(), userWS, annotation: this.serializeAnnotation() };
+    const base = { store: this.currentStore(), fingerprint: this.datasetFingerprint(), currentWS: this.currentWS, colorBy: this.coord.state.colorBy, canvas: this.captureLayout(), userWS, annotation: this.serializeAnnotation(), catColors: serializeCategoryColors() };
     // Try the full doc (incl. the chat log); if it busts the ~5MB quota, retry WITHOUT the conversation so views +
     // annotation still persist (the chat is the biggest + most droppable part — it's also in the exportable file).
     try { localStorage.setItem(SESSION_KEY, serializeSession({ ...base, conversation: this.serializeConversation() })); }
@@ -200,6 +216,7 @@ export class App {
     const doc = parseSession(localStorage.getItem(SESSION_KEY));
     if (!doc || doc.store !== this.currentStore()) return;   // no session, or one from a DIFFERENT dataset → keep this store's default layout (no redundant re-render)
     this.applySessionViews(doc);
+    restoreCategoryColors((doc as any).catColors);   // per-value colour overrides (keyed by field+value, not cell-indexed → no fingerprint gate; a missing field just won't apply)
     if (doc.annotation && !fingerprintMismatch(doc.fingerprint, this.datasetFingerprint())) this.restoreAnnotation(doc.annotation);   // cell-indexed → only when the dataset still aligns
     this.restoreConversation(doc.conversation);   // the chat log survives a reload (not cell-indexed → no fingerprint gate)
     this.fullRender();
@@ -216,7 +233,7 @@ export class App {
   // ---- the portable session DOCUMENT (file) — see persist.ts. A bundle = the session + the widget library it uses.
   buildBundle(): string {
     const userWS = this.wsOrder.filter((n) => !this.builtinWS.has(n) && this.WS[n]).map((n) => ({ name: n, ws: this.WS[n] }));
-    const session = parseSession(serializeSession({ store: this.currentStore(), fingerprint: this.datasetFingerprint(), currentWS: this.currentWS, colorBy: this.coord.state.colorBy, canvas: this.captureLayout(), userWS, annotation: this.serializeAnnotation(), conversation: this.serializeConversation() }))!;
+    const session = parseSession(serializeSession({ store: this.currentStore(), fingerprint: this.datasetFingerprint(), currentWS: this.currentWS, colorBy: this.coord.state.colorBy, canvas: this.captureLayout(), userWS, annotation: this.serializeAnnotation(), conversation: this.serializeConversation(), catColors: serializeCategoryColors() }))!;
     return serializeBundle({ session, widgets: this.widgetLib, savedAt: Date.now() });
   }
   applyBundle(raw: string): { ok: boolean; msg: string } {
@@ -230,6 +247,7 @@ export class App {
     for (const w of b.widgets) { const before = this.widgetLib.length; this.widgetLib = upsertWidget(this.widgetLib, { name: w.name, source: w.source, controls: w.controls, origin: "imported" }, w.createdAt || Date.now(), w.id || "w" + Date.now().toString(36) + added); if (this.widgetLib.length > before) added++; }
     if (b.widgets.length) try { localStorage.setItem(WIDGETS_KEY, JSON.stringify({ widgets: this.widgetLib })); } catch { /* */ }
     this.applySessionViews(b.session);
+    restoreCategoryColors((b.session as any).catColors);   // per-value colour overrides travel with the file
     if (b.session.annotation && !mism) this.restoreAnnotation(b.session.annotation);
     this.restoreConversation(b.session.conversation);   // chat log travels with the file (not cell-indexed)
     this.fullRender(); this.renderWS(); this.scheduleSave();
@@ -619,6 +637,25 @@ export class App {
         else if (op.kind === "display") {   // display is per-panel — a top-level display patch fans out to every embedding (so "show labels" applies to all, with no global coupling)
           for (const p of this.canvas) if (p.type === "Embedding") p.view = { ...p.view, display: { ...(p.view?.display || {}), ...op.patch } };
           applied.push(`display ${JSON.stringify(op.patch)}`); needRepaint = true;
+        }
+        else if (op.kind === "catColors") {   // per-VALUE colour overrides for a categorical field (recolour just "low", or the unassigned cells)
+          const cb = this.coord.state.colorBy;
+          const field = op.field || (cb.startsWith("meta:") ? cb.slice(5) : "");
+          if (!field) rejected.push("recolor: no categorical field — set a colour-by first, or pass field");
+          else if (!this.ctx.groupings().includes(field)) rejected.push(`recolor: no categorical field "${field}"`);
+          else {
+            if (op.clear) { clearCategoryColors(field); applied.push(`reset colours of ${field}`); }
+            const known = new Set(this.ctx.categoricalValues(field));   // sync (warmed); empty → skip the membership check
+            for (const [rawV, colStr] of Object.entries(op.colors)) {
+              const target = /^(unassigned|none|other|n\/?a|-1)?$/i.test(rawV.trim()) ? "" : rawV;   // unassigned aliases → the no-category cells
+              if (target !== "" && known.size && !known.has(target)) { rejected.push(`recolor: "${target}" is not a value of ${field}`); continue; }
+              const rgb = parseCssColorToRGB(colStr);
+              if (!rgb) { rejected.push(`recolor: "${colStr}" isn't a recognisable colour`); continue; }
+              setCategoryColor(field, target, rgb);
+              applied.push(`${field}: ${target || "(unassigned)"} → ${colStr}`);
+            }
+            needFull = true;   // fullRender so the embedding AND the facets swatches / legend all pick up the override (a plain repaint skips the facets panel)
+          }
         }
         else if (op.kind === "addPanel") { const id = this.addPanelModel(op.spec); applied.push(`+#${id} ${op.spec.type}${op.spec.heatMode === "dot" ? " · dotplot" : ""}`); needFull = true; }
         else if (op.kind === "configPanel") { const p = all().find((z) => z.id === op.id); if (p) { if (this.applyPanelModel(p, this.patchToModel(op.patch))) needFull = true; needRepaint = true; applied.push(`#${op.id} ${Object.keys(op.patch).join("/")}`); } }

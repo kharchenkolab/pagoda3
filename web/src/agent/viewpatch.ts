@@ -42,6 +42,7 @@ export interface RawViewPatch {
   select?: { dim?: string; value?: string };   // transient selection of a metadata value (cross-filters facets, highlights embedding)
   clearSelect?: boolean;
   display?: { labels?: boolean; legend?: boolean; alpha?: number; winsor?: number };
+  recolor?: { field?: string; colors?: Record<string, string>; clear?: boolean };   // per-VALUE colour overrides for a categorical field: {value: css-colour}; field defaults to the current colour-by; value "" / "unassigned" targets the no-category cells; clear:true resets the field's overrides
   panels?: RawPanelOp[];
   facet?: { by?: string; panel?: number; values?: string[]; layout?: string };   // split one panel into aligned copies
   unfacet?: number | boolean | { panel?: number; by?: string };   // INVERSE of facet: collapse faceted copies back to one
@@ -59,6 +60,7 @@ export type NormOp =
   | { kind: "select"; dim?: string; value?: string }
   | { kind: "clearSelect" }
   | { kind: "display"; patch: { labels?: boolean; legend?: boolean; alpha?: number; winsor?: number } }
+  | { kind: "catColors"; field?: string; colors: Record<string, string>; clear?: boolean }
   | { kind: "addPanel"; spec: PanelSpec }
   | { kind: "configPanel"; id: number; patch: PanelPatch }
   | { kind: "removePanel"; id: number }
@@ -156,6 +158,14 @@ export function normalizeViewPatch(patch: RawViewPatch, w: World): NormResult {
     if (typeof patch.display.alpha === "number") d.alpha = Math.max(0.02, Math.min(1, patch.display.alpha));
     if (typeof patch.display.winsor === "number") d.winsor = Math.max(0, Math.min(0.2, patch.display.winsor));   // quantile clipped off each tail of the numeric colour scale
     if (Object.keys(d).length) ops.push({ kind: "display", patch: d });
+  }
+  if (patch.recolor && typeof patch.recolor === "object") {
+    // per-VALUE colour overrides; the colour STRINGS pass through (the shell parses them in the browser so any CSS
+    // colour works). field defaults to the current colour-by field; structurally validated here (value→string map).
+    const r = patch.recolor;
+    const colors: Record<string, string> = {};
+    if (r.colors && typeof r.colors === "object") for (const k of Object.keys(r.colors)) { const v = (r.colors as any)[k]; if (typeof v === "string" && v.trim()) colors[k] = v.trim(); }
+    if (Object.keys(colors).length || r.clear) ops.push({ kind: "catColors", field: typeof r.field === "string" && r.field.trim() ? r.field.trim() : undefined, colors, clear: !!r.clear });
   }
 
   // ---- panels ----
