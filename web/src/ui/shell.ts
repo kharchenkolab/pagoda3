@@ -1,7 +1,7 @@
 import { mk } from "./dom.ts";
 import { Ctx } from "../data/ctx.ts";
 import { Coord, handleLabel, EntityRef } from "../data/coord.ts";
-import { Panel, PanelView, PanelHooks, CompReactor, BuiltBody, bodyFor, paintEmbedding, resolveEmbeddingStyleFor } from "./panels.ts";
+import { Panel, PanelView, PanelHooks, CompReactor, BuiltBody, bodyFor, paintEmbedding, resolvePanelStyleFor } from "./panels.ts";
 import { EmbeddingView } from "../render/embedding.ts";
 import { Agent, Scope, REGISTRY } from "../agent/agent.ts";
 import { checkLive } from "../agent/live.ts";
@@ -10,7 +10,7 @@ import { normalizeViewPatch, RawViewPatch, World, PanelSpec, PanelPatch, MAX_COL
 import { validateCellSet, resolveCellSet, describeCellSet, CellSet, CellWorld, CellEnv } from "../agent/cellset.ts";
 import { validateComputeResult, runInWorker, buildComputeSnapshot } from "../agent/codeapi.ts";
 import { setCodeValues, setConfValues, invalidateColor, setCategoryColor, clearCategoryColors, serializeCategoryColors, restoreCategoryColors } from "../render/colors.ts";
-import { clampStyle, deepMerge, describeStyle } from "../render/style.ts";
+import { clampStyle, deepMerge, describeStyle, getStyle } from "../render/style.ts";
 import { themeIsDark } from "../render/theme.ts";
 import { setThemeColors } from "../render/theme.ts";
 import { installOverflow } from "./overflow.ts";
@@ -604,7 +604,7 @@ export class App {
     if (patch.embedding != null) v.embedding = patch.embedding;
     if (patch.colormap != null) v.colormap = patch.colormap;   // numeric palette; a recolour (repaint), no rebuild
     if (patch.scope !== undefined) { if (patch.scope === null) delete v.scope; else v.scope = patch.scope; }
-    if (patch.style) { const { clean } = clampStyle(p.type, patch.style); (v as any).style = deepMerge((v as any).style || {}, clean); rebuild = true; }   // per-panel style override (clamped); rebuild → re-resolve on next paint
+    if (patch.style) { const { clean } = clampStyle(getStyle(p.type), patch.style); (v as any).style = deepMerge((v as any).style || {}, clean); rebuild = true; }   // per-panel style override (clamped against the panel's own descriptor); rebuild → re-resolve on next paint
     p.view = v;
     return rebuild;
   }
@@ -617,9 +617,10 @@ export class App {
     const panel = id != null ? this.canvas.find((p) => p.id === id) : this.canvas.find((p) => p.type === "Embedding");
     if (id != null && !panel) return { id, type: "?", note: `no panel #${id}` };
     const type = panel?.type || "Embedding";
-    if (type !== "Embedding") return { id: panel?.id, type, note: `no per-panel style surface for ${type} yet (P0 covers the Embedding); style it via the named knobs colorBy / colormap / scope / group / genes / heatMode.` };
-    const resolved = resolveEmbeddingStyleFor(this.ctx, panel?.view);
-    return { id: panel?.id, type, params: describeStyle("Embedding", themeIsDark(), resolved) };
+    const d = getStyle(type);   // the PANEL's own registered descriptor (no central knowledge of this type)
+    if (!d) return { id: panel?.id, type, note: `"${type}" doesn't expose a style descriptor yet — style it via the named knobs colorBy / colormap / scope / group / genes / heatMode.` };
+    const resolved = resolvePanelStyleFor(this.ctx, type, panel?.view);
+    return { id: panel?.id, type, params: describeStyle(d, themeIsDark(), resolved) };
   }
 
   // ----- declarative view patcher: the single agent surface for "what to show" -----
@@ -676,7 +677,7 @@ export class App {
           }
         }
         else if (op.kind === "style") {   // the OPEN style escape hatch — patch a panel's rendering knobs (P0: the Embedding family)
-          const { clean, notes: snotes } = clampStyle("Embedding", op.patch);   // clamp known numerics to range; note unknown keys
+          const { clean, notes: snotes } = clampStyle(getStyle("Embedding"), op.patch);   // global style targets the Embedding family (P0); clamp against its descriptor
           for (const n of snotes) notes.push(n);
           if (op.panel != null) {
             const p = all().find((z) => z.id === op.panel);

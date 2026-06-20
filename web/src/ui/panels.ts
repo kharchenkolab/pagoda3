@@ -3,7 +3,8 @@ import { Ctx } from "../data/ctx.ts";
 import { EmbeddingView } from "../render/embedding.ts";
 import { colorsFor, focusMaskFor, categoryColorOf } from "../render/colors.ts";
 import { themeIsDark } from "../render/theme.ts";
-import { resolveEmbeddingStyle, EmbeddingStyle } from "../render/style.ts";
+import { getStyle, resolveStyle } from "../render/style.ts";
+import { EmbeddingStyle } from "../render/embedding.style.ts";
 import { catColor } from "../data/view.ts";
 import type { EntityRef } from "../data/coord.ts";
 import { reconcile, crosstab, ReconRow, AnnotationLayer, CapRecord, labelChain } from "../anno/model.ts";
@@ -127,13 +128,13 @@ function embeddingBody(p: Panel, ctx: Ctx, hooks: PanelHooks): BuiltBody {
   return { el: wrap, afterAttach };
 }
 
-// Resolve the effective Embedding style for a panel: defaults ← global display(alias) ← coord.style ← panel
-// display(alias) ← panel style. `display` (labels/legend/alpha/winsor) is subsumed as ergonomic aliases. Shared by
-// the renderer AND describe_panel so the agent looks up exactly what the paint reads (one source of truth).
-export function resolveEmbeddingStyleFor(ctx: Ctx, view?: PanelView): EmbeddingStyle {
+// Resolve the effective style for a panel — GENERIC over the panel's registered descriptor (no panel named here):
+// descriptor defaults ← global display(alias) ← coord.style[type] ← panel display(alias) ← panel style. The descriptor
+// owns the display→style aliasing (`fromDisplay`). Shared by the renderer AND describe_panel (one source of truth).
+export function resolvePanelStyleFor(ctx: Ctx, panelType: string, view?: PanelView): any {
+  const d = getStyle(panelType); if (!d) return null;
   const c = ctx.coord.state as any;
-  const alias = (d: any): Partial<EmbeddingStyle> => { const o: any = {}; if (d.alpha != null) o.point = { opacity: d.alpha }; if (d.labels != null) o.label = { show: d.labels }; if (d.legend !== undefined) o.legend = { show: d.legend }; if (d.winsor != null) o.color = { winsor: d.winsor }; return o; };
-  return resolveEmbeddingStyle(themeIsDark(), alias(c.display || {}), c.style?.Embedding, alias((view as any)?.display || {}), (view as any)?.style);
+  return resolveStyle(d, themeIsDark(), d.fromDisplay?.(c.display || {}), c.style?.[panelType], d.fromDisplay?.((view as any)?.display || {}), (view as any)?.style);
 }
 
 export async function paintEmbedding(ev: EmbeddingView, ctx: Ctx) {
@@ -156,8 +157,8 @@ export async function paintEmbedding(ev: EmbeddingView, ctx: Ctx) {
   else mask = focusMaskFor(c.focus, ctx.n);
   // display is PER-PANEL: a panel's own overrides win over the coord default, so panels are independent
   // (toggle labels on one embedding without touching another). coord.display is just the starting default.
-  // STYLE resolved through the SHARED helper (so describe_panel reads the same surface the renderer paints from).
-  const style = resolveEmbeddingStyleFor(ctx, view);
+  // STYLE resolved through the SHARED generic helper (so describe_panel reads the same surface the renderer paints from).
+  const style = resolvePanelStyleFor(ctx, "Embedding", view) as EmbeddingStyle;
   const { rgba, legend } = await colorsFor(ctx.view, colorBy, mask, view?.colormap, style.color.winsor ?? 0);   // winsor clips outliers off the numeric scale
   ev.setStyle(style);
   ev.setColors(rgba);

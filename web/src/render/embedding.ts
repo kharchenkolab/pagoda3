@@ -4,7 +4,7 @@ import { Deck, OrthographicView } from "@deck.gl/core";
 import { ScatterplotLayer, TextLayer, LineLayer } from "@deck.gl/layers";
 import { CollisionFilterExtension } from "@deck.gl/extensions";
 import { themeIsDark, accentRGB } from "./theme.ts";
-import { EmbeddingStyle, defaultEmbeddingStyle } from "./style.ts";
+import { EmbeddingStyle, defaultEmbeddingStyle } from "./embedding.style.ts";
 
 export class EmbeddingView {
   private deck: Deck;
@@ -17,7 +17,7 @@ export class EmbeddingView {
   private selectedIds: number[] = [];  // selected cell indices (list form) — drives the large-selection lift overlay
   private n: number;
   // every geometry/typography/opacity literal the embedding used to hardcode now lives in the resolved STYLE (set via
-  // setStyle from paintEmbedding's resolveEmbeddingStyle). Defaults === the former inline constants → byte-identical.
+  // setStyle from paintEmbedding's resolvePanelStyleFor). Defaults === the former inline constants → byte-identical.
   private style: EmbeddingStyle = defaultEmbeddingStyle(themeIsDark());
   private container: HTMLElement;
   private viewState: any;
