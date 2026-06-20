@@ -3,6 +3,7 @@ import { Ctx } from "../data/ctx.ts";
 import { EmbeddingView } from "../render/embedding.ts";
 import { colorsFor, focusMaskFor, categoryColorOf } from "../render/colors.ts";
 import { themeIsDark } from "../render/theme.ts";
+import { resolveEmbeddingStyle, EmbeddingStyle } from "../render/style.ts";
 import { catColor } from "../data/view.ts";
 import type { EntityRef } from "../data/coord.ts";
 import { reconcile, crosstab, ReconRow, AnnotationLayer, CapRecord, labelChain } from "../anno/model.ts";
@@ -17,7 +18,7 @@ export interface PanelView {
   embedding?: string;   // which embedding this panel renders (e.g. "umap" vs "umap.unintegrated"); else the default
   colormap?: string;    // palette for NUMERIC colourings (gene/qc/score): amber (default), viridis, rdbu, bluered, …
   display?: { labels?: boolean; legend?: boolean; alpha?: number; winsor?: number };   // per-PANEL display overrides (independent of other panels)
-  // (future: scale, clip, splitBy, highlight, overlays)
+  style?: Record<string, any>;   // per-PANEL style overrides (point/label/selection/… — see render/style.ts); wins over coord.style; the open generalization of `display`
 }
 
 export interface Panel {
@@ -146,14 +147,18 @@ export async function paintEmbedding(ev: EmbeddingView, ctx: Ctx) {
   else mask = focusMaskFor(c.focus, ctx.n);
   // display is PER-PANEL: a panel's own overrides win over the coord default, so panels are independent
   // (toggle labels on one embedding without touching another). coord.display is just the starting default.
-  const disp = { ...c.display, ...(view?.display || {}) };
-  const { rgba, legend } = await colorsFor(ctx.view, colorBy, mask, view?.colormap, disp.winsor ?? 0);   // winsor clips outliers off the numeric scale
+  // STYLE: defaults ← global display(alias) ← global style ← panel display(alias) ← panel style. `display`
+  // (labels/legend/alpha/winsor) is SUBSUMED as ergonomic aliases into the one style spec, so there's a single source
+  // of truth and the agent can reach every other rendering constant through the same `style` surface.
+  const alias = (d: any): Partial<EmbeddingStyle> => { const o: any = {}; if (d.alpha != null) o.point = { opacity: d.alpha }; if (d.labels != null) o.label = { show: d.labels }; if (d.legend !== undefined) o.legend = { show: d.legend }; if (d.winsor != null) o.color = { winsor: d.winsor }; return o; };
+  const style = resolveEmbeddingStyle(themeIsDark(), alias(c.display), (ctx.coord.state as any).style?.Embedding, alias(view?.display || {}), (view as any)?.style);
+  const { rgba, legend } = await colorsFor(ctx.view, colorBy, mask, view?.colormap, style.color.winsor ?? 0);   // winsor clips outliers off the numeric scale
+  ev.setStyle(style);
   ev.setColors(rgba);
   ev.setSelection(selCells.length ? selCells : null);
-  ev.setAlpha(disp.alpha);
   const isCat = legend.kind === "categorical";
-  ev.setLabels(disp.labels && isCat ? await categoryLabels(ctx, colorBy, ctx.embeddingOf(view?.embedding).data) : []);
-  const showLegend = disp.legend ?? !isCat;   // auto: key for numeric colourings; hidden when on-plot labels carry identity
+  ev.setLabels(style.label.show && isCat ? await categoryLabels(ctx, colorBy, ctx.embeddingOf(view?.embedding).data) : []);
+  const showLegend = style.legend.show ?? !isCat;   // auto: key for numeric colourings; hidden when on-plot labels carry identity
   const lg = (ev as any)._legend as HTMLElement | undefined;
   if (lg) lg.innerHTML = showLegend
     ? `<span class="lt">${legend.title}</span>` + (legend.unvalidated ? `<span class="lbadge" title="custom agent code — unvalidated; sanity-check before trusting">~ custom</span>` : "") + legend.items.map((it) => `<span><span class="sw" style="background:rgb(${it.rgb.join(",")})"></span>${it.label}</span>`).join("")

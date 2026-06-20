@@ -10,6 +10,7 @@ import { normalizeViewPatch, RawViewPatch, World, PanelSpec, PanelPatch, MAX_COL
 import { validateCellSet, resolveCellSet, describeCellSet, CellSet, CellWorld, CellEnv } from "../agent/cellset.ts";
 import { validateComputeResult, runInWorker, buildComputeSnapshot } from "../agent/codeapi.ts";
 import { setCodeValues, setConfValues, invalidateColor, setCategoryColor, clearCategoryColors, serializeCategoryColors, restoreCategoryColors } from "../render/colors.ts";
+import { clampStyle, deepMerge } from "../render/style.ts";
 import { setThemeColors } from "../render/theme.ts";
 import { installOverflow } from "./overflow.ts";
 import { makeWidgetHost } from "../widget/apphost.ts";
@@ -204,7 +205,7 @@ export class App {
   }
   persistSession() {
     const userWS = this.wsOrder.filter((n) => !this.builtinWS.has(n) && this.WS[n]).map((n) => ({ name: n, ws: this.WS[n] }));
-    const base = { store: this.currentStore(), fingerprint: this.datasetFingerprint(), currentWS: this.currentWS, colorBy: this.coord.state.colorBy, canvas: this.captureLayout(), userWS, annotation: this.serializeAnnotation(), catColors: serializeCategoryColors() };
+    const base = { store: this.currentStore(), fingerprint: this.datasetFingerprint(), currentWS: this.currentWS, colorBy: this.coord.state.colorBy, canvas: this.captureLayout(), userWS, annotation: this.serializeAnnotation(), catColors: serializeCategoryColors(), style: (this.coord.state as any).style };
     // Try the full doc (incl. the chat log); if it busts the ~5MB quota, retry WITHOUT the conversation so views +
     // annotation still persist (the chat is the biggest + most droppable part — it's also in the exportable file).
     try { localStorage.setItem(SESSION_KEY, serializeSession({ ...base, conversation: this.serializeConversation() })); }
@@ -217,6 +218,7 @@ export class App {
     if (!doc || doc.store !== this.currentStore()) return;   // no session, or one from a DIFFERENT dataset → keep this store's default layout (no redundant re-render)
     this.applySessionViews(doc);
     restoreCategoryColors((doc as any).catColors);   // per-value colour overrides (keyed by field+value, not cell-indexed → no fingerprint gate; a missing field just won't apply)
+    (this.coord.state as any).style = (doc as any).style;   // global style overrides (view layer, not cell-indexed)
     if (doc.annotation && !fingerprintMismatch(doc.fingerprint, this.datasetFingerprint())) this.restoreAnnotation(doc.annotation);   // cell-indexed → only when the dataset still aligns
     this.restoreConversation(doc.conversation);   // the chat log survives a reload (not cell-indexed → no fingerprint gate)
     this.fullRender();
@@ -233,7 +235,7 @@ export class App {
   // ---- the portable session DOCUMENT (file) — see persist.ts. A bundle = the session + the widget library it uses.
   buildBundle(): string {
     const userWS = this.wsOrder.filter((n) => !this.builtinWS.has(n) && this.WS[n]).map((n) => ({ name: n, ws: this.WS[n] }));
-    const session = parseSession(serializeSession({ store: this.currentStore(), fingerprint: this.datasetFingerprint(), currentWS: this.currentWS, colorBy: this.coord.state.colorBy, canvas: this.captureLayout(), userWS, annotation: this.serializeAnnotation(), conversation: this.serializeConversation(), catColors: serializeCategoryColors() }))!;
+    const session = parseSession(serializeSession({ store: this.currentStore(), fingerprint: this.datasetFingerprint(), currentWS: this.currentWS, colorBy: this.coord.state.colorBy, canvas: this.captureLayout(), userWS, annotation: this.serializeAnnotation(), conversation: this.serializeConversation(), catColors: serializeCategoryColors(), style: (this.coord.state as any).style }))!;
     return serializeBundle({ session, widgets: this.widgetLib, savedAt: Date.now() });
   }
   applyBundle(raw: string): { ok: boolean; msg: string } {
@@ -248,6 +250,7 @@ export class App {
     if (b.widgets.length) try { localStorage.setItem(WIDGETS_KEY, JSON.stringify({ widgets: this.widgetLib })); } catch { /* */ }
     this.applySessionViews(b.session);
     restoreCategoryColors((b.session as any).catColors);   // per-value colour overrides travel with the file
+    (this.coord.state as any).style = (b.session as any).style;   // style overrides travel with the file
     if (b.session.annotation && !mism) this.restoreAnnotation(b.session.annotation);
     this.restoreConversation(b.session.conversation);   // chat log travels with the file (not cell-indexed)
     this.fullRender(); this.renderWS(); this.scheduleSave();
@@ -583,7 +586,7 @@ export class App {
   // Mutate ONE panel's model from a patch (no render). colorBy/scope/embedding live on .view; heatMode/genes/title
   // are top-level. Returns whether the change needs a body REBUILD (vs a cheap repaint). Shared by the per-panel
   // dropdown and the declarative patcher, so both treat a panel identically.
-  applyPanelModel(p: Panel, patch: { title?: string; col?: number; full?: boolean; colorBy?: string; scope?: EntityRef | null; embedding?: string; colormap?: string; heatMode?: "heat" | "dot"; genes?: string[]; group?: string }): boolean {
+  applyPanelModel(p: Panel, patch: { title?: string; col?: number; full?: boolean; colorBy?: string; scope?: EntityRef | null; embedding?: string; colormap?: string; heatMode?: "heat" | "dot"; genes?: string[]; group?: string; style?: Record<string, any> }): boolean {
     let rebuild = false;
     if (patch.title != null && patch.title !== p.title) { p.title = patch.title; rebuild = true; }   // title shows in the header (panelEl) → rebuild
     if (typeof patch.col === "number" && patch.col >= 0) { if (patch.col !== p.col) rebuild = true; p.col = patch.col;
@@ -600,6 +603,7 @@ export class App {
     if (patch.embedding != null) v.embedding = patch.embedding;
     if (patch.colormap != null) v.colormap = patch.colormap;   // numeric palette; a recolour (repaint), no rebuild
     if (patch.scope !== undefined) { if (patch.scope === null) delete v.scope; else v.scope = patch.scope; }
+    if (patch.style) { const { clean } = clampStyle(p.type, patch.style); (v as any).style = deepMerge((v as any).style || {}, clean); rebuild = true; }   // per-panel style override (clamped); rebuild → re-resolve on next paint
     p.view = v;
     return rebuild;
   }
@@ -655,6 +659,19 @@ export class App {
               applied.push(`${field}: ${target || "(unassigned)"} → ${colStr}`);
             }
             needFull = true;   // fullRender so the embedding AND the facets swatches / legend all pick up the override (a plain repaint skips the facets panel)
+          }
+        }
+        else if (op.kind === "style") {   // the OPEN style escape hatch — patch a panel's rendering knobs (P0: the Embedding family)
+          const { clean, notes: snotes } = clampStyle("Embedding", op.patch);   // clamp known numerics to range; note unknown keys
+          for (const n of snotes) notes.push(n);
+          if (op.panel != null) {
+            const p = all().find((z) => z.id === op.panel);
+            if (!p) rejected.push(`style: no panel #${op.panel}`);
+            else { p.view = p.view || {}; (p.view as any).style = op.reset ? undefined : deepMerge((p.view as any).style || {}, clean); applied.push(`style #${op.panel} ${op.reset ? "reset" : Object.keys(clean).join("/")}`); needFull = true; }
+          } else {
+            const cs = this.coord.state as any;   // global per-type style default (a panel's own view.style still wins)
+            cs.style = op.reset ? undefined : { ...(cs.style || {}), Embedding: deepMerge(cs.style?.Embedding || {}, clean) };
+            applied.push(`style ${op.reset ? "reset" : Object.keys(clean).join("/")}`); needFull = true;
           }
         }
         else if (op.kind === "addPanel") { const id = this.addPanelModel(op.spec); applied.push(`+#${id} ${op.spec.type}${op.spec.heatMode === "dot" ? " · dotplot" : ""}`); needFull = true; }
@@ -1140,7 +1157,7 @@ export class App {
   addPanelModel(spec: PanelSpec): number { const p = this.newPanel(this.specToPanel(spec)); this.canvas.push(p); return p.id; }
   removePanel(id: number): boolean { const n = this.canvas.length + this.rail.length; this.canvas = this.canvas.filter((z) => z.id !== id); this.rail = this.rail.filter((z) => z.id !== id); return this.canvas.length + this.rail.length < n; }
   private patchToModel(patch: PanelPatch) {
-    return { title: patch.title, col: patch.col, full: patch.full, colorBy: patch.colorBy, embedding: patch.embedding, colormap: patch.colormap, heatMode: patch.heatMode, genes: patch.genes, group: patch.group,
+    return { title: patch.title, col: patch.col, full: patch.full, colorBy: patch.colorBy, embedding: patch.embedding, colormap: patch.colormap, heatMode: patch.heatMode, genes: patch.genes, group: patch.group, style: patch.style,
       scope: patch.scope === undefined ? undefined : (patch.scope === null ? null : { kind: "category", grouping: patch.scope.grouping, value: patch.scope.value } as EntityRef) };
   }
 

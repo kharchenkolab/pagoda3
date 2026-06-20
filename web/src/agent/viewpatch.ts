@@ -30,6 +30,7 @@ export interface RawPanelOp {
   embedding?: string;
   colormap?: string;       // palette for numeric colourings (amber/viridis/rdbu/…); aliases like "red-to-blue" ok
   group?: string;          // Heatmap grouping
+  style?: Record<string, any>;   // per-panel STYLE overrides (point/label/selection/… — see render/style.ts)
   heatMode?: string;       // "heatmap" | "dotplot" (also accepts "heat" | "dot")
   genes?: string[];        // Heatmap: pin these genes (merged with existing unless clearGenes)
   clearGenes?: boolean;
@@ -43,6 +44,11 @@ export interface RawViewPatch {
   clearSelect?: boolean;
   display?: { labels?: boolean; legend?: boolean; alpha?: number; winsor?: number };
   recolor?: { field?: string; colors?: Record<string, string>; clear?: boolean };   // per-VALUE colour overrides for a categorical field: {value: css-colour}; field defaults to the current colour-by; value "" / "unassigned" targets the no-category cells; clear:true resets the field's overrides
+  style?: Record<string, any>;   // OPEN per-panel style patch (the view escape hatch): nested rendering knobs e.g. {point:{radius:4,opacity:0.5}, label:{fontSize:16}, selection:{ringWidth:3}, fit:{pad:0.7}}
+  stylePanel?: number;           // target one panel id (else the global Embedding default)
+  styleReset?: boolean;          // clear style overrides (global, or for stylePanel)
+  pointSize?: number;            // ergonomic alias → style.point.radius (cell point size, px)
+  labelSize?: number;            // ergonomic alias → style.label.fontSize (on-plot label size, px)
   panels?: RawPanelOp[];
   facet?: { by?: string; panel?: number; values?: string[]; layout?: string };   // split one panel into aligned copies
   unfacet?: number | boolean | { panel?: number; by?: string };   // INVERSE of facet: collapse faceted copies back to one
@@ -51,7 +57,7 @@ export interface RawViewPatch {
 
 export interface Scope { grouping: string; value: string; }
 export interface PanelSpec { type: string; title?: string; col?: number; full?: boolean; colorBy?: string; scope?: Scope; embedding?: string; colormap?: string; group?: string; heatMode?: HeatMode; genes?: string[]; }
-export interface PanelPatch { title?: string; col?: number; full?: boolean; colorBy?: string; scope?: Scope | null; embedding?: string; colormap?: string; heatMode?: HeatMode; genes?: string[]; group?: string; }
+export interface PanelPatch { title?: string; col?: number; full?: boolean; colorBy?: string; scope?: Scope | null; embedding?: string; colormap?: string; heatMode?: HeatMode; genes?: string[]; group?: string; style?: Record<string, any>; }
 
 export type NormOp =
   | { kind: "color"; handle: string }
@@ -61,6 +67,7 @@ export type NormOp =
   | { kind: "clearSelect" }
   | { kind: "display"; patch: { labels?: boolean; legend?: boolean; alpha?: number; winsor?: number } }
   | { kind: "catColors"; field?: string; colors: Record<string, string>; clear?: boolean }
+  | { kind: "style"; panel?: number; reset?: boolean; patch: Record<string, any> }
   | { kind: "addPanel"; spec: PanelSpec }
   | { kind: "configPanel"; id: number; patch: PanelPatch }
   | { kind: "removePanel"; id: number }
@@ -167,6 +174,18 @@ export function normalizeViewPatch(patch: RawViewPatch, w: World): NormResult {
     if (r.colors && typeof r.colors === "object") for (const k of Object.keys(r.colors)) { const v = (r.colors as any)[k]; if (typeof v === "string" && v.trim()) colors[k] = v.trim(); }
     if (Object.keys(colors).length || r.clear) ops.push({ kind: "catColors", field: typeof r.field === "string" && r.field.trim() ? r.field.trim() : undefined, colors, clear: !!r.clear });
   }
+  if (patch.style != null || patch.stylePanel != null || patch.styleReset || patch.pointSize != null || patch.labelSize != null) {
+    // the OPEN style escape hatch + ergonomic aliases. Assemble the sources into one patch (2-level merge keeps the
+    // module dependency-free); the shell deep-merges + CLAMPS it against the style schema and applies it.
+    const m2 = (a: any, b: any) => { const o: any = { ...a }; for (const k of Object.keys(b || {})) o[k] = o[k] && typeof o[k] === "object" && !Array.isArray(o[k]) && b[k] && typeof b[k] === "object" && !Array.isArray(b[k]) ? { ...o[k], ...b[k] } : b[k]; return o; };
+    let sp: any = {};
+    if (typeof patch.pointSize === "number") sp = m2(sp, { point: { radius: patch.pointSize } });
+    if (typeof patch.labelSize === "number") sp = m2(sp, { label: { fontSize: patch.labelSize } });
+    if (patch.style && typeof patch.style === "object" && !Array.isArray(patch.style)) sp = m2(sp, patch.style);
+    const panel = typeof patch.stylePanel === "number" ? patch.stylePanel : undefined;
+    if (Object.keys(sp).length || patch.styleReset) ops.push({ kind: "style", panel, reset: !!patch.styleReset, patch: sp });
+    else rejected.push("style: nothing to set (pass a style patch, pointSize/labelSize, or styleReset)");
+  }
 
   // ---- panels ----
   const panels = patch.panels || [];
@@ -220,6 +239,7 @@ export function normalizeViewPatch(patch: RawViewPatch, w: World): NormResult {
     if (typeof op.embedding === "string" && op.embedding) { if (w.embeddings.includes(op.embedding)) pp.embedding = op.embedding; else rejected.push(`${where}: unknown embedding "${op.embedding}"`); }
     if (typeof op.colormap === "string" && op.colormap) { const cm = w.normalizeColormap(op.colormap); if (cm) pp.colormap = cm; else rejected.push(`${where}: unknown colormap "${op.colormap}" (have: ${w.colormaps.join(", ")})`); }
     if (groupable && op.group) { if (w.groupings.includes(op.group)) pp.group = op.group; else rejected.push(`${where}: unknown grouping "${op.group}"`); }   // Heatmap stacking / Reconcile base partition
+    if (op.style && typeof op.style === "object" && !Array.isArray(op.style)) pp.style = op.style;   // per-panel style override (the natural per-panel path, alongside the top-level style/stylePanel)
     if (isHeat) {
       const hm = normHeatMode(op.heatMode); if (hm) pp.heatMode = hm; else if (op.heatMode != null) notes.push(`${where}: heatMode "${op.heatMode}" ignored`);
       if (op.clearGenes || op.genes) { const base = op.clearGenes ? [] : w.panelGenes(op.id); pp.genes = resolveGenes(base, op.genes, w, where, notes); }

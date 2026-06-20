@@ -95,6 +95,17 @@ test("recolor: per-value colour overrides normalize; blank colours dropped; clea
   assert.equal(find(normalizeViewPatch({ recolor: { colors: {} } }, w).ops, "catColors").length, 0);   // nothing to do → no op
 });
 
+test("style: open patch + pointSize/labelSize aliases merge into one op; panel + reset carried", () => {
+  const w = makeWorld();
+  const op = find(normalizeViewPatch({ pointSize: 5, labelSize: 16, style: { selection: { ringWidth: 3 } } }, w).ops, "style")[0] as any;
+  assert.deepEqual(op.patch, { point: { radius: 5 }, label: { fontSize: 16 }, selection: { ringWidth: 3 } });   // aliases + open patch merged
+  assert.equal(op.panel, undefined);   // global
+  const pp = find(normalizeViewPatch({ stylePanel: 3, style: { point: { radius: 1 } } }, w).ops, "style")[0] as any;
+  assert.equal(pp.panel, 3);
+  assert.equal((find(normalizeViewPatch({ styleReset: true }, w).ops, "style")[0] as any).reset, true);
+  assert.equal(find(normalizeViewPatch({}, w).ops, "style").length, 0);   // nothing → no op
+});
+
 test("add panel: valid type with config; unknown type rejected", () => {
   const w = makeWorld();
   const ok = normalizeViewPatch({ panels: [{ add: "Embedding", title: "X", colorBy: "gene:CD3D", embedding: "umap.unintegrated" }] }, w);

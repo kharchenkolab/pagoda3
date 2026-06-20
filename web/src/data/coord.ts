@@ -24,6 +24,10 @@ export interface CoordState {
   // view options live HERE (not hardcoded in paint) so the agent AND direct manipulation both drive them
   // — the generative-UX premise. legend:null = auto (key for numeric colourings, hidden when labels carry it).
   display: { labels: boolean; legend: boolean | null; alpha: number; winsor: number };   // alpha = embedding point opacity (<1 shows density); winsor = quantile clipped off each tail of a numeric colour scale (0.01 = 1%)
+  // The OPEN extension of `display`: global per-panel-TYPE style overrides (e.g. {Embedding:{point:{radius:4}, label:{fontSize:16}}}).
+  // Every rendering constant the paint code used to hardcode is reachable here — the view escape hatch. A panel's own
+  // view.style wins over this global default; both resolve through render/style.ts on each paint.
+  style?: Record<string, any>;
 }
 
 type Listener = (s: CoordState, changed: (keyof CoordState)[]) => void;

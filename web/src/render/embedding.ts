@@ -4,6 +4,7 @@ import { Deck, OrthographicView } from "@deck.gl/core";
 import { ScatterplotLayer, TextLayer, LineLayer } from "@deck.gl/layers";
 import { CollisionFilterExtension } from "@deck.gl/extensions";
 import { themeIsDark, accentRGB } from "./theme.ts";
+import { EmbeddingStyle, defaultEmbeddingStyle } from "./style.ts";
 
 export class EmbeddingView {
   private deck: Deck;
@@ -15,8 +16,9 @@ export class EmbeddingView {
   private selected: Uint8Array;        // n (0/1)
   private selectedIds: number[] = [];  // selected cell indices (list form) — drives the large-selection lift overlay
   private n: number;
-  private radius = 2.4;
-  private pointAlpha = 0.7;   // cells-layer opacity (display.alpha); <1 conveys density
+  // every geometry/typography/opacity literal the embedding used to hardcode now lives in the resolved STYLE (set via
+  // setStyle from paintEmbedding's resolveEmbeddingStyle). Defaults === the former inline constants → byte-identical.
+  private style: EmbeddingStyle = defaultEmbeddingStyle(themeIsDark());
   private container: HTMLElement;
   private viewState: any;
   onSelect?: (ids: Int32Array) => void;
@@ -98,6 +100,7 @@ export class EmbeddingView {
   }
 
   private layers() {
+    const s = this.style;   // resolved style — geometry/typography/opacity read from here, not inline literals
     return [
       new ScatterplotLayer({
         id: "cells",
@@ -109,31 +112,31 @@ export class EmbeddingView {
           },
         },
         radiusUnits: "pixels",
-        getRadius: this.radius,
-        radiusMinPixels: 1,
+        getRadius: s.point.radius,
+        radiusMinPixels: s.point.minPixels,
         stroked: false,
         pickable: true,
-        opacity: this.pointAlpha,                 // <1 lets overlapping cells convey density
+        opacity: s.point.opacity,                 // <1 lets overlapping cells convey density
         updateTriggers: { all: this.colorVersion },
       }) as any,
       // SELECTION lift — a selection highlights its cells IN PLACE (it never greys the rest; that's focus/scope only).
       // Small/freeform: a precise cyan RING per cell (pinpoints them). Large cluster: rings would speckle, so instead
       // lift the cells with a translucent accent FILL on top (reads over any cluster colour, leaves the map whole).
-      this.selCount() > 0 && this.selCount() <= 250
+      this.selCount() > 0 && this.selCount() <= s.selection.ringThreshold
         ? new ScatterplotLayer({
             id: "sel",
             data: { length: this.n },
             getPosition: (_: any, { index }: any) => (this.selected[index] ? [this.positions[index * 2], this.positions[index * 2 + 1]] : [1e9, 1e9]),
-            radiusUnits: "pixels", getRadius: this.radius + 2.2,
-            stroked: true, filled: false, getLineColor: [...accentRGB(), 255], lineWidthUnits: "pixels", getLineWidth: 1.6,
+            radiusUnits: "pixels", getRadius: s.point.radius + s.selection.ringGrow,
+            stroked: true, filled: false, getLineColor: [...accentRGB(), s.selection.ringOpacity], lineWidthUnits: "pixels", getLineWidth: s.selection.ringWidth,
             updateTriggers: { getPosition: this.selVersion },
           }) as any
-        : this.selCount() > 250
+        : this.selCount() > s.selection.ringThreshold
           ? new ScatterplotLayer({
               id: "sel",
               data: { length: this.selectedIds.length },
               getPosition: (_: any, { index }: any) => { const c = this.selectedIds[index]; return [this.positions[c * 2], this.positions[c * 2 + 1]]; },
-              radiusUnits: "pixels", getRadius: this.radius + 1.4, stroked: false, getFillColor: [...accentRGB(), 165],
+              radiusUnits: "pixels", getRadius: s.point.radius + s.selection.fillGrow, stroked: false, getFillColor: [...accentRGB(), s.selection.fillOpacity],
               updateTriggers: { getPosition: this.selVersion },
             }) as any
           : null,
@@ -142,7 +145,7 @@ export class EmbeddingView {
         ? new ScatterplotLayer({
             id: "hl", data: { length: this.highlightIds.length },
             getPosition: (_: any, { index }: any) => { const c = this.highlightIds![index]; return [this.positions[c * 2], this.positions[c * 2 + 1]]; },
-            radiusUnits: "pixels", getRadius: this.radius + 1.6, stroked: false, getFillColor: [...accentRGB(), 200],
+            radiusUnits: "pixels", getRadius: s.point.radius + s.hint.grow, stroked: false, getFillColor: [...accentRGB(), s.hint.opacity],
             updateTriggers: { getPosition: this.hintVersion },
           }) as any
         : null,
@@ -152,7 +155,7 @@ export class EmbeddingView {
             id: "crosshair",
             data: [{ s: [this.crosshairXY[0], -1e5], t: [this.crosshairXY[0], 1e5] }, { s: [-1e5, this.crosshairXY[1]], t: [1e5, this.crosshairXY[1]] }],
             getSourcePosition: (d: any) => d.s, getTargetPosition: (d: any) => d.t,
-            getColor: [...accentRGB(), 150], widthUnits: "pixels", getWidth: 1,
+            getColor: [...accentRGB(), s.crosshair.opacity], widthUnits: "pixels", getWidth: s.crosshair.width,
             updateTriggers: { getSourcePosition: this.hintVersion, getTargetPosition: this.hintVersion },
           }) as any
         : null,
@@ -164,20 +167,20 @@ export class EmbeddingView {
         ? new TextLayer({
             id: "labels", data: this.labels,
             getPosition: (d: any) => d.p, getText: (d: any) => d.text,
-            getSize: 12.5, sizeUnits: "pixels", sizeMinPixels: 10, sizeMaxPixels: 15,
-            getColor: themeIsDark() ? [240, 244, 250, 255] : [38, 50, 58, 255], getTextAnchor: "middle", getAlignmentBaseline: "center",   // theme-aware on-plot labels: light text (dark theme) / dark text (white theme)
-            fontFamily: "-apple-system, BlinkMacSystemFont, system-ui, sans-serif", fontWeight: 700,
+            getSize: s.label.fontSize, sizeUnits: "pixels", sizeMinPixels: s.label.minPixels, sizeMaxPixels: s.label.maxPixels,
+            getColor: s.label.textColor, getTextAnchor: "middle", getAlignmentBaseline: "center",   // theme-aware default; overridable via style.label.textColor
+            fontFamily: s.label.fontFamily, fontWeight: s.label.weight,
             // NON-SDF bitmap atlas (large fontSize, downscaled) — crisper for fixed-pixel labels than SDF, which
             // rendered fuzzy in Chrome. No outline halo (it caused the white-pixel fringe) — the backing plate below
             // carries the contrast instead: a soft panel-coloured rectangle (low alpha so it doesn't obscure cells).
-            fontSettings: { sdf: false, fontSize: 84, buffer: 4 },
-            background: true, getBackgroundColor: themeIsDark() ? [13, 17, 23, 75] : [255, 255, 255, 82], backgroundPadding: [5, 2],
+            fontSettings: { sdf: false, fontSize: s.label.atlasFontSize, buffer: 4 },
+            background: true, getBackgroundColor: s.label.bgColor, backgroundPadding: s.label.padding,
             billboard: true, pickable: false, characterSet: "auto",
             extensions: [new CollisionFilterExtension()],
             collisionEnabled: true, collisionGroup: "labels",
             // inflate the hit-box so kept labels keep clear air. sizeMaxPixels must be raised here too,
             // else the base layer's 15px clamp cancels the scale-up and nothing gets decluttered.
-            collisionTestProps: { sizeScale: 3, sizeMaxPixels: 64 },
+            collisionTestProps: { sizeScale: s.label.collisionScale, sizeMaxPixels: s.label.collisionMaxPixels },
             getCollisionPriority: (d: any) => d.priority,     // larger clusters outrank smaller when they clash
             updateTriggers: { getText: this.labelVersion, getPosition: this.labelVersion, getCollisionPriority: this.labelVersion },
           }) as any
@@ -202,8 +205,12 @@ export class EmbeddingView {
   /** CATEGORY hint: lift a set of cells as a light overlay (null clears). */
   setHighlightCells(ids: Int32Array | null) { this.highlightIds = ids; this.hintVersion++; this.redraw(); }
 
-  /** Point opacity for the cells layer — <1 reveals density through overlap. */
-  setAlpha(a: number) { if (a === this.pointAlpha || !(a > 0)) return; this.pointAlpha = a; this.redraw(); }
+  /** Point opacity for the cells layer — <1 reveals density through overlap. (Alias into the style spec.) */
+  setAlpha(a: number) { if (a === this.style.point.opacity || !(a > 0)) return; this.style.point.opacity = a; this.redraw(); }
+
+  /** Apply the resolved per-panel STYLE (geometry/typography/opacity). Rebuilds the layers, so every knob takes effect
+   *  on the next paint. Bumps colorVersion so the cells layer re-reads its radius/opacity attributes. */
+  setStyle(s: EmbeddingStyle) { this.style = s; this.colorVersion++; this.labelVersion++; this.redraw(); }
 
   /** Place category names at their centroids (categorical colouring); pass [] to clear (numeric colouring). */
   setLabels(labels: { text: string; p: [number, number]; priority: number }[]) { this.labels = labels; this.labelVersion++; this.redraw(); }
@@ -215,7 +222,7 @@ export class EmbeddingView {
     for (let k = 0; k < count; k++) { const i = ids && ids.length ? ids[k] : k; const x = emb[i * 2], y = emb[i * 2 + 1];
       if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y; }
     const spanX = maxX - minX || 1, spanY = maxY - minY || 1, rect = this.container.getBoundingClientRect();
-    const ppu = Math.min((rect.width || 800) / spanX, (rect.height || 600) / spanY) * 0.86;
+    const ppu = Math.min((rect.width || 800) / spanX, (rect.height || 600) / spanY) * this.style.fit.pad;
     return { target: [(minX + maxX) / 2, (minY + maxY) / 2, 0], zoom: Math.log2(Math.max(ppu, 1e-3)) };
   }
   /** Reframe the viewport to a cell set (the `scope` property / focus_view primitive); no ids = fit all. */
