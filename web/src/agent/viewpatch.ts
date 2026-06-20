@@ -44,6 +44,7 @@ export interface RawViewPatch {
   display?: { labels?: boolean; legend?: boolean; alpha?: number; winsor?: number };
   panels?: RawPanelOp[];
   facet?: { by?: string; panel?: number; values?: string[]; layout?: string };   // split one panel into aligned copies
+  unfacet?: number | boolean | { panel?: number; by?: string };   // INVERSE of facet: collapse faceted copies back to one
   arrange?: { rows?: number[][]; columns?: number[][] };   // place EXISTING panels into an N-col grid (pure reposition)
 }
 
@@ -62,6 +63,7 @@ export type NormOp =
   | { kind: "configPanel"; id: number; patch: PanelPatch }
   | { kind: "removePanel"; id: number }
   | { kind: "facet"; by: string; values: string[]; panel?: number; layout: "stack" | "side" | "auto" }
+  | { kind: "unfacet"; panel?: number; by?: string }
   | { kind: "arrange"; place: { id: number; col?: number; full: boolean }[] };
 
 // Everything the reducer needs to know about the live app — supplied by the caller so the reducer stays pure.
@@ -173,9 +175,9 @@ export function normalizeViewPatch(patch: RawViewPatch, w: World): NormResult {
       if (op.title) spec.title = op.title;
       // a column pin and full-width are mutually exclusive (full spans ALL columns, overriding col). When a model
       // sends both (e.g. col:2 + full:true), the explicit column WINS — otherwise the pin silently no-ops full-width.
-      { const colPin = typeof op.col === "number" && op.col >= 0;
-        if (colPin) spec.col = clampCol(op.col);
-        if (typeof op.full === "boolean") spec.full = colPin && op.full ? false : op.full; }
+      { const colN = typeof op.col === "number" && op.col >= 0 ? op.col : undefined;
+        if (colN != null) spec.col = clampCol(colN);
+        if (typeof op.full === "boolean") spec.full = colN != null && op.full ? false : op.full; }
       if (typeof op.colorBy === "string" && op.colorBy) { const e = colorError(op.colorBy, w); if (e) rejected.push(`${where} colorBy: ${e}`); else spec.colorBy = op.colorBy; }
       if (op.scopeGrouping && op.scopeValue) { const s = scopeFrom(op.scopeGrouping, op.scopeValue, w, where, rejected); if (s) spec.scope = s; }
       if (typeof op.embedding === "string" && op.embedding) { if (w.embeddings.includes(op.embedding)) spec.embedding = op.embedding; else rejected.push(`${where}: unknown embedding "${op.embedding}" (have: ${w.embeddings.join(", ") || "umap"})`); }
@@ -199,9 +201,9 @@ export function normalizeViewPatch(patch: RawViewPatch, w: World): NormResult {
     else if (movedFacet) notes.push(`${where}: facet handles ONE panel per call — split the other panel in a separate update_view`);
     if (op.title) pp.title = op.title;
     // col pin and full-width are mutually exclusive (full overrides col) — when both are given, the column wins
-    const colPin = typeof op.col === "number" && op.col >= 0;
-    if (colPin) pp.col = clampCol(op.col);
-    if (typeof op.full === "boolean") pp.full = colPin && op.full ? false : op.full;
+    const colN = typeof op.col === "number" && op.col >= 0 ? op.col : undefined;
+    if (colN != null) pp.col = clampCol(colN);
+    if (typeof op.full === "boolean") pp.full = colN != null && op.full ? false : op.full;
     if (typeof op.colorBy === "string" && op.colorBy) { const e = colorError(op.colorBy, w); if (e) rejected.push(`${where} colorBy: ${e}`); else pp.colorBy = op.colorBy; }
     if (op.clearScope) pp.scope = null;
     else if (op.scopeGrouping && op.scopeValue) { const s = scopeFrom(op.scopeGrouping, op.scopeValue, w, where, rejected); if (s) pp.scope = s; }
@@ -251,6 +253,19 @@ export function normalizeViewPatch(patch: RawViewPatch, w: World): NormResult {
         ops.push({ kind: "facet", by, values, panel: f.panel, layout });
       }
     }
+  }
+
+  // ---- unfacet: the INVERSE of facet — collapse faceted copies back to one panel ("unsplit", "go back") ----
+  // unfacet:true (or {}) → every facet group; unfacet:<id> → the group containing that panel; unfacet:{by} → groups split on that field.
+  const ufRaw: any = patch.unfacet;
+  if (ufRaw != null && ufRaw !== false) {
+    const op: NormOp = { kind: "unfacet" };
+    if (typeof ufRaw === "number") (op as any).panel = ufRaw;
+    else if (typeof ufRaw === "object" && !Array.isArray(ufRaw)) {
+      if (typeof ufRaw.panel === "number") (op as any).panel = ufRaw.panel;
+      if (typeof ufRaw.by === "string") (op as any).by = ufRaw.by;
+    }
+    ops.push(op);
   }
 
   // ---- arrange: place EXISTING panels into the grid (pure reposition, never recreates) ----

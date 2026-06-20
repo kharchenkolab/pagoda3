@@ -201,6 +201,14 @@ test("facet: by-field expands to values; defaults to all; bad field/values handl
   assert.match(badPanel.rejected.join(" "), /no panel/);
 });
 
+test("unfacet: true / id / {by} parse to the inverse op", () => {
+  const w = makeWorld();
+  assert.deepEqual(find(normalizeViewPatch({ unfacet: true }, w).ops, "unfacet"), [{ kind: "unfacet" }]);
+  assert.deepEqual(find(normalizeViewPatch({ unfacet: 5 }, w).ops, "unfacet"), [{ kind: "unfacet", panel: 5 }]);
+  assert.deepEqual(find(normalizeViewPatch({ unfacet: { by: "condition" } }, w).ops, "unfacet"), [{ kind: "unfacet", by: "condition" }]);
+  assert.equal(find(normalizeViewPatch({ unfacet: false }, w).ops, "unfacet").length, 0);   // false = no-op
+});
+
 test("facet misplaced inside a panels[] op is hoisted to a top-level facet (not rejected)", () => {
   const w = makeWorld();   // panel 4 = Heatmap
   const r = normalizeViewPatch({ panels: [{ id: 4, facet: { by: "condition", layout: "side" } }] }, w);

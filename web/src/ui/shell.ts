@@ -588,6 +588,30 @@ export class App {
             applied.push(`facet ${base} by ${op.by} → ${op.values.join(", ")}`); needFull = true;
           }
         }
+        else if (op.kind === "unfacet") {
+          // INVERSE of facet: collapse faceted copies back to one panel ("unsplit"/"go back"). A facet group = ≥2 panels
+          // identical except their category scope (same type/title/group/genes, scope on the same grouping). Keep the
+          // first (clear its scope → shows ALL cells again), remove the rest. unfacet:true = all groups; panel/by narrow it.
+          const groups = new Map<string, Panel[]>();
+          for (const p of this.canvas) {
+            const sc = p.view?.scope as any;
+            if (!sc || sc.kind !== "category") continue;
+            if (op.by && sc.grouping !== op.by) continue;
+            const key = `${p.type}|${p.title}|${p.group || ""}|${p.heatMode || ""}|${(p.genes || []).join(",")}|${sc.grouping}`;
+            if (!groups.has(key)) groups.set(key, []);
+            groups.get(key)!.push(p);
+          }
+          let merged = 0; const removeIds = new Set<number>();
+          for (const ps of groups.values()) {
+            if (ps.length < 2) continue;
+            if (op.panel != null && !ps.some((p) => p.id === op.panel)) continue;   // restrict to a specific panel's group
+            const keep = ps[0]; const v = { ...(keep.view || {}) }; delete (v as any).scope; keep.view = v;   // un-scope the survivor
+            for (const p of ps.slice(1)) removeIds.add(p.id);
+            merged++;
+          }
+          if (merged) { this.canvas = this.canvas.filter((p) => !removeIds.has(p.id)); applied.push(`unfaceted ${merged} group${merged > 1 ? "s" : ""}`); needFull = true; }
+          else notes.push("unfacet: no faceted panels to merge");
+        }
         else if (op.kind === "arrange") {
           // pure rearrangement: reposition EXISTING panels (col/full + order) — never recreates a panel, so it
           // can't drop or duplicate a scope the way the agent did when it rebuilt panels to "rearrange".
