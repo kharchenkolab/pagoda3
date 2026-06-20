@@ -12,7 +12,8 @@ export type CodeResult =
   | { kind: "genes"; rows: { symbol: string; score?: number; lfc?: number }[]; title?: string }
   | { kind: "values"; values: number[]; label: string }
   | { kind: "note"; text: string; title?: string }
-  | { kind: "cells"; ids: number[]; label?: string };
+  | { kind: "cells"; ids: number[]; label?: string }
+  | { kind: "category"; name: string; categories: string[]; codes: number[] };
 
 // Validate + normalize whatever the code returned. Pure. n = cell count (for length / range checks).
 export function validateComputeResult(r: any, n: number): { error?: string; result?: CodeResult } {
@@ -41,7 +42,23 @@ export function validateComputeResult(r: any, n: number): { error?: string; resu
     if (!ids.length) return { error: "cells result has no valid in-range ids" };
     return { result: { kind: "cells", ids, label: typeof r.label === "string" ? r.label : undefined } };
   }
-  return { error: `unknown result kind "${k}" — use genes | values | note | cells` };
+  if (k === "category") {
+    // A new PERSISTENT categorical field (e.g. a numeric threshold → high/normal). codes are per-cell category
+    // indices; -1 = unassigned (the cell falls in no category). The app commits it as a derived overlay the user
+    // can then colour/facet/annotate by — the "create a category" capability the sandbox couldn't reach before.
+    const name = typeof r.name === "string" ? r.name.trim() : "";
+    if (!name) return { error: "category result needs a non-empty `name` (the new field name)" };
+    if (!Array.isArray(r.categories) || !r.categories.length) return { error: "category result needs categories: a non-empty string[]" };
+    const categories = r.categories.map((c: any) => String(c).trim());
+    if (categories.some((c: string) => !c)) return { error: "category result has an empty category name" };
+    if (new Set(categories).size !== categories.length) return { error: "category result has duplicate category names" };
+    if (!r.codes || typeof r.codes.length !== "number") return { error: "category result needs codes: number[] (one category index per cell)" };
+    if (r.codes.length !== n) return { error: `category codes length ${r.codes.length} != number of cells ${n}` };
+    const codes = Array.from(r.codes, (v: any) => v | 0);
+    for (let i = 0; i < codes.length; i++) { const c = codes[i]; if (c < -1 || c >= categories.length) return { error: `category code ${c} (cell ${i}) is out of range — use 0..${categories.length - 1}, or -1 for unassigned` }; }
+    return { result: { kind: "category", name, categories, codes } };
+  }
+  return { error: `unknown result kind "${k}" — use genes | values | note | cells | category` };
 }
 
 // The api surface, documented for the tool description (kept next to the harness so they can't drift).
@@ -52,8 +69,11 @@ export const CODE_API_DOC =
   "`api.numeric(field)` → Float32Array of a NUMERIC field per cell (QC etc.: mito, n_umi, n_gene, …; `api.numericFields` lists them) — use it to threshold/score over QC; " +
   "`api.genesAvailable` (declared symbols); `api.embedding` (Float32Array, x,y interleaved per cell); `api.stats` → {groups, mean, frac, nGenes} if you pass `grouping`. " +
   "Return one of: {kind:'genes', rows:[{symbol, score?}], title?} (ranked table → rail); {kind:'values', values:number[len n], label} (per-cell score → colours the embedding); " +
-  "{kind:'note', text, title?}; {kind:'cells', ids:number[], label?} (→ selection). Example — score cells by a signature: " +
-  "\"const g=['CD8A','GZMB','PRF1']; const v=new Float32Array(api.n); for(const s of g){const e=api.expr(s); for(let i=0;i<api.n;i++) v[i]+=e[i];} return {kind:'values', values:Array.from(v), label:'cytotoxic'};\" (declare genes:['CD8A','GZMB','PRF1']).";
+  "{kind:'note', text, title?}; {kind:'cells', ids:number[], label?} (→ selection); " +
+  "{kind:'category', name, categories:string[], codes:number[len n]} (creates a PERSISTENT categorical FIELD the user can colour/facet/annotate by — codes are per-cell category indices, -1 = unassigned). " +
+  "Example — score cells by a signature: " +
+  "\"const g=['CD8A','GZMB','PRF1']; const v=new Float32Array(api.n); for(const s of g){const e=api.expr(s); for(let i=0;i<api.n;i++) v[i]+=e[i];} return {kind:'values', values:Array.from(v), label:'cytotoxic'};\" (declare genes:['CD8A','GZMB','PRF1']). " +
+  "Example — a category from a QC threshold: \"const m=api.numeric('mito'); const codes=Array.from(m, x => x>0.1?1:0); return {kind:'category', name:'mito_level', categories:['normal','high'], codes};\" (use {kind:'category'} whenever the user asks to CREATE/define a category, group, or label-set from a threshold or expression).";
 
 // Worker source (runs in an isolated thread). new Function is given network/ambient globals as undefined params
 // so the agent's body can't reach them; the result is posted back. A runaway body is handled by terminate() on

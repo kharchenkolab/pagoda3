@@ -72,6 +72,17 @@ test("cells: ids filtered to in-range, deduped; empty rejected", () => {
   assert.match(validateComputeResult({ kind: "cells", ids: 3 }, N).error!, /ids: number\[\]/);
 });
 
+test("category: validates name/categories/codes; -1 allowed; out-of-range + dup rejected", () => {
+  const ok = validateComputeResult({ kind: "category", name: " mito_level ", categories: ["normal", "high"], codes: [0, 1, -1, 1, 0] }, N);
+  assert.equal(ok.error, undefined);
+  assert.deepEqual(ok.result, { kind: "category", name: "mito_level", categories: ["normal", "high"], codes: [0, 1, -1, 1, 0] });   // name trimmed, -1 kept
+  assert.match(validateComputeResult({ kind: "category", categories: ["a"], codes: [0, 0, 0, 0, 0] }, N).error!, /non-empty `name`/);
+  assert.match(validateComputeResult({ kind: "category", name: "x", categories: [], codes: [0, 0, 0, 0, 0] }, N).error!, /non-empty string\[\]/);
+  assert.match(validateComputeResult({ kind: "category", name: "x", categories: ["a", "a"], codes: [0, 0, 0, 0, 0] }, N).error!, /duplicate category/);
+  assert.match(validateComputeResult({ kind: "category", name: "x", categories: ["a", "b"], codes: [0, 1, 0] }, N).error!, /codes length 3 != number of cells 5/);
+  assert.match(validateComputeResult({ kind: "category", name: "x", categories: ["a", "b"], codes: [0, 1, 2, 0, 0] }, N).error!, /out of range/);
+});
+
 test("kind + shape guards", () => {
   assert.match(validateComputeResult({ kind: "scatter" }, N).error!, /unknown result kind/);
   assert.match(validateComputeResult(null, N).error!, /must return an object/);

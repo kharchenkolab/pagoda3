@@ -997,6 +997,86 @@ export class App {
     this.commitLayer(layer);
   }
 
+  // ── Derived/custom categorical FIELDS the agent creates + manages for the user (the manage_category tool) ──
+  // A category = a named overlay (codes+categories) registered as a grouping. These ops build on the SAME
+  // primitives the annotation draft uses (commitLayer / labelCells / renameLabel / resolveCells) but target ANY
+  // named field — so "make a high-mito group", "rename/merge those", "delete it" all work. Create-from-an-
+  // EXPRESSION (numeric threshold/score) goes through compute_code {kind:'category'}; these handle cell-sets + edits.
+
+  // Rename a categorical FIELD (not a value). Only fields the agent created; rejects a name collision; follows colour.
+  renameField(name: string, to: string): { ok?: string; error?: string } {
+    if (name === "annotation") return { error: "the working annotation draft is managed in the Annotate workspace, not here" };
+    const layer = this.annoLayers.get(name); if (!layer) return { error: `no custom category field "${name}" (only fields you created can be renamed)` };
+    to = (to || "").trim(); if (!to) return { error: "empty field name" };
+    if (to === name) return { ok: "unchanged" };
+    if (this.annoLayers.has(to) || this.ctx.groupings().includes(to)) return { error: `a field "${to}" already exists — pick another name` };
+    this.annoLayers.delete(name); this.ctx.removeAnnotationLayer(name);
+    layer.name = to; this.annoLayers.set(to, layer); this.commitLayer(layer);   // re-registers under `to`
+    if (this.coord.state.colorBy === "meta:" + name) { this.noteColor("meta:" + to); this.coord.setColor("meta:" + to); }
+    return { ok: `renamed field "${name}" → "${to}"` };
+  }
+
+  // Delete a categorical field the agent created. Falls colour back to a default grouping if we were colouring by it.
+  deleteCategory(name: string): { ok?: string; error?: string } {
+    if (name === "annotation") return { error: "the working annotation draft can't be deleted here — use the Annotate workspace" };
+    if (!this.annoLayers.has(name) && !this.ctx.isAnnotationLayer(name)) return { error: `no custom category field "${name}"` };
+    this.annoLayers.delete(name); this.ctx.removeAnnotationLayer(name);
+    if (this.coord.state.colorBy === "meta:" + name) {
+      const gs = this.ctx.groupings(); const fb = gs.includes("cell_type") ? "cell_type" : gs[0];
+      if (fb) { this.noteColor("meta:" + fb); this.coord.setColor("meta:" + fb); }
+    }
+    this.fullRender();
+    return { ok: `deleted category field "${name}"` };
+  }
+
+  // The manage_category dispatcher — one tool, the full create/edit/delete lifecycle over a named categorical field.
+  manageCategory(input: any): { ok?: string; error?: string } {
+    const op = String(input?.op || "").trim();
+    const name = String(input?.name || "").trim();
+    if (!op) return { error: "manage_category: 'op' is required (create | set_cells | rename_value | merge_values | rename_field | delete)" };
+    if (op === "rename_field") return this.renameField(name, String(input?.to || ""));
+    if (op === "delete") return this.deleteCategory(name);
+    if (!name) return { error: `manage_category ${op}: 'name' (the field) is required` };
+    if (op === "create") {
+      if (this.ctx.groupings().includes(name) && !this.annoLayers.has(name)) return { error: `"${name}" is an existing stored field — choose a new name` };
+      const assigns = Array.isArray(input?.assignments) ? input.assignments : [];
+      if (!assigns.length) return { error: "create: 'assignments' (array of {value, A}) is required" };
+      const layer = seedLayer(name, "derived", { codes: new Int32Array(this.ctx.view.nCells).fill(-1), categories: [] });
+      let total = 0;
+      for (const a of assigns) {
+        const value = String(a?.value || "").trim(); if (!value) return { error: "create: each assignment needs a non-empty 'value'" };
+        if (!a?.A) return { error: `create: assignment "${value}" needs 'A' (a cell set)` };
+        const { ids, error } = this.resolveCells(a.A); if (error) return { error: `create "${value}": ${error}` };
+        setLabel(layer, ids, value); total += ids.length;
+      }
+      if (!layer.categories.length) return { error: "create: no cells were assigned to any value" };
+      layer.provenance = { method: "manage_category" };
+      this.commitLayer(layer); this.noteColor("meta:" + name); this.coord.setColor("meta:" + name);
+      return { ok: `created field "${name}" (${layer.categories.length} categories: ${layer.categories.slice(0, 8).join(", ")}) — labeled ${total} cells; coloured by it` };
+    }
+    if (op === "set_cells") {
+      const value = String(input?.value || "").trim(); if (!value) return { error: "set_cells: 'value' is required" };
+      if (!input?.A) return { error: "set_cells: 'A' (a cell set) is required" };
+      const { ids, error } = this.resolveCells(input.A); if (error) return { error: `set_cells: ${error}` };
+      if (!ids.length) return { error: "set_cells: that cell set resolved to 0 cells" };
+      this.labelCells(ids, value, name);
+      return { ok: `labeled ${ids.length} cells as "${value}" in field "${name}"` };
+    }
+    if (op === "rename_value") return this.renameLabel(name, String(input?.from || ""), String(input?.to || ""));
+    if (op === "merge_values") {
+      const into = String(input?.into || "").trim(); if (!into) return { error: "merge_values: 'into' is required" };
+      const values = Array.isArray(input?.values) ? input.values.map((v: any) => String(v)) : [];
+      if (!values.length) return { error: "merge_values: 'values' (array) is required" };
+      const layer = this.annoLayers.get(name); if (!layer) return { error: `no category field "${name}"` };
+      let merged = 0;
+      for (const v of values) if (v !== into && layer.categories.includes(v)) { this.applyRename(layer, v, into); merged++; }
+      if (!merged) return { error: `merge_values: none of [${values.join(", ")}] are values in "${name}"` };
+      this.commitLayer(layer);
+      return { ok: `merged ${merged} value(s) into "${into}" in field "${name}"` };
+    }
+    return { error: `manage_category: unknown op "${op}" — use create | set_cells | rename_value | merge_values | rename_field | delete` };
+  }
+
   // Build a Panel from a normalized PanelSpec — view fields into .view, bind/group set per type.
   private specToPanel(spec: PanelSpec): Partial<Panel> {
     const view: PanelView = {};
@@ -1080,6 +1160,25 @@ export class App {
     if (res.kind === "note") {
       this.agent.addRail({ type: "Note", title: res.title || "Computed note", text: res.text, bind: "code:result" });
       return { ok: `added a note.${note}` };
+    }
+    if (res.kind === "category") {
+      // a new PERSISTENT categorical field (e.g. a numeric threshold → high/normal) — commit it as a derived
+      // overlay (facetable/colourable/annotatable), then colour by it. Manage it afterwards via manage_category.
+      if (this.ctx.groupings().includes(res.name) && !this.annoLayers.has(res.name)) return { error: `"${res.name}" is an existing stored field — choose a new field name` };
+      const requested = res.categories.slice();
+      const layer: AnnotationLayer = { name: res.name, source: "derived", codes: Int32Array.from(res.codes), categories: requested.slice(), records: {}, provenance: { method: "compute_code" } };
+      this.commitLayer(layer);   // compacts → categories that ended up with 0 cells are dropped
+      this.noteColor("meta:" + res.name); this.coord.setColor("meta:" + res.name);
+      const got = layer.categories;   // the surviving (non-empty) categories
+      const shown = got.slice(0, 8).join(", ") + (got.length > 8 ? ", …" : "");
+      // A category that COLLAPSED (≥1 requested bucket empty) is almost always a threshold-on-the-wrong-SCALE
+      // mistake — surface it so the agent can self-correct in the same turn rather than shipping a useless field.
+      let warn = "";
+      if (got.length < requested.length) {
+        const empty = requested.filter((c) => !got.includes(c));
+        warn = ` Note: ${empty.length} requested category(ies) ended up EMPTY (${empty.join(", ")}) — every cell fell into ${got.length === 1 ? `"${got[0]}"` : "the others"}. If that's unexpected, the cutoff is likely on the wrong SCALE (a QC field like mito may be a PERCENT 0–100, not a fraction 0–1 — inspect the field's min/max and re-create with a fitting threshold).`;
+      }
+      return { ok: `created categorical field "${res.name}" (${got.length} categories: ${shown}) and coloured the embedding by it — facet/annotate by it, or edit it with manage_category.${warn}${note}` };
     }
     this.coord.setSelection({ kind: "cells", ids: Int32Array.from(res.ids) });   // cells → selection
     return { ok: `selected ${res.ids.length} cells${res.label ? ` (${res.label})` : ""}.${note}` };
