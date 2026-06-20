@@ -11,14 +11,17 @@ function panelFrom(p: any): ODPanel {
 }
 
 type Req = { id: number; op: string; args: any };
+const post = (m: any) => (self as any).postMessage(m);
+const errMsg = (e: any) => String((e && e.message) || e);
 
 self.onmessage = (e: MessageEvent<Req>) => {
   const { id, op, args } = e.data || ({} as Req);
   try {
-    const result = run(op, args);
-    (self as any).postMessage({ id, result });
+    const r = run(op, args);
+    if (r && typeof r.then === "function") r.then((result: any) => post({ id, result }), (err: any) => post({ id, error: errMsg(err) }));
+    else post({ id, result: r });
   } catch (err: any) {
-    (self as any).postMessage({ id, error: String(err?.message || err) });
+    post({ id, error: errMsg(err) });
   }
 };
 
@@ -41,7 +44,36 @@ function run(op: string, args: any): any {
     case "overdispersion": return overdispersedCore(panelFrom(args.panel), args.cellIds, args.topN, args.maxCells);
     case "de": return deCore(panelFrom(args.panel), args.A, args.B);
     case "groupStatsForCells": return groupStatsForCellsCore(panelFrom(args.panel), args.geneCol, args.ngGlobal, args.codes, args.G, args.cellIds);
+    // S5 — the widget render/compute split with KERNELS: run untrusted widget code (shadowed globals, like codeapi) with
+    // an `api` that includes the kernels (api.de/api.overdispersion) backed by the shared SAB panel. Returns a promise.
+    case "runCode": return runWidgetCode(args);
     default:
       throw new Error("unknown compute op: " + op);
   }
+}
+
+// Build the widget `api` (codeapi data surface + kernels over the shared panel) and run the widget's code with ambient/
+// network globals shadowed (passed as undefined to the wrapped function) — the same containment as codeapi, plus the
+// pool's terminability (a runaway is killed by terminating this worker). Returns the code's free-form result.
+function runWidgetCode(args: any): Promise<any> {
+  const s = args.snapshot || {};
+  const panel = args.panel ? panelFrom(args.panel) : null;
+  const symbols: string[] | null = args.panel ? args.panel.symbols : null;
+  const symFor = (g: number) => (symbols ? symbols[g] : g);
+  const api: any = {
+    n: s.n,
+    cat: (f: string) => s.cats?.[f] || null,
+    catOf: (f: string, i: number) => { const c = s.cats?.[f]; return c ? c.categories[c.codes[i]] : null; },
+    expr: (sym: string) => { const v = s.genes?.[sym]; if (!v) throw new Error('gene "' + sym + '" not in inputs.genes — declare it in the genes parameter'); return v; },
+    genesAvailable: Object.keys(s.genes || {}),
+    embedding: s.embedding,
+    stats: s.stats || null,
+    args: s.args || null,
+    // KERNELS over the shared panel (whole-transcriptome; only present when cross-origin isolated → the panel was shared).
+    de: panel ? (A: number[], B: number[], topN = 30) => deCore(panel, A, B).slice(0, topN).map((r) => ({ symbol: symFor(r.g), lfc: r.lfc, meanA: r.meanA, meanB: r.meanB })) : undefined,
+    overdispersion: panel ? (cells: number[], topN = 50) => overdispersedCore(panel, cells, topN, 2000).map((r) => ({ symbol: symFor(r.g), score: r.resid, mean: r.mean })) : undefined,
+  };
+  const fn = new Function("api", "fetch", "XMLHttpRequest", "importScripts", "WebSocket", "self", "globalThis", "postMessage", "onmessage",
+    '"use strict"; return (async function(){ ' + String(args.code) + "\n})();");
+  return Promise.resolve(fn(api));
 }

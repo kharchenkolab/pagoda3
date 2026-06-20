@@ -19,12 +19,15 @@ async function boot() {
   const ctx = new Ctx(view, coord);
   await ctx.init();
   const app = new App(ctx);
+  const widgetPool = new ComputePool();   // S5: untrusted widget runCompute code runs in its OWN workers (separate from the app kernel pool), with kernels over the shared SAB
+  app.widgetPool = widgetPool;
+  if (widgetPool.isolated) void widgetPool.ping().catch(() => { /* best-effort warm */ });
   await app.mount(document.getElementById("app")!);
   // Dev switch between the Anthropic agent and the local OpenAI-compatible model (vLLM/qwen3). No UI — flip it from
   // the console: p2.setProvider("openai"). getProvider() is read at the start of every ask, so the NEXT ask uses it
   // (no reload needed). See web/src/agent/providers.ts.
   const setProvider = (p: Provider) => { try { localStorage.setItem(PROVIDER_KEY, p === "openai" ? "openai" : "anthropic"); } catch { /* */ } return "agent provider → " + getProvider() + " (applies on next ask)"; };
-  (window as any).p2 = { ds, view, coord, ctx, app, getProvider, setProvider, computePool };
+  (window as any).p2 = { ds, view, coord, ctx, app, getProvider, setProvider, computePool, widgetPool };
 }
 
 boot().catch((e) => {

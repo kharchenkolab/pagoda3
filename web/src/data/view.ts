@@ -391,6 +391,14 @@ export class LstarView {
     }
     return raw.map((r) => ({ gene: dp.geneCol ? dp.geneCol[r.g] : r.g, symbol: dp.symbols[r.g], mean: r.mean, varr: r.varr, resid: r.resid, nobs: r.nobs }));
   }
+
+  // The SAB-backed cell-major panel buffers — for the WIDGET compute worker's kernels (S5). Null when there's no panel or
+  // it isn't shared (non-isolated). The buffers are SharedArrayBuffers, so posting them to the worker SHARES (no copy).
+  async sharedPanelRefs(): Promise<{ data: ArrayBufferLike; indices: ArrayBufferLike; indptr: ArrayBufferLike; nGenes: number; lognorm: boolean; symbols: string[] } | null> {
+    const dp = await this.dePanel();
+    if (!dp || !dp.shared) return null;
+    return { data: dp.data.buffer, indices: dp.indices.buffer, indptr: dp.indptr.buffer, nGenes: dp.nGenes, lognorm: dp.lognorm, symbols: dp.symbols };
+  }
 }
 
 // (LOWESS, the overdispersion F-test, and the deterministic `sample` now live in compute/odcore.ts — shared by the

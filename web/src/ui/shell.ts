@@ -53,6 +53,7 @@ export class App {
   builtinWS!: Set<string>;            // code-defined workspace names (the rest are user-saved → persisted)
   widgetLib: SavedWidget[] = [];      // the custom-widget LIBRARY (authored widgets, re-addable from the menu); persisted
   trustedWidgets = new Set<string>(); // source-hashes the user authored/consented to run (Item 2/C); foreign imports gate
+  widgetPool?: import("../compute/pool.ts").ComputePool;   // S5: off-thread, terminable worker for widget runCompute (kernels over the shared SAB); set by main.ts
   private _saveTimer: any = null;     // debounce for session persistence
   private lastSel: any;               // last selection dispatched to reactors — skip re-dispatch on colour-only repaints
   private reactorsStale = true;       // set when reactors are rebuilt (fullRender) → force one dispatch

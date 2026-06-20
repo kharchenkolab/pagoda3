@@ -205,6 +205,15 @@ export function makeWidgetHost(app: App): WidgetHost {
       const o = opts || {};
       const { snapshot } = await buildComputeSnapshot(ctx as any, { genes: o.genes, grouping: o.grouping, args: o.args, maxGenes: 400 });
       const timeoutMs = Math.min(15000, Math.max(200, Number(o.timeoutMs) || 5000));
+      // S5: when cross-origin isolated, run in the dedicated WIDGET pool (separate workers from the app kernel pool) with
+      // KERNELS over the SHARED SAB panel — api.de / api.overdispersion become available inside the widget's code, off the
+      // main thread + terminable. Only mounted (authored/consented, per Item 2/C) widgets ever reach here. Non-isolated →
+      // the snapshot-only worker (no kernels).
+      const pool = app.widgetPool;
+      if (pool?.isolated) {
+        const panel = await ctx.view.sharedPanelRefs();
+        return await pool.run("runCode", { code: String(code), snapshot, panel }, { timeoutMs });
+      }
       const run = await runInWorker(String(code), snapshot, timeoutMs);
       if (!run.ok) throw new Error(run.error || "compute failed");
       return run.result;
