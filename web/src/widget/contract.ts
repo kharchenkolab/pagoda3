@@ -104,7 +104,9 @@ export const WIDGET_API_DOC =
   "api.expr(sym) → Float32Array log-expr (only for genes you DECLARE in `genes`); api.cat(field) → {codes,categories}; " +
   "api.catOf(field,i); api.embedding (Float32Array, x,y per cell); api.stats (if you pass `grouping`); api.args (your `args`). " +
   "The KERNELS are available INSIDE the worker too (over ALL genes, no declaration needed): api.de(A, B, topN?) → " +
-  "[{symbol, lfc, meanA, meanB}] (A,B are cell-index arrays) and api.overdispersion(cells, topN?) → [{symbol, score, mean}] — " +
+  "[{symbol, lfc, meanA, meanB}] (A,B are cell-index arrays); api.overdispersion(cells, topN?) → [{symbol, score, mean}]; " +
+  "and await api.meanVar() → [{symbol, mean, var, nnz}] for EVERY gene (genome-wide per-gene mean+variance over all cells, " +
+  "the native libstar WASM kernel — use it for a mean-variance / HVG plot: log(mean) vs log(var)). These run OFF the main thread — " +
   "so you can FUSE a kernel with your own post-processing in one off-thread call (e.g. DE for many sub-clusters, then build " +
   "a network). Use runCompute for the long tail the primitives don't cover — co-expression/correlation networks, signature " +
   "scoring, custom clustering — over MANY genes at once (declare them; the raw vectors stay in the worker, only your small result returns). " +

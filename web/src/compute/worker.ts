@@ -10,6 +10,18 @@ function panelFrom(p: any): ODPanel {
   return { data: new Float64Array(p.data), indices: new Int32Array(p.indices), indptr: new Int32Array(p.indptr), nGenes: p.nGenes, lognorm: p.lognorm };
 }
 
+// Load the real libstar WASM kernels IN the worker (lazy, cached) — same module the main thread loads, so native C++
+// numerical kernels (colMeanVar/colSumByGroup/...) run off the main thread. The emscripten module detects the WORKER
+// environment + fetches the .wasm itself; it loads under COEP because the vite plugin serves /wasm with CORP.
+let wasmP: Promise<any | null> | null = null;
+function wasm(): Promise<any | null> {
+  if (!wasmP) wasmP = (async () => {
+    try { const url = new URL("/wasm/lstar_kernels.mjs", self.location.origin).href; const mod: any = await import(/* @vite-ignore */ url); return await mod.default(); }
+    catch { return null; }
+  })();
+  return wasmP;
+}
+
 type Req = { id: number; op: string; args: any };
 const post = (m: any) => (self as any).postMessage(m);
 const errMsg = (e: any) => String((e && e.message) || e);
@@ -41,6 +53,8 @@ function run(op: string, args: any): any {
     // debug/test only: block the worker thread for args.ms (an uninterruptible busy loop) — proves the pool can KILL a
     // runaway job by terminating its worker (the rest of the pool keeps running).
     case "spin": { const end = Date.now() + (args.ms || 0); while (Date.now() < end) { /* busy */ } return { spun: args.ms || 0 }; }
+    // de-risk: prove libstar WASM loads + runs in the worker.
+    case "wasmVersion": return wasm().then((M: any) => ({ version: M ? M.version() : null }));
     case "overdispersion": return overdispersedCore(panelFrom(args.panel), args.cellIds, args.topN, args.maxCells);
     case "de": return deCore(panelFrom(args.panel), args.A, args.B);
     case "groupStatsForCells": return groupStatsForCellsCore(panelFrom(args.panel), args.geneCol, args.ngGlobal, args.codes, args.G, args.cellIds);
@@ -59,6 +73,7 @@ function runWidgetCode(args: any): Promise<any> {
   const s = args.snapshot || {};
   const panel = args.panel ? panelFrom(args.panel) : null;
   const symbols: string[] | null = args.panel ? args.panel.symbols : null;
+  const counts = args.counts || null;   // SAB-backed gene-major counts (data + indptr) for the WASM colMeanVar kernel
   const symFor = (g: number) => (symbols ? symbols[g] : g);
   const api: any = {
     n: s.n,
@@ -72,6 +87,16 @@ function runWidgetCode(args: any): Promise<any> {
     // KERNELS over the shared panel (whole-transcriptome; only present when cross-origin isolated → the panel was shared).
     de: panel ? (A: number[], B: number[], topN = 30) => deCore(panel, A, B).slice(0, topN).map((r) => ({ symbol: symFor(r.g), lfc: r.lfc, meanA: r.meanA, meanB: r.meanB })) : undefined,
     overdispersion: panel ? (cells: number[], topN = 50) => overdispersedCore(panel, cells, topN, 2000).map((r) => ({ symbol: symFor(r.g), score: r.resid, mean: r.mean })) : undefined,
+    // WASM KERNEL (native libstar, in the worker): genome-wide per-gene mean+variance over ALL cells — the heavy
+    // computation behind a mean-variance / HVG plot. Async (loads the WASM lazily, then caches it).
+    meanVar: counts ? async (lognorm = true) => {
+      const M = await wasm();
+      if (!M) throw new Error("WASM kernels unavailable in the worker");
+      const r = M.colMeanVar(new Float64Array(counts.data), new Int32Array(counts.indptr), counts.nCells, 1, !!lognorm);
+      const cs = counts.symbols; const out = [];
+      for (let g = 0; g < r.mean.length; g++) out.push({ symbol: cs ? cs[g] : g, mean: r.mean[g], var: r.var[g], nnz: r.nnz[g] });
+      return out;
+    } : undefined,
   };
   const fn = new Function("api", "fetch", "XMLHttpRequest", "importScripts", "WebSocket", "self", "globalThis", "postMessage", "onmessage",
     '"use strict"; return (async function(){ ' + String(args.code) + "\n})();");

@@ -144,14 +144,25 @@ export class LstarView {
   private async countsCSC() {
     if (!this.cscCache) {
       const sp = await this.ds.fieldSparse("counts");
+      // SAB-back data + indptr when isolated (gene-major CSC → those are all colMeanVar needs) so a widget's
+      // api.meanVar can run the WASM kernel over them in the worker, zero-copy. indices stays regular (not needed
+      // for colMeanVar; saves the extra SAB). Transparent to the main-thread fallback callers.
       this.cscCache = {
-        data: sp.data instanceof Float64Array ? sp.data : Float64Array.from(sp.data as any),
+        data: toShared(sp.data instanceof Float64Array ? sp.data : Float64Array.from(sp.data as any)),
         indices: sp.indices instanceof Int32Array ? sp.indices : Int32Array.from(sp.indices as any),
-        indptr: sp.indptr instanceof Int32Array ? sp.indptr : Int32Array.from(sp.indptr as any),
+        indptr: toShared(sp.indptr instanceof Int32Array ? sp.indptr : Int32Array.from(sp.indptr as any)),
         nGenes: sp.shape[1],
       };
     }
     return this.cscCache;
+  }
+
+  // The SAB-backed gene-major counts (data + indptr) for the WIDGET worker's WASM kernels (colMeanVar genome-wide
+  // mean/var). Null when not isolated. The buffers are SharedArrayBuffers → posting them SHARES (no copy).
+  async sharedCountsRefs(): Promise<{ data: ArrayBufferLike; indptr: ArrayBufferLike; nCells: number; nGenes: number; symbols: string[] } | null> {
+    const cc = await this.countsCSC();
+    if (!(isolationAvailable() && cc.data.buffer instanceof SharedArrayBuffer)) return null;
+    return { data: cc.data.buffer, indptr: cc.indptr.buffer, nCells: this.nCells, nGenes: cc.nGenes, symbols: await this.genes() };
   }
 
   // Per-(group, gene) sufficient stats over log1p — read from the viewer profile when present, else

@@ -212,7 +212,10 @@ export function makeWidgetHost(app: App): WidgetHost {
       const pool = app.widgetPool;
       if (pool?.isolated) {
         const panel = await ctx.view.sharedPanelRefs();
-        return await pool.run("runCode", { code: String(code), snapshot, panel }, { timeoutMs });
+        // Only SAB-back the (large, gene-major) counts when the code actually uses api.meanVar — so non-meanVar widgets
+        // don't pay the counts-sharing cost.
+        const counts = /\bmeanVar\b/.test(String(code)) ? await ctx.view.sharedCountsRefs() : null;
+        return await pool.run("runCode", { code: String(code), snapshot, panel, counts }, { timeoutMs });
       }
       const run = await runInWorker(String(code), snapshot, timeoutMs);
       if (!run.ok) throw new Error(run.error || "compute failed");
