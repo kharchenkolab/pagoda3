@@ -35,6 +35,9 @@ function run(op: string, args: any): any {
       return { sum: s, n: a.length - 1 };
     }
     // overdispersion (HVG) + DE: map the SAB-backed panel ZERO-COPY (the buffers are shared, not cloned), run the kernel.
+    // debug/test only: block the worker thread for args.ms (an uninterruptible busy loop) — proves the pool can KILL a
+    // runaway job by terminating its worker (the rest of the pool keeps running).
+    case "spin": { const end = Date.now() + (args.ms || 0); while (Date.now() < end) { /* busy */ } return { spun: args.ms || 0 }; }
     case "overdispersion": return overdispersedCore(panelFrom(args.panel), args.cellIds, args.topN, args.maxCells);
     case "de": return deCore(panelFrom(args.panel), args.A, args.B);
     case "groupStatsForCells": return groupStatsForCellsCore(panelFrom(args.panel), args.geneCol, args.ngGlobal, args.codes, args.G, args.cellIds);
