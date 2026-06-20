@@ -32,31 +32,25 @@ function wasmCopyPlugin() {
   };
 }
 
-// EXPERIMENT (cross-origin isolation / SAB feasibility): serve ONLY /sab-test* with COOP+COEP so we can measure
-// whether SharedArrayBuffer + our sandboxed-iframe + same-origin /api patterns survive isolation — WITHOUT isolating
-// the whole app. COEP value is switchable via ?coep=credentialless (default require-corp) to A/B both. Temporary.
-function sabTestHeadersPlugin() {
-  return {
-    name: "sab-test-headers",
-    configureServer(server: any) {
-      server.middlewares.use((req: any, res: any, next: any) => {
-        const url = req.url || "";
-        // CORP on EVERY response → all (same-origin) subresources are embeddable inside a cross-origin-isolated document
-        // (an isolated doc with COEP require-corp blocks any subresource lacking CORP — incl. the worker script).
-        res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
-        const coep = /coep=credentialless/.test(url) ? "credentialless" : "require-corp";
-        // The DOCUMENT (sab-test page, or the app with ?coi=1) gets COOP+COEP → it becomes cross-origin isolated.
-        if (url.startsWith("/sab-test") || /[?&]coi=1/.test(url)) {
-          res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
-          res.setHeader("Cross-Origin-Embedder-Policy", coep);
-        }
-        // The WORKER script needs COEP too so the worker is itself isolatable (and can use SharedArrayBuffer). Vite
-        // requests it as ...worker.ts?worker_file&type=module. Harmless when the owner doc isn't isolated.
-        if (/worker_file/.test(url) || /\/compute\/worker/.test(url)) res.setHeader("Cross-Origin-Embedder-Policy", "require-corp");
-        next();
-      });
-    },
+// Cross-origin isolation (COOP+COEP) so the off-main-thread compute worker + SharedArrayBuffer activate. Enabled by
+// DEFAULT (S3) — opt out with ?noiso=1 to exercise the main-thread fallback. CORP on EVERY response so all same-origin
+// subresources (incl. the module worker script) are embeddable in the isolated document — without it, COEP require-corp
+// makes the module worker ERR_BLOCKED_BY_RESPONSE (the S0 finding). Applies to BOTH the dev server and `vite preview`
+// (the built app). NOTE: in PRODUCTION the static host must send the same headers (COOP+COEP on documents, CORP on
+// assets); wherever they're absent, the worker path simply falls back to the main thread, so the app stays correct.
+function crossOriginIsolation() {
+  const mw = (req: any, res: any, next: any) => {
+    const url = req.url || "";
+    res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+    if (!/[?&]noiso=1/.test(url)) {
+      res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
+      res.setHeader("Cross-Origin-Embedder-Policy", /coep=credentialless/.test(url) ? "credentialless" : "require-corp");
+    }
+    next();
   };
+  // NOTE: block bodies (not `(s) => s.middlewares.use(mw)`) — returning the result of .use() makes Vite treat it as a
+  // post-hook and call it with no args (req undefined → crash).
+  return { name: "cross-origin-isolation", configureServer(s: any) { s.middlewares.use(mw); }, configurePreviewServer(s: any) { s.middlewares.use(mw); } };
 }
 
 // Spawn the agent proxy alongside the dev server (it exits quietly if already running).
@@ -98,7 +92,7 @@ function zarrStorePlugin() {
 }
 
 export default defineConfig({
-  plugins: [sabTestHeadersPlugin(), zarrStorePlugin(), wasmCopyPlugin(), agentProxyPlugin()],
+  plugins: [crossOriginIsolation(), zarrStorePlugin(), wasmCopyPlugin(), agentProxyPlugin()],
   server: { port: 8787, fs: { allow: ["..", "../..", "../../lstar"] }, proxy: { "/api": "http://localhost:8786" } },
   build: { target: "es2022" },
 });
