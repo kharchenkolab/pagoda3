@@ -7,14 +7,13 @@ import { mk } from "../ui/dom.ts";
 import { handleLabel } from "../data/coord.ts";
 import type { Panel } from "../ui/panels.ts";
 import { runLive } from "./live.ts";
+import { isAgentPanelType } from "../ui/panel-registry.ts";   // the validated panel-type list now lives in the panel registry (built-ins register in panels.ts; external modules self-register)
 
 export interface Scope { type: "selection" | "panel"; summary: string; ids?: number[]; }
 
 // Tool labels + step details are interpolated into innerHTML; they derive from tool inputs/outputs (gene names,
 // queries, error text), so `<...>` in them would otherwise be parsed as HTML and corrupt the thread layout.
 const esc = (s: any) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]!));
-
-export const REGISTRY: Record<string, number> = { Embedding: 1, CompositionBars: 1, DeTable: 1, Volcano: 1, Overdispersion: 1, Heatmap: 1, BoxBySample: 1, Note: 1, Reconcile: 1, AnnoRecord: 1, MetadataFacets: 1, GeneList: 1, VariableGenes: 1, Widget: 1 };
 
 export class Agent {
   app: App;
@@ -59,7 +58,7 @@ export class Agent {
   stopLive() { this.abortCtrl?.abort(); this.app.toast("Stopped — you have the wheel", null); }
 
   validate(p: Partial<Panel>) {
-    if (!REGISTRY[p.type!]) return { ok: false, reason: `unknown component type “${p.type}” — not in the validated registry` };
+    if (!isAgentPanelType(p.type!)) return { ok: false, reason: `unknown component type “${p.type}” — not in the validated registry` };
     return { ok: true };
   }
 

@@ -5,6 +5,7 @@ import { Ctx } from "./data/ctx.ts";
 import { App } from "./ui/shell.ts";
 import { getProvider, PROVIDER_KEY, type Provider } from "./agent/providers.ts";
 import { ComputePool } from "./compute/pool.ts";
+import "./ui/example-panel.ts";   // an EXTERNAL panel module that self-registers (proves the panel registry — zero core edits)
 
 const storeParam = new URLSearchParams(location.search).get("store") || "/sample.lstar.zarr/";
 const STORE_URL = new URL(storeParam.endsWith("/") ? storeParam : storeParam + "/", location.origin).href;

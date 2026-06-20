@@ -3,7 +3,8 @@ import { Ctx } from "../data/ctx.ts";
 import { Coord, handleLabel, EntityRef } from "../data/coord.ts";
 import { Panel, PanelView, PanelHooks, CompReactor, BuiltBody, bodyFor, paintEmbedding, resolvePanelStyleFor } from "./panels.ts";
 import { EmbeddingView } from "../render/embedding.ts";
-import { Agent, Scope, REGISTRY } from "../agent/agent.ts";
+import { Agent, Scope } from "../agent/agent.ts";
+import { agentPanelTypes } from "./panel-registry.ts";
 import { checkLive } from "../agent/live.ts";
 import { getProvider, providerModel } from "../agent/providers.ts";
 import { normalizeViewPatch, RawViewPatch, World, PanelSpec, PanelPatch, MAX_COLS } from "../agent/viewpatch.ts";
@@ -653,7 +654,7 @@ export class App {
     const geneSet = new Set(await this.ctx.view.genes());   // warm + snapshot the gene index so geneExists is sync
     const all = () => [...this.canvas, ...this.rail];
     const world: World = {
-      panelTypes: Object.keys(REGISTRY),
+      panelTypes: agentPanelTypes(),
       categoricals: this.ctx.categoricalFields(),
       groupings: this.ctx.groupings(),
       valuesOf: (f) => this.ctx.categoricalValues(f),

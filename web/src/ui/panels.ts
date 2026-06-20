@@ -4,6 +4,7 @@ import { EmbeddingView } from "../render/embedding.ts";
 import { colorsFor, focusMaskFor, categoryColorOf } from "../render/colors.ts";
 import { themeIsDark } from "../render/theme.ts";
 import { getStyle, resolveStyle } from "../render/style.ts";
+import { registerPanelType, getPanelType } from "./panel-registry.ts";
 import { EmbeddingStyle } from "../render/embedding.style.ts";
 import "./heatmap.style.ts";   // side-effect: the Heatmap panel's style descriptor self-registers
 import "./facets.style.ts";    // side-effect: the MetadataFacets panel's style descriptor self-registers
@@ -78,24 +79,8 @@ const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&l
 export interface BuiltBody { el: HTMLElement; afterAttach?: () => void; headerControls?: HTMLElement; widget?: WidgetHandle; }   // headerControls: a control the body puts in the panel header (e.g. a gene filter). widget: a mounted widget iframe (panelEl wires its folding toolbar controls).
 
 export async function bodyFor(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltBody> {
-  switch (p.type) {
-    case "Embedding": return embeddingBody(p, ctx, hooks);
-    case "DeTable": return deBody(p, ctx, hooks);
-    case "Volcano": return volcanoBody(p, ctx);
-    case "CompositionBars": return compositionBody(p, ctx, hooks);
-    case "MetadataFacets": return facetsBody(p, ctx, hooks);
-    case "BoxBySample": return boxBody(p, ctx);
-    case "Overdispersion": return overdispBody(ctx, hooks);
-    case "Heatmap": return heatmapBody(p, ctx, hooks);
-    case "Reconcile": return reconcileBody(p, ctx, hooks);
-    case "AnnoRecord": return annoRecordBody(p, ctx, hooks);
-    case "SplitHeat": return splitHeatBody(p);
-    case "GeneList": return geneListBody(p, hooks);
-    case "VariableGenes": return variableGenesBody(p, ctx, hooks);
-    case "Widget": return widgetBody(p, ctx, hooks);
-    case "Note": { const d = mk("div", "notebody"); d.innerHTML = p.text || ""; d.style.cssText = "font-size:12.5px;line-height:1.5"; return { el: d }; }
-    default: return { el: mk("div", undefined, p.type) };
-  }
+  const def = getPanelType(p.type);   // registry lookup — built-ins register at the bottom of this file; external modules register themselves
+  return def ? def.body(p, ctx, hooks) : { el: mk("div", undefined, p.type) };   // unknown type → a labelled placeholder (no throw)
 }
 
 // A Widget panel hosts an author-written widget in a sandboxed iframe, bridged to coord/ctx/theme via the WidgetHost.
@@ -1303,3 +1288,22 @@ function ramp(t: number, override?: { lo: number[]; hi: number[] }): string {
   const a = override?.lo || (dark ? [27, 34, 48] : [244, 240, 228]), b = override?.hi || (dark ? [224, 164, 88] : [186, 96, 22]);
   return `rgb(${a.map((x, i) => Math.round(x + (b[i] - x) * t)).join(",")})`;
 }
+
+// ── Built-in panel-type registrations ── (the old hardcoded `bodyFor` switch + agent.ts REGISTRY, now a registry the
+// core looks up; `agent:true` = the model may add/reference it. An EXTERNAL module registers itself the same way —
+// zero edits here. Body signatures are normalized to (p, ctx, hooks).)
+registerPanelType({ type: "Embedding", body: embeddingBody, agent: true });
+registerPanelType({ type: "DeTable", body: deBody, agent: true });
+registerPanelType({ type: "Volcano", body: (p, ctx) => volcanoBody(p, ctx), agent: true });
+registerPanelType({ type: "CompositionBars", body: compositionBody, agent: true });
+registerPanelType({ type: "MetadataFacets", body: facetsBody, agent: true });
+registerPanelType({ type: "BoxBySample", body: (p, ctx) => boxBody(p, ctx), agent: true });
+registerPanelType({ type: "Overdispersion", body: (_p, ctx, hooks) => overdispBody(ctx, hooks), agent: true });
+registerPanelType({ type: "Heatmap", body: heatmapBody, agent: true });
+registerPanelType({ type: "Reconcile", body: reconcileBody, agent: true });
+registerPanelType({ type: "AnnoRecord", body: annoRecordBody, agent: true });
+registerPanelType({ type: "GeneList", body: (p, _ctx, hooks) => geneListBody(p, hooks), agent: true });
+registerPanelType({ type: "VariableGenes", body: variableGenesBody, agent: true });
+registerPanelType({ type: "Widget", body: widgetBody, agent: true });
+registerPanelType({ type: "Note", body: (p) => { const d = mk("div", "notebody"); d.innerHTML = p.text || ""; d.style.cssText = "font-size:12.5px;line-height:1.5"; return { el: d }; }, agent: true });
+registerPanelType({ type: "SplitHeat", body: (p) => splitHeatBody(p) });   // app-created only (not agent-addable) — matches the old REGISTRY which omitted it
