@@ -32,6 +32,33 @@ function wasmCopyPlugin() {
   };
 }
 
+// EXPERIMENT (cross-origin isolation / SAB feasibility): serve ONLY /sab-test* with COOP+COEP so we can measure
+// whether SharedArrayBuffer + our sandboxed-iframe + same-origin /api patterns survive isolation — WITHOUT isolating
+// the whole app. COEP value is switchable via ?coep=credentialless (default require-corp) to A/B both. Temporary.
+function sabTestHeadersPlugin() {
+  return {
+    name: "sab-test-headers",
+    configureServer(server: any) {
+      server.middlewares.use((req: any, res: any, next: any) => {
+        const url = req.url || "";
+        // CORP on EVERY response → all (same-origin) subresources are embeddable inside a cross-origin-isolated document
+        // (an isolated doc with COEP require-corp blocks any subresource lacking CORP — incl. the worker script).
+        res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+        const coep = /coep=credentialless/.test(url) ? "credentialless" : "require-corp";
+        // The DOCUMENT (sab-test page, or the app with ?coi=1) gets COOP+COEP → it becomes cross-origin isolated.
+        if (url.startsWith("/sab-test") || /[?&]coi=1/.test(url)) {
+          res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
+          res.setHeader("Cross-Origin-Embedder-Policy", coep);
+        }
+        // The WORKER script needs COEP too so the worker is itself isolatable (and can use SharedArrayBuffer). Vite
+        // requests it as ...worker.ts?worker_file&type=module. Harmless when the owner doc isn't isolated.
+        if (/worker_file/.test(url) || /\/compute\/worker/.test(url)) res.setHeader("Cross-Origin-Embedder-Policy", "require-corp");
+        next();
+      });
+    },
+  };
+}
+
 // Spawn the agent proxy alongside the dev server (it exits quietly if already running).
 function agentProxyPlugin() {
   return {
@@ -71,7 +98,7 @@ function zarrStorePlugin() {
 }
 
 export default defineConfig({
-  plugins: [zarrStorePlugin(), wasmCopyPlugin(), agentProxyPlugin()],
+  plugins: [sabTestHeadersPlugin(), zarrStorePlugin(), wasmCopyPlugin(), agentProxyPlugin()],
   server: { port: 8787, fs: { allow: ["..", "../..", "../../lstar"] }, proxy: { "/api": "http://localhost:8786" } },
   build: { target: "es2022" },
 });

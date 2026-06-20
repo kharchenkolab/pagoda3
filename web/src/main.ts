@@ -4,6 +4,7 @@ import { Coord } from "./data/coord.ts";
 import { Ctx } from "./data/ctx.ts";
 import { App } from "./ui/shell.ts";
 import { getProvider, PROVIDER_KEY, type Provider } from "./agent/providers.ts";
+import { ComputePool } from "./compute/pool.ts";
 
 const storeParam = new URLSearchParams(location.search).get("store") || "/sample.lstar.zarr/";
 const STORE_URL = new URL(storeParam.endsWith("/") ? storeParam : storeParam + "/", location.origin).href;
@@ -20,7 +21,8 @@ async function boot() {
   // the console: p2.setProvider("openai"). getProvider() is read at the start of every ask, so the NEXT ask uses it
   // (no reload needed). See web/src/agent/providers.ts.
   const setProvider = (p: Provider) => { try { localStorage.setItem(PROVIDER_KEY, p === "openai" ? "openai" : "anthropic"); } catch { /* */ } return "agent provider → " + getProvider() + " (applies on next ask)"; };
-  (window as any).p2 = { ds, view, coord, ctx, app, getProvider, setProvider };
+  const computePool = new ComputePool();   // off-main-thread kernel pool (S0+; used when cross-origin isolated, else view.ts falls back)
+  (window as any).p2 = { ds, view, coord, ctx, app, getProvider, setProvider, computePool };
 }
 
 boot().catch((e) => {

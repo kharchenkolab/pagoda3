@@ -1,0 +1,115 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>SAB / cross-origin-isolation feasibility test</title>
+<style>
+  body { font: 14px -apple-system, system-ui, sans-serif; max-width: 820px; margin: 24px auto; padding: 0 16px; color: #1a2230; }
+  h1 { font-size: 18px; } h2 { font-size: 14px; margin-top: 22px; color: #556; }
+  table { border-collapse: collapse; width: 100%; margin-top: 8px; }
+  td, th { text-align: left; padding: 6px 10px; border-bottom: 1px solid #e3e7ee; vertical-align: top; }
+  .pass { color: #137a36; font-weight: 600; } .fail { color: #c0392b; font-weight: 600; } .info { color: #667; }
+  code { background: #f1f3f7; padding: 1px 5px; border-radius: 4px; font: 12px ui-monospace, monospace; }
+  .note { color: #667; font-size: 12.5px; margin-top: 4px; }
+  #verdict { margin-top: 18px; padding: 12px 14px; border-radius: 8px; font-weight: 600; }
+</style>
+</head>
+<body>
+<h1>SharedArrayBuffer / cross-origin-isolation feasibility</h1>
+<p class="info">Served with <code>Cross-Origin-Opener-Policy: same-origin</code> + <code>Cross-Origin-Embedder-Policy</code> (value below).
+Switch the embedder policy with <a href="?coep=require-corp">?coep=require-corp</a> (default) or <a href="?coep=credentialless">?coep=credentialless</a>.</p>
+<table id="results"><thead><tr><th>check</th><th>result</th><th>detail</th></tr></thead><tbody></tbody></table>
+<div id="verdict"></div>
+<h2>What this tells us</h2>
+<p class="note">If <b>cross-origin isolated</b> and <b>page↔worker shared memory</b> both pass, we can put the counts matrix in a
+<code>SharedArrayBuffer</code> and share it zero-copy with a host-side compute worker (the kernels-in-worker path for <code>pagoda.runCompute</code>).
+The <b>sandboxed srcdoc iframe</b> check confirms our widget render surface still loads under isolation (it stays non-isolated, which is fine — it only renders).
+The <b>same-origin /api fetch</b> check confirms COEP doesn't break our proxy calls.</p>
+
+<script>
+const rows = [];
+function add(name, ok, detail) {
+  rows.push({ name, ok, detail });
+  const tb = document.querySelector("#results tbody");
+  const tr = document.createElement("tr");
+  const cls = ok === true ? "pass" : ok === false ? "fail" : "info";
+  const label = ok === true ? "PASS" : ok === false ? "FAIL" : "—";
+  tr.innerHTML = `<td><code>${name}</code></td><td class="${cls}">${label}</td><td class="info"></td>`;
+  tr.children[2].textContent = detail || "";
+  tb.appendChild(tr);
+}
+
+async function run() {
+  const coep = (location.search.match(/coep=(\w+)/) || [, "require-corp"])[1];
+  add("COEP value (header)", "info", coep);
+
+  // 1) cross-origin isolated?
+  const iso = self.crossOriginIsolated === true;
+  add("crossOriginIsolated", iso, String(self.crossOriginIsolated));
+
+  // 2) SharedArrayBuffer constructor + allocate
+  let sabCtor = typeof SharedArrayBuffer !== "undefined";
+  let sab = null;
+  try { if (sabCtor) sab = new SharedArrayBuffer(16); add("SharedArrayBuffer available + allocate", !!sab, sab ? "new SharedArrayBuffer(16) ok" : "constructor undefined"); }
+  catch (e) { add("SharedArrayBuffer available + allocate", false, String(e)); }
+
+  // 3) REAL shared memory across threads: post the SAB to a worker, worker writes via Atomics, main reads it back.
+  let sharedOk = false, sharedDetail = "";
+  try {
+    if (!sab) throw new Error("no SAB to share");
+    const arr = new Int32Array(sab);
+    const src = "self.onmessage=function(e){try{var a=new Int32Array(e.data);Atomics.store(a,0,12345);self.postMessage('ok');}catch(err){self.postMessage('ERR:'+(err&&err.message||err));}};";
+    const w = new Worker(URL.createObjectURL(new Blob([src], { type: "application/javascript" })));
+    const msg = await new Promise((res, rej) => { w.onmessage = (e) => res(e.data); w.onerror = (e) => rej(e.message || "worker error"); w.postMessage(sab); setTimeout(() => rej("timeout"), 2000); });
+    w.terminate();
+    if (String(msg).startsWith("ERR:")) { sharedDetail = "worker: " + msg; }
+    else { sharedOk = Atomics.load(arr, 0) === 12345; sharedDetail = sharedOk ? "worker wrote 12345 via Atomics; main thread sees it (true shared memory)" : "value not visible on main thread (got a copy, not shared)"; }
+  } catch (e) { sharedDetail = "postMessage(SAB) rejected: " + (e && e.message || e); }
+  add("page↔worker SHARED memory (Atomics)", sharedOk, sharedDetail);
+
+  // 4) our widget pattern: a sandboxed allow-scripts srcdoc iframe must still load + run a script under COEP
+  let iframeOk = false, iframeDetail = "";
+  try {
+    const token = "widget-alive-" + Math.floor(performance.now());
+    const p = new Promise((res) => {
+      const h = (e) => { if (e.data === token) { window.removeEventListener("message", h); res(true); } };
+      window.addEventListener("message", h);
+      setTimeout(() => { window.removeEventListener("message", h); res(false); }, 1500);
+    });
+    const f = document.createElement("iframe");
+    f.setAttribute("sandbox", "allow-scripts");
+    f.style.cssText = "width:1px;height:1px;border:0;position:absolute;left:-9999px";
+    f.srcdoc = "<!doctype html><body><scr" + "ipt>parent.postMessage('" + token + "','*');</scr" + "ipt></body>";
+    document.body.appendChild(f);
+    iframeOk = await p;
+    iframeDetail = iframeOk ? "sandboxed srcdoc iframe loaded + ran its script + postMessaged back (widget render surface OK under isolation)" : "iframe did not run/postMessage — COEP may be blocking the sandboxed frame";
+  } catch (e) { iframeDetail = String(e); }
+  add("sandboxed allow-scripts srcdoc iframe (widget)", iframeOk, iframeDetail);
+
+  // 5) same-origin /api fetch under COEP (our proxy path)
+  let apiOk = false, apiDetail = "";
+  try { const r = await fetch("/api/health"); apiOk = r.ok; apiDetail = "GET /api/health → HTTP " + r.status + (r.ok ? " (same-origin proxy works under COEP)" : ""); }
+  catch (e) { apiDetail = "fetch failed: " + (e && e.message || e); }
+  add("same-origin /api fetch", apiOk, apiDetail);
+
+  // 6) same-origin module/wasm asset reachable under COEP (informational — the app's kernels load from /wasm)
+  let wasmOk = null, wasmDetail = "";
+  try { const r = await fetch("/wasm/lstar_kernels.mjs", { method: "GET" }); wasmOk = r.ok ? true : null; wasmDetail = "GET /wasm/lstar_kernels.mjs → HTTP " + r.status + (r.ok ? " (same-origin asset OK)" : " (not built / absent — informational)"); }
+  catch (e) { wasmDetail = "fetch failed: " + (e && e.message || e); }
+  add("same-origin /wasm asset (info)", wasmOk, wasmDetail);
+
+  // verdict
+  const go = iso && sharedOk && iframeOk && apiOk;
+  const v = document.getElementById("verdict");
+  v.textContent = go
+    ? "✅ GO — cross-origin isolation works here: SAB is shareable with a worker, our sandboxed widget iframe still runs, and /api still works. The kernels-in-worker + SAB path is viable on this origin."
+    : "⚠ MIXED — see the failing rows above. " + (!iso ? "Not cross-origin isolated (headers not applied or a resource blocked it). " : "") + (iso && !sharedOk ? "Isolated but SAB sharing failed. " : "") + (iso && !iframeOk ? "The sandboxed widget iframe did not run under this COEP — try ?coep=credentialless. " : "");
+  v.style.background = go ? "#e6f4ea" : "#fdecea";
+  v.style.color = go ? "#137a36" : "#8a2a1f";
+
+  window.__sabTest = { coep, crossOriginIsolated: iso, sabAvailable: !!sab, sharedMemory: sharedOk, sandboxedIframe: iframeOk, api: apiOk, wasm: wasmOk, rows };
+}
+run();
+</script>
+</body>
+</html>
