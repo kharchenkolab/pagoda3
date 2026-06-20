@@ -124,7 +124,7 @@ test("per-panel param: a widget param-set normalizes to a setParam op (no spurio
   const r = normalizeViewPatch({ panels: [{ id: 7, param: { id: "threshold", value: 5 } }] }, w);
   assert.deepEqual(find(r.ops, "setParam")[0], { kind: "setParam", id: 7, param: "threshold", value: 5 });
   assert.equal(r.rejected.length, 0);   // param-only op must not also report "no change"
-  assert.equal(find(normalizeViewPatch({ panels: [{ id: 7, param: { value: 5 } }] }, w).ops, "setParam").length, 0);   // missing id → no op
+  assert.equal(find(normalizeViewPatch({ panels: [{ id: 7, param: { value: 5 } }] } as any, w).ops, "setParam").length, 0);   // missing id → no op (input deliberately invalid)
 });
 
 test("add panel: valid type with config; unknown type rejected", () => {
@@ -253,12 +253,12 @@ test("unfacet: true / id / {by} parse to the inverse op", () => {
 
 test("facet misplaced inside a panels[] op is hoisted to a top-level facet (not rejected)", () => {
   const w = makeWorld();   // panel 4 = Heatmap
-  const r = normalizeViewPatch({ panels: [{ id: 4, facet: { by: "condition", layout: "side" } }] }, w);
+  const r = normalizeViewPatch({ panels: [{ id: 4, facet: { by: "condition", layout: "side" } }] } as any, w);   // facet deliberately misplaced inside a panel op
   assert.deepEqual(find(r.ops, "facet"), [{ kind: "facet", by: "condition", values: ["disease", "control"], panel: 4, layout: "side" }]);
   assert.equal(r.rejected.length, 0);   // NOT "panel #4: nothing to change"
   assert.equal(find(r.ops, "configPanel").length, 0);
   // a facet alongside real per-panel changes: both apply
-  const both = normalizeViewPatch({ panels: [{ id: 4, genes: ["GNLY"], facet: { by: "condition" } }] }, w);
+  const both = normalizeViewPatch({ panels: [{ id: 4, genes: ["GNLY"], facet: { by: "condition" } }] } as any, w);   // facet deliberately misplaced
   assert.equal(find(both.ops, "facet").length, 1);
   assert.equal(find(both.ops, "configPanel").length, 1);
 });

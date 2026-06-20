@@ -560,7 +560,7 @@ export class App {
       const declared: any[] = m?.params || [], saved: any[] = p.params || [];
       p.params = declared.map((d) => { const s = saved.find((x) => x.id === d.id); return s && s.value !== undefined ? { ...d, value: s.value } : d; });
       for (const pr of p.params) { const d = declared.find((x) => x.id === pr.id); if (d && JSON.stringify(pr.value) !== JSON.stringify(d.value)) handle.sendParam(pr.id, pr.value); }
-      p.controls.forEach((c) => addBtn(c, true));
+      (p.controls || []).forEach((c) => addBtn(c, true));
       p.params.forEach((pr) => addParam(pr, true));
     });
   }
@@ -1412,7 +1412,7 @@ export class App {
     return cv;
   }
 
-  newPanel(p: Partial<Panel>): Panel { return { id: ++this.uid, type: p.type!, title: p.title || p.type!, cap: p.cap, full: p.full, col: p.col, bind: p.bind, text: p.text, q: p.q, group: p.group, gene: p.gene, aLabel: p.aLabel, bLabel: p.bLabel, heatMode: p.heatMode, genes: p.genes, view: p.view, split: p.split, rows: p.rows, source: p.source, controls: p.controls }; }
+  newPanel(p: Partial<Panel>): Panel { return { id: ++this.uid, type: p.type!, title: p.title || p.type!, cap: p.cap, full: p.full, col: p.col, bind: p.bind, text: p.text, q: p.q, group: p.group, gene: p.gene, aLabel: p.aLabel, bLabel: p.bLabel, heatMode: p.heatMode, genes: p.genes, view: p.view, split: p.split, rows: p.rows, source: p.source, controls: p.controls, params: p.params, version: p.version, description: p.description, permissions: p.permissions }; }   // widget module fields (P2 params, P4 version/description/permissions) MUST ride through restore — captureLayout serializes them, so newPanel (the reconstruct path for session/workspace restore) has to carry them or a reload silently drops a widget's knobs + its declared-permissions consent gate
 
   // Add a configured panel to the canvas — the composition atom (the agent's add_panel). Additive and
   // checkpointed (so it's non-disorienting and reversible); returns the new id so it can be configure_panel'd.
