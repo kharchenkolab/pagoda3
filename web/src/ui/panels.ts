@@ -6,6 +6,7 @@ import { themeIsDark } from "../render/theme.ts";
 import { getStyle, resolveStyle } from "../render/style.ts";
 import { EmbeddingStyle } from "../render/embedding.style.ts";
 import "./heatmap.style.ts";   // side-effect: the Heatmap panel's style descriptor self-registers
+import "./facets.style.ts";    // side-effect: the MetadataFacets panel's style descriptor self-registers
 import { catColor } from "../data/view.ts";
 import type { EntityRef } from "../data/coord.ts";
 import { reconcile, crosstab, ReconRow, AnnotationLayer, CapRecord, labelChain } from "../anno/model.ts";
@@ -372,6 +373,7 @@ async function compositionBody(panel: Panel, ctx: Ctx, hooks: PanelHooks): Promi
 // Numeric covariates render a histogram you can drag-brush to select a value range.
 const fmtNum = (v: number) => Math.abs(v) >= 100 ? Math.round(v).toLocaleString() : String(+v.toFixed(2));
 async function facetsBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltBody> {
+  const s = resolvePanelStyleFor(ctx, "MetadataFacets", p.view);   // panel style (histogram bins)
   const fields = ctx.metadataFields();
   const meta = new Map<string, any>();        // warmed categorical metadata (codes/categories/colors)
   const numMeta = new Map<string, any>();     // warmed numeric metadata (values/min/max)
@@ -468,7 +470,7 @@ async function facetsBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltB
   // on the readout returns to the full, unrestricted set.
   const numericEl = (f: any, selCells: Int32Array | null) => {
     const nm = numMeta.get(f.name); if (!nm) return mk("div", "facetvals");
-    const vals: Float32Array = nm.values, lo = nm.min, hi = nm.max, BINS = 28, wbin = (hi - lo) / BINS || 1;
+    const vals: Float32Array = nm.values, lo = nm.min, hi = nm.max, BINS = Math.round(s.hist.bins), wbin = (hi - lo) / BINS || 1;
     const binOf = (v: number) => { let bi = Math.floor((v - lo) / wbin); return bi < 0 ? 0 : bi >= BINS ? BINS - 1 : bi; };
     const full = new Int32Array(BINS); for (let i = 0; i < vals.length; i++) full[binOf(vals[i])]++;
     const sub = selCells ? new Int32Array(BINS) : null; if (sub) for (let k = 0; k < selCells!.length; k++) sub[binOf(vals[selCells![k]])]++;
