@@ -25,6 +25,7 @@ export interface Capability {
   summary: string;                       // one line: what it returns
   whenToUse: string;                     // guidance (esp. "don't loop expr")
   params: Record<string, string>;        // param → description
+  returns: string;                       // the OUTPUT shape — so the agent knows what fields it can render (no guessing a p-value the stat doesn't have)
   example: string;                       // a pagoda.compute(...) call
   heavy?: boolean;                        // hint: route through the compute worker (item D) when available
   run(ctx: CapCtx, args: any): Promise<any>;
@@ -49,6 +50,7 @@ export const CAPABILITIES: Capability[] = [
     summary: "top over-dispersed (highly variable) genes for a cell set — kernel F-test residuals, genome-wide, fast",
     whenToUse: "'variable / overdispersed / most-variable genes' (HVG) for a population. Pass a cell set, or omit to use the current selection. NEVER loop expr to compute variance yourself — this is the kernel, in one call.",
     params: { cells: "number[] cell indices (optional)", "field+value": "a category instead of cells (optional)", n: "how many genes (default 50)" },
+    returns: "{ genes:[{ symbol, score (overdispersion residual — higher = more variable), mean }], nA (cells used) } — genes sorted by score desc",
     example: "await pagoda.compute('overdispersion', {field:'cell_type', value:'CD4 T', n:30})",
     async run(ctx, a) {
       const cells = await resolveCells(ctx, a);
@@ -62,28 +64,35 @@ export const CAPABILITIES: Capability[] = [
   {
     name: "de",
     summary: "differential expression between two cell sets A vs B (direct test) — whole transcriptome, subsampled, fast",
-    whenToUse: "contrast TWO groups (naive vs memory, day0 vs day7). Pass A and B cell sets; B defaults to the complement of A. NEVER answer a contrast with two separate marker lists — only the direct A-vs-B test shows what differs.",
-    params: { A: "{cells}|{field,value} for group A (or omit → current selection)", B: "{cells}|{field,value} for group B (default = the rest)", n: "top genes (default 30)", dir: "'up' (higher in A) | 'down' (higher in B) | 'abs' (default, by |logFC|)" },
+    whenToUse: "contrast TWO groups (naive vs memory, day0 vs day7). Pass A and B cell sets; B defaults to the complement of A. NEVER answer a contrast with two separate marker lists — only the direct A-vs-B test shows what differs. There is NO p-value — rank/plot by logFC (effect size); the default 'both' gives a BALANCED two-sided list so a diverging/volcano-style view shows BOTH groups even when one side has the larger fold-changes.",
+    params: { A: "{cells}|{field,value} for group A (or omit → current selection)", B: "{cells}|{field,value} for group B (default = the rest)", n: "top genes (default 30)", dir: "'both' (DEFAULT — balanced: ~half strongest-up + half strongest-down) | 'up' (higher in A) | 'down' (higher in B) | 'abs' (by raw |logFC|, can be one-sided)" },
+    returns: "{ genes:[{ symbol, lfc (logFC: >0 higher in A, <0 higher in B), meanA, meanB }], nA, nB, dir } — sorted by signed logFC desc. NO p-value (effect-size test); use lfc as the significance proxy.",
     example: "await pagoda.compute('de', {A:{field:'cell_type',value:'CD4 T'}, B:{field:'cell_type',value:'CD8 T'}})",
     async run(ctx, a) {
       const A = await resolveCells(ctx, a.A ?? a);
       if (!A.length) return { genes: [], nA: 0, note: "no cells in group A" };
       const B = a.B ? await resolveCells(ctx, a.B) : complement(ctx, A);
+      if (!B.length) return { genes: [], nA: A.length, nB: 0, note: "group B resolves to no cells" };
       const de = await ctx.view.subsampleDE(A, B);
       const n = clampN(a.n, 30, 500);
-      const dir = a.dir === "up" ? "up" : a.dir === "down" ? "down" : "abs";
-      let ranked = de.ranked;
-      if (dir === "up") ranked = ranked.filter((r) => r.lfc > 0).sort((x, y) => y.lfc - x.lfc);
-      else if (dir === "down") ranked = ranked.filter((r) => r.lfc < 0).sort((x, y) => x.lfc - y.lfc);
-      const genes = ranked.slice(0, n).map((r) => ({ symbol: r.symbol, lfc: +r.lfc.toFixed(3), meanA: +r.meanA.toFixed(3), meanB: +r.meanB.toFixed(3) }));
-      return { genes, nA: de.nA, approx: de.approx };
+      const dir = a.dir === "up" ? "up" : a.dir === "down" ? "down" : a.dir === "abs" ? "abs" : "both";
+      const up = de.ranked.filter((r) => r.lfc > 0).sort((x, y) => y.lfc - x.lfc);
+      const down = de.ranked.filter((r) => r.lfc < 0).sort((x, y) => x.lfc - y.lfc);
+      let ranked: typeof de.ranked;
+      if (dir === "up") ranked = up.slice(0, n);
+      else if (dir === "down") ranked = down.slice(0, n);
+      else if (dir === "abs") ranked = de.ranked.slice().sort((x, y) => Math.abs(y.lfc) - Math.abs(x.lfc)).slice(0, n);
+      else { const half = Math.max(1, Math.floor(n / 2)); ranked = up.slice(0, n - half).concat(down.slice(0, half)).sort((x, y) => y.lfc - x.lfc); }  // 'both': balanced two-sided
+      const genes = ranked.map((r) => ({ symbol: r.symbol, lfc: +r.lfc.toFixed(3), meanA: +r.meanA.toFixed(3), meanB: +r.meanB.toFixed(3) }));
+      return { genes, nA: de.nA, nB: (de as any).nB, approx: de.approx, dir };
     },
   },
   {
     name: "markers",
     summary: "top MARKER genes for a cell set vs the rest — DE over the whole transcriptome in one call (what's special about these cells)",
     whenToUse: "'top/marker genes for the selection / this cluster'. Pass a cell set, or omit for the current selection. Do NOT loop expr over a hand-picked gene list (slow; raw-mean ranking just surfaces housekeeping genes).",
-    params: { cells: "number[] (optional)", "field+value": "a category (optional)", n: "top genes (default 20)", dir: "'up'|'down'|'abs'" },
+    params: { cells: "number[] (optional)", "field+value": "a category (optional)", n: "top genes (default 20)", dir: "'up' (DEFAULT — markers, higher in the set) | 'down' | 'abs'" },
+    returns: "{ genes:[{ symbol, lfc (vs the rest), meanA, meanB }], nA, nB } — sorted by logFC; the default 'up' gives the positive markers",
     example: "await pagoda.compute('markers', {field:'cell_type', value:'NK', n:15})",
     async run(ctx, a) {
       const cells = await resolveCells(ctx, a);
@@ -95,7 +104,7 @@ export const CAPABILITIES: Capability[] = [
       if (dir === "up") ranked = ranked.filter((r) => r.lfc > 0).sort((x, y) => y.lfc - x.lfc);
       else if (dir === "down") ranked = ranked.filter((r) => r.lfc < 0).sort((x, y) => x.lfc - y.lfc);
       const genes = ranked.slice(0, n).map((r) => ({ symbol: r.symbol, lfc: +r.lfc.toFixed(3), meanA: +r.meanA.toFixed(3), meanB: +r.meanB.toFixed(3) }));
-      return { genes, nA: de.nA, approx: de.approx };
+      return { genes, nA: de.nA, nB: (de as any).nB, approx: de.approx };
     },
   },
   {
@@ -103,6 +112,7 @@ export const CAPABILITIES: Capability[] = [
     summary: "per-group MEAN expression + FRACTION expressing for a set of genes (the dot-plot / heatmap primitive)",
     whenToUse: "dot-plots, heatmaps, violins across the categories of a field. Pass the field + the genes. Do NOT loop raw expr per gene and bin it yourself.",
     params: { field: "the categorical field whose groups are the columns", genes: "string[] gene symbols (the rows)" },
+    returns: "{ groups:[category names], genes:[symbols], mean:[gene][group] (mean expression), frac:[gene][group] (fraction of cells expressing, 0..1) } — mean/frac are row-major (per gene, per group); drive a dot-plot from frac (dot size) + mean (colour)",
     example: "await pagoda.compute('groupStats', {field:'cell_type', genes:['CD3D','MS4A1','NKG7']})",
     async run(ctx, a) {
       const m = await ctx.metaOf(String(a.field));

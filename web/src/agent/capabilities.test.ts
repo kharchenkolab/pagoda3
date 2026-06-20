@@ -36,8 +36,23 @@ test("de: A vs B, dir filters by sign of logFC", async () => {
   assert.deepEqual(up.genes.map((g: any) => g.symbol), ["UP", "MID"]);   // both lfc>0, sorted desc
   const down = await runCapability(mockCtx(), "de", { A: { field: "cell_type", value: "A" }, dir: "down" });   // B defaults to complement
   assert.deepEqual(down.genes.map((g: any) => g.symbol), ["DN"]);
-  const abs = await runCapability(mockCtx(), "de", { A: { cells: [0, 1] } });   // default dir = abs → keeps all
+  const abs = await runCapability(mockCtx(), "de", { A: { cells: [0, 1] }, dir: "abs" });   // raw |logFC|
   assert.equal(abs.genes.length, 3);
+});
+
+test("de: default dir 'both' is BALANCED two-sided (up genes then down), not one-sided", async () => {
+  // a one-sided-dominant mock: 3 strong-down genes + 1 weak-up. 'abs' top-2 would be all down; 'both' must surface the up gene.
+  const ctx = mockCtx({ view: {
+    subsampleDE: async (A: number[], B: number[]) => ({ ranked: [
+      { symbol: "D1", lfc: -3, meanA: 0, meanB: 3 }, { symbol: "D2", lfc: -2.5, meanA: 0, meanB: 2.5 }, { symbol: "D3", lfc: -2, meanA: 0, meanB: 2 }, { symbol: "U1", lfc: 0.4, meanA: 0.5, meanB: 0.1 },
+    ], nA: A.length, nB: B.length, approx: B.length > 0 }),
+    overdispersedGenes: async () => [], geneExpression: async () => ({ values: new Float32Array(10) }),
+  } as any });
+  const r = await runCapability(ctx, "de", { A: { cells: [0, 1] }, B: { cells: [4, 5] }, n: 2 });   // default dir → 'both'
+  assert.equal(r.dir, "both");
+  assert.ok(r.genes.some((g: any) => g.lfc > 0), "balanced 'both' must include an up gene");
+  assert.ok(r.genes.some((g: any) => g.lfc < 0), "balanced 'both' must include a down gene");
+  assert.deepEqual(r.genes.map((g: any) => g.symbol), ["U1", "D1"]);   // half up (U1) + half down (strongest = D1), sorted signed desc
 });
 
 test("markers: defaults to the selection vs the rest, up by default", async () => {
@@ -64,5 +79,5 @@ test("resolveCells: cells | category | default-selection", async () => {
 test("unknown capability throws with the available list; menu omits run()", async () => {
   await assert.rejects(() => runCapability(mockCtx(), "bogus", {}), /unknown compute 'bogus'.*overdispersion/);
   assert.ok(capability("overdispersion"));
-  for (const c of capabilityMenu()) { assert.equal((c as any).run, undefined); assert.ok(c.name && c.summary && c.example); }
+  for (const c of capabilityMenu()) { assert.equal((c as any).run, undefined); assert.ok(c.name && c.summary && c.example && c.returns, `menu item ${c.name} missing a field`); }
 });
