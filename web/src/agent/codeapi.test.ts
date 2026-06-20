@@ -1,9 +1,41 @@
 // Unit tests for the code-result validator. Run: `node --test src/agent/codeapi.test.ts`.
 import { test } from "node:test";
 import assert from "node:assert";
-import { validateComputeResult } from "./codeapi.ts";
+import { validateComputeResult, buildComputeSnapshot } from "./codeapi.ts";
 
 const N = 5;
+
+// A mock ctx for the shared snapshot builder: 5 cells, one categorical, a couple of resolvable genes.
+function snapCtx() {
+  return {
+    n: N,
+    categoricalFields: () => ["cell_type"],
+    metaOf: async (_f: string) => ({ kind: "categorical", codes: Int32Array.from([0, 0, 1, 1, 1]), categories: ["A", "B"] }),
+    embedding: { data: Float32Array.from([0, 0, 1, 1, 2, 2, 3, 3, 4, 4]) },
+    groupings: () => ["cell_type"],
+    groupStatsCached: async (_g: string) => ({ groups: ["A", "B"], mean: [[1, 2]], frac: [[0.5, 0.9]], nGenes: 1 }),
+    view: {
+      genes: async () => [],
+      geneCol: async (s: string) => (s === "GHOST" ? null : 1),
+      geneExpression: async (_s: string) => ({ values: Float32Array.from([0, 1, 2, 3, 4]) }),
+    },
+  } as any;
+}
+
+test("buildComputeSnapshot: cats + embedding always travel; declared genes resolve; unknowns reported; args + stats pass through", async () => {
+  const { snapshot, unknown } = await buildComputeSnapshot(snapCtx(), { genes: ["CD3D", "GHOST"], grouping: "cell_type", args: { thr: 0.4 } });
+  assert.deepEqual(Object.keys(snapshot.cats), ["cell_type"]);
+  assert.equal(snapshot.embedding.length, 2 * N);
+  assert.deepEqual(Object.keys(snapshot.genes), ["CD3D"]);   // GHOST dropped
+  assert.deepEqual(unknown, ["GHOST"]);
+  assert.deepEqual(snapshot.args, { thr: 0.4 });
+  assert.ok(snapshot.stats && snapshot.stats.groups.length === 2);
+  assert.equal(snapshot.n, N);
+});
+
+test("buildComputeSnapshot: maxGenes caps the declared list (bounds the snapshot for the widget caller)", async () => {
+  await assert.rejects(() => buildComputeSnapshot(snapCtx(), { genes: ["A", "B", "C"], maxGenes: 2 }), /too many genes/);
+});
 
 test("genes: valid rows pass; bad shapes rejected; junk rows filtered", () => {
   const ok = validateComputeResult({ kind: "genes", rows: [{ symbol: "CD3D", score: 2 }, { symbol: "MS4A1" }], title: "x" }, N);

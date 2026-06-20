@@ -29,13 +29,14 @@ test("widgetSrcdoc embeds base css, bootstrap and the (escaped) source", () => {
 });
 
 test("bootstrap defines the documented pagoda surface", () => {
-  for (const fn of ["on:", "ready:", "setSelection:", "setColor:", "setHint:", "updateView:", "data:", "fetchExternal:", "loadLib:", "cssVar:"]) {
+  for (const fn of ["on:", "ready:", "setSelection:", "setColor:", "setHint:", "updateView:", "data:", "compute:", "fetchExternal:", "loadLib:", "runCompute:", "cssVar:"]) {
     assert.ok(WIDGET_BOOTSTRAP.includes(fn), `bootstrap missing pagoda.${fn}`);
   }
   // every host→widget message the bootstrap must handle
-  for (const t of ["init", "coord", "hint", "theme", "control", "snapshot", "data", "extData", "libResult"]) {
+  for (const t of ["init", "coord", "hint", "theme", "control", "snapshot", "data", "extData", "libResult", "computeResult"]) {
     assert.ok(WIDGET_BOOTSTRAP.includes(`'${t}'`), `bootstrap missing handler for ${t}`);
   }
+  assert.ok(WIDGET_API_DOC.includes("runCompute"), "API doc must document pagoda.runCompute");
 });
 
 test("API doc mentions every data kind and the theme-vars rule", () => {

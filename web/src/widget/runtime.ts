@@ -13,6 +13,7 @@ export interface WidgetHost {
   data(kind: string, args: any): Promise<any>;                   // resolve a pagoda.data(kind,args) request
   fetchExternal?(url: string, opts?: { as?: string }): Promise<any>;   // host-mediated allowlisted external fetch (optional)
   loadLib?(name: string): Promise<string>;                       // returns an allowlisted, host-pinned library's JS source (optional)
+  runCompute?(code: string, opts?: any): Promise<any>;           // run author compute code in a host-spawned terminable worker (render/compute split, optional)
 }
 
 export interface WidgetHandle {
@@ -66,6 +67,11 @@ export function mountWidget(container: HTMLElement, source: string, host: Widget
         (host.loadLib ? host.loadLib(m.name) : Promise.reject(new Error("loadLib not available in this host"))).then(
           (source) => post({ t: "libResult", reqId: m.reqId, ok: true, source }),
           (err) => post({ t: "libResult", reqId: m.reqId, ok: false, error: String(err?.message || err) }));
+        break;
+      case "requestCompute":
+        (host.runCompute ? host.runCompute(m.code, m.opts) : Promise.reject(new Error("runCompute not available in this host"))).then(
+          (payload) => post({ t: "computeResult", reqId: m.reqId, ok: true, payload }),
+          (err) => post({ t: "computeResult", reqId: m.reqId, ok: false, error: String(err?.message || err) }));
         break;
       case "setSelection": case "setColor": case "setHint": case "updateView": host.apply(m); break;
     }

@@ -7,6 +7,7 @@ import type { WidgetHost } from "./runtime.ts";
 import type { ThemeInfo, CoordInfo, SelectionInfo, HintInfo, WidgetMsg } from "./contract.ts";
 import { themeIsDark } from "../render/theme.ts";
 import { runCapability } from "../agent/capabilities.ts";
+import { buildComputeSnapshot, runInWorker } from "../agent/codeapi.ts";
 
 // The CSS custom properties a widget may use (injected into the iframe :root so it themes with the app). Mirrors
 // the set defined in app.css for both themes — read live so a theme flip re-pushes the new values.
@@ -49,7 +50,7 @@ export function fieldsInfo(fields: { name: string; kind: "categorical" | "numeri
 // with real data + the current selection), but the widget's WRITES (setSelection/setColor/updateView) are swallowed —
 // previewing/probing a widget must NOT mutate the user's live session.
 export function readonlyHost(h: WidgetHost): WidgetHost {
-  return { theme: h.theme, coord: h.coord, hint: h.hint, subscribe: h.subscribe, data: h.data, fetchExternal: h.fetchExternal, loadLib: h.loadLib, apply: () => { /* preview is side-effect-free */ } };
+  return { theme: h.theme, coord: h.coord, hint: h.hint, subscribe: h.subscribe, data: h.data, fetchExternal: h.fetchExternal, loadLib: h.loadLib, runCompute: h.runCompute, apply: () => { /* preview is side-effect-free */ } };
 }
 
 // A short, agent-readable summary of a coordination message a widget EMITS — so a preview can report "the widget did
@@ -108,6 +109,7 @@ export function previewHost(app: App, sim?: PreviewSim): WidgetHost & { __emitte
     },
     fetchExternal: base.fetchExternal ? (u, o) => track(base.fetchExternal!(u, o)) : undefined,
     loadLib: base.loadLib ? (n) => track(base.loadLib!(n)) : undefined,
+    runCompute: base.runCompute ? (c, o) => track(base.runCompute!(c, o)) : undefined,   // tracked so the preview waits for the worker to settle before snapshotting
     __emitted: emitted,
     pending: () => inflight,
   };
@@ -192,6 +194,20 @@ export function makeWidgetHost(app: App): WidgetHost {
       const r = await fetch("/api/lib?name=" + encodeURIComponent(String(name)));
       if (!r.ok) throw new Error(`library "${name}" not available: ` + (await r.text()).slice(0, 120));
       return r.text();
+    },
+    // THE RENDER/COMPUTE SPLIT (Option D): the widget renders in the iframe; its heavy/custom compute runs HERE, in a
+    // host-spawned worker next to the data, TERMINABLE (timeout → terminate, so a runaway widget can't hang the tab) and
+    // off the main thread (the UI never freezes). Same snapshot + worker the analyst code path uses; the result is
+    // FREE-FORM (the widget renders it). Declared genes are bounded; the raw vectors stay in the worker — only the
+    // (small) result crosses back into the iframe.
+    runCompute: async (code, opts) => {
+      if (typeof code !== "string" || !code.trim()) throw new Error("runCompute needs a non-empty code string — the body of an async function that receives `api` and returns a JSON value");
+      const o = opts || {};
+      const { snapshot } = await buildComputeSnapshot(ctx as any, { genes: o.genes, grouping: o.grouping, args: o.args, maxGenes: 400 });
+      const timeoutMs = Math.min(15000, Math.max(200, Number(o.timeoutMs) || 5000));
+      const run = await runInWorker(String(code), snapshot, timeoutMs);
+      if (!run.ok) throw new Error(run.error || "compute failed");
+      return run.result;
     },
   };
 }

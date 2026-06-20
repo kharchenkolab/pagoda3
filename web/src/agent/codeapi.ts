@@ -68,7 +68,8 @@ self.onmessage = async function (e) {
       expr: function (sym) { var v = s.genes[sym]; if (!v) throw new Error('gene "' + sym + '" not in inputs.genes — declare it in the genes parameter'); return v; },
       genesAvailable: Object.keys(s.genes),
       embedding: s.embedding,
-      stats: s.stats || null
+      stats: s.stats || null,
+      args: s.args || null
     };
     var fn = new Function('api','fetch','XMLHttpRequest','importScripts','WebSocket','self','globalThis','postMessage','onmessage',
       '"use strict"; return (async function(){ ' + code + '\\n})();');
@@ -77,6 +78,37 @@ self.onmessage = async function (e) {
   } catch (err) { self.postMessage({ ok: false, error: String(err && err.message ? err.message : err) }); }
 };
 `;
+
+// The minimal ctx surface the snapshot builder needs (the real Ctx satisfies it structurally) — keeps this module
+// pure-loadable and unit-testable with a mock, like capabilities.CapCtx.
+export interface SnapshotCtx {
+  n: number;
+  categoricalFields(): string[];
+  metaOf(field: string): Promise<any>;
+  embedding: { data: Float32Array };
+  groupings(): string[];
+  groupStatsCached(grouping: string): Promise<{ groups: string[]; mean: any; frac: any; nGenes: number }>;
+  view: { genes(): Promise<any>; geneCol(sym: string): Promise<number | null | undefined> | number | null | undefined; geneExpression(sym: string): Promise<{ values: Float32Array }>; };
+}
+
+// Build the worker data snapshot ONCE — used by BOTH the analyst code path (runComputeCode) and the widget render/compute
+// split (pagoda.runCompute). All categoricals + the embedding always travel; declared genes are resolved to vectors
+// (unknowns reported, not thrown); an optional grouping adds precomputed group stats; `args` passes widget params through.
+// `maxGenes` bounds the snapshot for the less-trusted widget caller (the analyst caller leaves it Infinity).
+export async function buildComputeSnapshot(
+  ctx: SnapshotCtx,
+  opts: { genes?: string[]; grouping?: string; args?: any; maxGenes?: number } = {},
+): Promise<{ snapshot: any; unknown: string[] }> {
+  await ctx.view.genes();   // warm the symbol table so geneCol resolves
+  const cats: Record<string, { codes: any; categories: string[] }> = {};
+  for (const f of ctx.categoricalFields()) { const m: any = await ctx.metaOf(f); cats[f] = { codes: m.codes, categories: m.categories }; }
+  const want = (opts.genes || []).map((s) => String(s).trim()).filter(Boolean);
+  if (opts.maxGenes != null && want.length > opts.maxGenes) throw new Error(`too many genes declared (${want.length} > ${opts.maxGenes}) — narrow the gene list`);
+  const genes: Record<string, Float32Array> = {}; const unknown: string[] = [];
+  for (const s of want) { const gi = await ctx.view.geneCol(s); if (gi == null) { unknown.push(s); continue; } genes[s] = (await ctx.view.geneExpression(s)).values; }
+  let stats: any; if (opts.grouping && ctx.groupings().includes(opts.grouping)) { const gs = await ctx.groupStatsCached(opts.grouping); stats = { groups: gs.groups, mean: gs.mean, frac: gs.frac, nGenes: gs.nGenes }; }
+  return { snapshot: { n: ctx.n, cats, genes, embedding: ctx.embedding.data, stats, args: opts.args ?? null }, unknown };
+}
 
 // Run agent code in a fresh worker; resolve with {ok,result}|{ok:false,error}; terminate (hang-safe) on timeout.
 export function runInWorker(code: string, snapshot: any, timeoutMs = 5000): Promise<{ ok: boolean; result?: any; error?: string }> {

@@ -8,7 +8,7 @@ import { checkLive } from "../agent/live.ts";
 import { getProvider, providerModel } from "../agent/providers.ts";
 import { normalizeViewPatch, RawViewPatch, World, PanelSpec, PanelPatch, MAX_COLS } from "../agent/viewpatch.ts";
 import { validateCellSet, resolveCellSet, describeCellSet, CellSet, CellWorld, CellEnv } from "../agent/cellset.ts";
-import { validateComputeResult, runInWorker } from "../agent/codeapi.ts";
+import { validateComputeResult, runInWorker, buildComputeSnapshot } from "../agent/codeapi.ts";
 import { setCodeValues, setConfValues, invalidateColor } from "../render/colors.ts";
 import { setThemeColors } from "../render/theme.ts";
 import { installOverflow } from "./overflow.ts";
@@ -1008,14 +1008,10 @@ export class App {
   async runComputeCode(input: { code?: string; genes?: string[]; grouping?: string; title?: string; toCanvas?: boolean }): Promise<{ ok?: string; error?: string }> {
     const ctx = this.ctx;
     if (typeof input.code !== "string" || !input.code.trim()) return { error: "code (an async function body returning {kind,…}) is required" };
-    await ctx.view.genes();
-    // build the worker snapshot: warmed categoricals, declared gene vectors, the embedding, optional grouping stats
-    const cats: Record<string, { codes: any; categories: string[] }> = {};
-    for (const f of ctx.categoricalFields()) { const m: any = await ctx.metaOf(f); cats[f] = { codes: m.codes, categories: m.categories }; }
-    const genes: Record<string, Float32Array> = {}; const unknown: string[] = [];
-    for (const sym of input.genes || []) { const s = String(sym).trim(); if (!s) continue; const gi = await ctx.view.geneCol(s); if (gi == null) { unknown.push(s); continue; } genes[s] = (await ctx.view.geneExpression(s)).values; }
-    let stats: any; if (input.grouping && ctx.groupings().includes(input.grouping)) { const gs = await ctx.groupStatsCached(input.grouping); stats = { groups: gs.groups, mean: gs.mean, frac: gs.frac, nGenes: gs.nGenes }; }
-    const run = await runInWorker(input.code, { n: ctx.n, cats, genes, embedding: ctx.embedding.data, stats }, 5000);
+    // build the worker snapshot (warmed categoricals, declared gene vectors, the embedding, optional grouping stats)
+    // via the shared builder — the SAME snapshot a widget's pagoda.runCompute gets, so the two code paths can't drift.
+    const { snapshot, unknown } = await buildComputeSnapshot(ctx, { genes: input.genes, grouping: input.grouping });
+    const run = await runInWorker(input.code, snapshot, 5000);
     if (!run.ok) return { error: run.error };
     const v = validateComputeResult(run.result, ctx.n);
     const note = unknown.length ? ` Unknown genes (pass exact symbols; not measured here): ${unknown.join(", ")}.` : "";
