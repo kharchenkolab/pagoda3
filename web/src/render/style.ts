@@ -95,3 +95,21 @@ export function styleSchema(panelType: string, dark = true): { defaults: any; ra
   if (panelType === "Embedding") return { defaults: defaultEmbeddingStyle(dark), ranges: EMBEDDING_RANGES };
   return null;
 }
+
+// FLATTEN the schema into a describe list (one row per dotted leaf): the styleable key, its current effective value
+// (from the panel's RESOLVED style), its default, and the numeric range. This is what `describe_panel` returns — the
+// agent reads it like an MCP tool's schema, then sets keys via update_view({style}). One source of truth: the rows
+// come from the same DEFAULT_STYLE the renderer reads, so the describable surface can't drift from what paint honours.
+export function describeStyle(panelType: string, dark: boolean, resolved?: any): { key: string; current: any; default: any; range?: [number, number] }[] {
+  const sc = styleSchema(panelType, dark); if (!sc) return [];
+  const out: { key: string; current: any; default: any; range?: [number, number] }[] = [];
+  const walk = (def: any, cur: any, prefix: string) => {
+    for (const k of Object.keys(def)) {
+      const path = prefix ? prefix + "." + k : k, dv = def[k], cv = cur ? cur[k] : undefined;
+      if (dv && typeof dv === "object" && !Array.isArray(dv)) walk(dv, cv, path);
+      else out.push({ key: path, current: cv !== undefined ? cv : dv, default: dv, range: sc.ranges[path] });
+    }
+  };
+  walk(sc.defaults, resolved, "");
+  return out;
+}

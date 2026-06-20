@@ -1,7 +1,7 @@
 import { mk } from "./dom.ts";
 import { Ctx } from "../data/ctx.ts";
 import { Coord, handleLabel, EntityRef } from "../data/coord.ts";
-import { Panel, PanelView, PanelHooks, CompReactor, BuiltBody, bodyFor, paintEmbedding } from "./panels.ts";
+import { Panel, PanelView, PanelHooks, CompReactor, BuiltBody, bodyFor, paintEmbedding, resolveEmbeddingStyleFor } from "./panels.ts";
 import { EmbeddingView } from "../render/embedding.ts";
 import { Agent, Scope, REGISTRY } from "../agent/agent.ts";
 import { checkLive } from "../agent/live.ts";
@@ -10,7 +10,8 @@ import { normalizeViewPatch, RawViewPatch, World, PanelSpec, PanelPatch, MAX_COL
 import { validateCellSet, resolveCellSet, describeCellSet, CellSet, CellWorld, CellEnv } from "../agent/cellset.ts";
 import { validateComputeResult, runInWorker, buildComputeSnapshot } from "../agent/codeapi.ts";
 import { setCodeValues, setConfValues, invalidateColor, setCategoryColor, clearCategoryColors, serializeCategoryColors, restoreCategoryColors } from "../render/colors.ts";
-import { clampStyle, deepMerge } from "../render/style.ts";
+import { clampStyle, deepMerge, describeStyle } from "../render/style.ts";
+import { themeIsDark } from "../render/theme.ts";
 import { setThemeColors } from "../render/theme.ts";
 import { installOverflow } from "./overflow.ts";
 import { makeWidgetHost } from "../widget/apphost.ts";
@@ -606,6 +607,19 @@ export class App {
     if (patch.style) { const { clean } = clampStyle(p.type, patch.style); (v as any).style = deepMerge((v as any).style || {}, clean); rebuild = true; }   // per-panel style override (clamped); rebuild → re-resolve on next paint
     p.view = v;
     return rebuild;
+  }
+
+  // describe_panel: the reflective "what can I style here?" surface (weak-C). Returns each styleable key with its
+  // CURRENT effective value, default, and range — read from the same DEFAULT_STYLE the renderer paints from, so it
+  // can't drift from what's actually honoured. P0 covers the Embedding family; other panel types report their named
+  // knobs instead. The agent reads this like an MCP tool's schema, then sets keys via update_view({style}).
+  describePanelStyle(id?: number): { id?: number; type: string; params?: any[]; note?: string } {
+    const panel = id != null ? this.canvas.find((p) => p.id === id) : this.canvas.find((p) => p.type === "Embedding");
+    if (id != null && !panel) return { id, type: "?", note: `no panel #${id}` };
+    const type = panel?.type || "Embedding";
+    if (type !== "Embedding") return { id: panel?.id, type, note: `no per-panel style surface for ${type} yet (P0 covers the Embedding); style it via the named knobs colorBy / colormap / scope / group / genes / heatMode.` };
+    const resolved = resolveEmbeddingStyleFor(this.ctx, panel?.view);
+    return { id: panel?.id, type, params: describeStyle("Embedding", themeIsDark(), resolved) };
   }
 
   // ----- declarative view patcher: the single agent surface for "what to show" -----

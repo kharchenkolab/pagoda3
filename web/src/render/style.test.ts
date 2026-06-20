@@ -1,7 +1,7 @@
 // Unit tests for the per-panel style spec (resolver + merge + clamp). Run: `node --test src/render/style.test.ts`.
 import { test } from "node:test";
 import assert from "node:assert";
-import { defaultEmbeddingStyle, deepMerge, resolveEmbeddingStyle, clampStyle, styleSchema } from "./style.ts";
+import { defaultEmbeddingStyle, deepMerge, resolveEmbeddingStyle, clampStyle, styleSchema, describeStyle } from "./style.ts";
 
 test("defaults are theme-aware; un-patched render is the former literals", () => {
   const dark = defaultEmbeddingStyle(true), light = defaultEmbeddingStyle(false);
@@ -36,6 +36,17 @@ test("clampStyle: known numerics clamped to range; unknown numeric noted but kep
   assert.equal(r.clean.label.fontFamily, "serif");   // string passes
   assert.equal(r.clean.point2.wat, 3);        // unknown kept
   assert.ok(r.notes.some((n) => /point2\.wat/.test(n)));   // …but noted as unvalidated
+});
+
+test("describeStyle: flat rows with current (from resolved) + default + range; unknown panel → []", () => {
+  const resolved = resolveEmbeddingStyle(true, { point: { radius: 6 } });   // radius overridden, rest default
+  const rows = describeStyle("Embedding", true, resolved);
+  const byKey = Object.fromEntries(rows.map((r) => [r.key, r]));
+  assert.deepEqual(byKey["point.radius"], { key: "point.radius", current: 6, default: 2.4, range: [0.3, 20] });   // current reflects the override; default + range from schema
+  assert.equal(byKey["point.opacity"].current, 0.7);   // untouched → default value as current
+  assert.equal(byKey["label.show"].current, true);     // bool leaf, no range
+  assert.ok(rows.length > 15);                         // the whole surface is enumerated
+  assert.deepEqual(describeStyle("Nope", true), []);
 });
 
 test("styleSchema: Embedding describable; unknown panel → null", () => {

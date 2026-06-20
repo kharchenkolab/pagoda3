@@ -127,6 +127,15 @@ function embeddingBody(p: Panel, ctx: Ctx, hooks: PanelHooks): BuiltBody {
   return { el: wrap, afterAttach };
 }
 
+// Resolve the effective Embedding style for a panel: defaults ← global display(alias) ← coord.style ← panel
+// display(alias) ← panel style. `display` (labels/legend/alpha/winsor) is subsumed as ergonomic aliases. Shared by
+// the renderer AND describe_panel so the agent looks up exactly what the paint reads (one source of truth).
+export function resolveEmbeddingStyleFor(ctx: Ctx, view?: PanelView): EmbeddingStyle {
+  const c = ctx.coord.state as any;
+  const alias = (d: any): Partial<EmbeddingStyle> => { const o: any = {}; if (d.alpha != null) o.point = { opacity: d.alpha }; if (d.labels != null) o.label = { show: d.labels }; if (d.legend !== undefined) o.legend = { show: d.legend }; if (d.winsor != null) o.color = { winsor: d.winsor }; return o; };
+  return resolveEmbeddingStyle(themeIsDark(), alias(c.display || {}), c.style?.Embedding, alias((view as any)?.display || {}), (view as any)?.style);
+}
+
 export async function paintEmbedding(ev: EmbeddingView, ctx: Ctx) {
   const c = ctx.coord.state;
   const view = (ev as any)._panel?.view as PanelView | undefined;
@@ -147,11 +156,8 @@ export async function paintEmbedding(ev: EmbeddingView, ctx: Ctx) {
   else mask = focusMaskFor(c.focus, ctx.n);
   // display is PER-PANEL: a panel's own overrides win over the coord default, so panels are independent
   // (toggle labels on one embedding without touching another). coord.display is just the starting default.
-  // STYLE: defaults ← global display(alias) ← global style ← panel display(alias) ← panel style. `display`
-  // (labels/legend/alpha/winsor) is SUBSUMED as ergonomic aliases into the one style spec, so there's a single source
-  // of truth and the agent can reach every other rendering constant through the same `style` surface.
-  const alias = (d: any): Partial<EmbeddingStyle> => { const o: any = {}; if (d.alpha != null) o.point = { opacity: d.alpha }; if (d.labels != null) o.label = { show: d.labels }; if (d.legend !== undefined) o.legend = { show: d.legend }; if (d.winsor != null) o.color = { winsor: d.winsor }; return o; };
-  const style = resolveEmbeddingStyle(themeIsDark(), alias(c.display), (ctx.coord.state as any).style?.Embedding, alias(view?.display || {}), (view as any)?.style);
+  // STYLE resolved through the SHARED helper (so describe_panel reads the same surface the renderer paints from).
+  const style = resolveEmbeddingStyleFor(ctx, view);
   const { rgba, legend } = await colorsFor(ctx.view, colorBy, mask, view?.colormap, style.color.winsor ?? 0);   // winsor clips outliers off the numeric scale
   ev.setStyle(style);
   ev.setColors(rgba);
