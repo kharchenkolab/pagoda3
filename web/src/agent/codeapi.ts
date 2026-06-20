@@ -49,6 +49,7 @@ export const CODE_API_DOC =
   "Write the body of an async function that receives `api` and RETURNS a typed result. api: " +
   "`api.n` (cell count); `api.cat(field)` → {codes:Int[], categories:string[]} for a categorical (cell_type, leiden, sample, condition, patient, outcome); " +
   "`api.catOf(field, i)` → the category string of cell i; `api.expr(symbol)` → Float32Array of log-normalized expression (only for genes you DECLARE in `genes`); " +
+  "`api.numeric(field)` → Float32Array of a NUMERIC field per cell (QC etc.: mito, n_umi, n_gene, …; `api.numericFields` lists them) — use it to threshold/score over QC; " +
   "`api.genesAvailable` (declared symbols); `api.embedding` (Float32Array, x,y interleaved per cell); `api.stats` → {groups, mean, frac, nGenes} if you pass `grouping`. " +
   "Return one of: {kind:'genes', rows:[{symbol, score?}], title?} (ranked table → rail); {kind:'values', values:number[len n], label} (per-cell score → colours the embedding); " +
   "{kind:'note', text, title?}; {kind:'cells', ids:number[], label?} (→ selection). Example — score cells by a signature: " +
@@ -66,6 +67,8 @@ self.onmessage = async function (e) {
       cat: function (f) { return s.cats[f] || null; },
       catOf: function (f, i) { var c = s.cats[f]; return c ? c.categories[c.codes[i]] : null; },
       expr: function (sym) { var v = s.genes[sym]; if (!v) throw new Error('gene "' + sym + '" not in inputs.genes — declare it in the genes parameter'); return v; },
+      numeric: function (f) { return (s.numerics && s.numerics[f]) || null; },
+      numericFields: Object.keys(s.numerics || {}),
       genesAvailable: Object.keys(s.genes),
       embedding: s.embedding,
       stats: s.stats || null,
@@ -84,6 +87,7 @@ self.onmessage = async function (e) {
 export interface SnapshotCtx {
   n: number;
   categoricalFields(): string[];
+  metadataFields(): { name: string; kind: "categorical" | "numeric" }[];   // for the numeric fields (QC etc.)
   metaOf(field: string): Promise<any>;
   embedding: { data: Float32Array };
   groupings(): string[];
@@ -102,12 +106,16 @@ export async function buildComputeSnapshot(
   await ctx.view.genes();   // warm the symbol table so geneCol resolves
   const cats: Record<string, { codes: any; categories: string[] }> = {};
   for (const f of ctx.categoricalFields()) { const m: any = await ctx.metaOf(f); cats[f] = { codes: m.codes, categories: m.categories }; }
+  // NUMERIC fields (QC: mito/n_umi/n_gene, od_score, …) so the code can threshold/score over them — they were missing, so
+  // "flag cells with high mito" couldn't be done in the sandbox.
+  const numerics: Record<string, Float32Array> = {};
+  for (const f of ctx.metadataFields()) { if (f.kind === "numeric") { try { const m: any = await ctx.metaOf(f.name); if (m && m.values) numerics[f.name] = m.values; } catch { /* skip */ } } }
   const want = (opts.genes || []).map((s) => String(s).trim()).filter(Boolean);
   if (opts.maxGenes != null && want.length > opts.maxGenes) throw new Error(`too many genes declared (${want.length} > ${opts.maxGenes}) — narrow the gene list`);
   const genes: Record<string, Float32Array> = {}; const unknown: string[] = [];
   for (const s of want) { const gi = await ctx.view.geneCol(s); if (gi == null) { unknown.push(s); continue; } genes[s] = (await ctx.view.geneExpression(s)).values; }
   let stats: any; if (opts.grouping && ctx.groupings().includes(opts.grouping)) { const gs = await ctx.groupStatsCached(opts.grouping); stats = { groups: gs.groups, mean: gs.mean, frac: gs.frac, nGenes: gs.nGenes }; }
-  return { snapshot: { n: ctx.n, cats, genes, embedding: ctx.embedding.data, stats, args: opts.args ?? null }, unknown };
+  return { snapshot: { n: ctx.n, cats, genes, numerics, embedding: ctx.embedding.data, stats, args: opts.args ?? null }, unknown };
 }
 
 // Run agent code in a fresh worker; resolve with {ok,result}|{ok:false,error}; terminate (hang-safe) on timeout.

@@ -10,7 +10,8 @@ function snapCtx() {
   return {
     n: N,
     categoricalFields: () => ["cell_type"],
-    metaOf: async (_f: string) => ({ kind: "categorical", codes: Int32Array.from([0, 0, 1, 1, 1]), categories: ["A", "B"] }),
+    metadataFields: () => [{ name: "cell_type", kind: "categorical" }, { name: "mito", kind: "numeric" }],
+    metaOf: async (f: string) => f === "mito" ? { kind: "numeric", values: Float32Array.from([0.01, 0.2, 0.05, 0.3, 0.02]), min: 0.01, max: 0.3 } : ({ kind: "categorical", codes: Int32Array.from([0, 0, 1, 1, 1]), categories: ["A", "B"] }),
     embedding: { data: Float32Array.from([0, 0, 1, 1, 2, 2, 3, 3, 4, 4]) },
     groupings: () => ["cell_type"],
     groupStatsCached: async (_g: string) => ({ groups: ["A", "B"], mean: [[1, 2]], frac: [[0.5, 0.9]], nGenes: 1 }),
@@ -25,6 +26,8 @@ function snapCtx() {
 test("buildComputeSnapshot: cats + embedding always travel; declared genes resolve; unknowns reported; args + stats pass through", async () => {
   const { snapshot, unknown } = await buildComputeSnapshot(snapCtx(), { genes: ["CD3D", "GHOST"], grouping: "cell_type", args: { thr: 0.4 } });
   assert.deepEqual(Object.keys(snapshot.cats), ["cell_type"]);
+  assert.deepEqual(Object.keys(snapshot.numerics), ["mito"]);   // numeric QC field travels (so code can threshold it)
+  assert.equal(snapshot.numerics.mito.length, N);
   assert.equal(snapshot.embedding.length, 2 * N);
   assert.deepEqual(Object.keys(snapshot.genes), ["CD3D"]);   // GHOST dropped
   assert.deepEqual(unknown, ["GHOST"]);

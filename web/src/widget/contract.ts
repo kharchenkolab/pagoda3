@@ -102,7 +102,8 @@ export const WIDGET_API_DOC =
   "host-spawned, TERMINABLE worker next to the data (so the UI never freezes and a runaway loop is killed). `code` is the " +
   "BODY of an async function that receives `api` and RETURNS any JSON value (your widget renders it): api.n (cell count); " +
   "api.expr(sym) → Float32Array log-expr (only for genes you DECLARE in `genes`); api.cat(field) → {codes,categories}; " +
-  "api.catOf(field,i); api.embedding (Float32Array, x,y per cell); api.stats (if you pass `grouping`); api.args (your `args`). " +
+  "api.catOf(field,i); api.numeric(field) → Float32Array of a NUMERIC field per cell (QC: mito/n_umi/n_gene, …; api.numericFields lists them); " +
+  "api.embedding (Float32Array, x,y per cell); api.stats (if you pass `grouping`); api.args (your `args`). " +
   "The KERNELS are available INSIDE the worker too (over ALL genes, no declaration needed): api.de(A, B, {topN?, genes?}) → " +
   "[{symbol, lfc, meanA, meanB}] (A,B are cell-index arrays); api.overdispersion(cells, {topN?, genes?}) → [{symbol, score, mean}]; " +
   "and await api.meanVar({cells?, genes?}) → [{symbol, mean, var, nnz}] per gene — genome-wide over ALL cells via the native " +

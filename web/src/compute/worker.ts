@@ -80,6 +80,8 @@ function runWidgetCode(args: any): Promise<any> {
     cat: (f: string) => s.cats?.[f] || null,
     catOf: (f: string, i: number) => { const c = s.cats?.[f]; return c ? c.categories[c.codes[i]] : null; },
     expr: (sym: string) => { const v = s.genes?.[sym]; if (!v) throw new Error('gene "' + sym + '" not in inputs.genes — declare it in the genes parameter'); return v; },
+    numeric: (f: string) => s.numerics?.[f] || null,   // a numeric field per cell (QC: mito/n_umi/n_gene, …)
+    numericFields: Object.keys(s.numerics || {}),
     genesAvailable: Object.keys(s.genes || {}),
     embedding: s.embedding,
     stats: s.stats || null,
