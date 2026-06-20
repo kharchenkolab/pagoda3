@@ -60,7 +60,7 @@ export function validateManifest(m: any): WidgetManifest {
 }
 
 // The data kinds a widget may request (host resolves them). Documented so the agent + the host stay in step.
-export const DATA_KINDS = ["n", "fields", "categories", "category", "cellsOf", "expr", "numeric", "selectedCells", "groupStats", "rankGenes"] as const;
+export const DATA_KINDS = ["n", "fields", "categories", "category", "cellsOf", "expr", "numeric", "selectedCells", "groupStats", "rankGenes", "compute"] as const;
 
 // Agent-facing reference — what the widget code can do. Kept next to the protocol so they can't drift (mirrors
 // codeapi.CODE_API_DOC). Surfaced via the read_widget_contract tool + injected into the authoring prompt.
@@ -87,6 +87,7 @@ export const WIDGET_API_DOC =
   "FRACTION expressing for each gene in one call; use it for dot-plots/heatmaps/violins instead of looping raw expr. " +
   "'rankGenes' (args:{cells?:[...]|field+value?, n?=20, dir?:'up'|'down'|'abs'} → {genes:[{symbol,lfc,meanA,meanB}], nA}) — the TOP MARKER genes for a CELL SET vs the rest, " +
   "computed app-side in ONE call (whole transcriptome, subsampled → fast). Use this for 'top/marker genes for the selection' — do NOT loop expr over a hand-picked gene list (slow, and raw-mean ranking just surfaces housekeeping genes). Omit cells to rank the CURRENT selection. " +
+  "`await pagoda.compute(name, args)` (the 'compute' data kind) runs a KERNEL-BACKED analytic primitive — the SAME analyses you can run as `compute` tools, now available INSIDE a widget. Names: 'overdispersion' (variable / most-variable / HVG genes for a cell set → {genes:[{symbol,score}]}), 'de' (A-vs-B differential expression → {genes:[{symbol,lfc,meanA,meanB}]}), 'markers' (a cell set vs the rest), 'groupStats' (per-group mean + %expressing). Each takes a cell set as {cells:[…]} | {field,value} | omit → the current selection (de takes {A, B}). PREFER pagoda.compute over hand-rolling statistics from raw expr — it's the kernel, genome-wide, in one call, faster AND more correct. (The agent tool `list_widget_capabilities` lists every primitive's params + an example.) " +
   "`await pagoda.fetchExternal(url, {as:'json'|'text'})` pulls EXTERNAL biodata through the host (server-side, so no " +
   "CORS) from an ALLOWLIST — PDB/RCSB, UniProt, Ensembl, NCBI, AlphaFold, STRING, Reactome (e.g. " +
   "data.rcsb.org/rest/v1/core/entry/4HHB, rest.uniprot.org, rest.ensembl.org). NEVER call fetch()/XHR or load a CDN " +
@@ -163,6 +164,7 @@ export const WIDGET_BOOTSTRAP = `
     setHint:function(h){ post({t:'setHint', hint: h||null}); },
     updateView:function(p){ post({t:'updateView', patch: p||{}}); },
     data:function(kind,args){ var id=++reqId; return new Promise(function(res,rej){ pending[id]={resolve:res,reject:rej}; post({t:'requestData', reqId:id, kind:String(kind), args:args||{}}); }); },
+    compute:function(name,args){ var a={name:String(name)}; if(args&&typeof args==='object'){ for(var k in args){ a[k]=args[k]; } } var id=++reqId; return new Promise(function(res,rej){ pending[id]={resolve:res,reject:rej}; post({t:'requestData', reqId:id, kind:'compute', args:a}); }); },
     fetchExternal:function(url,opts){ var id=++reqId; return new Promise(function(res,rej){ pending[id]={resolve:res,reject:rej}; post({t:'fetchExternal', reqId:id, url:String(url), as:(opts&&opts.as)||null}); }); },
     loadLib:function(name){ name=String(name); if(loadedLibs[name]) return loadedLibs[name]; var id=++reqId; loadedLibs[name]=new Promise(function(res,rej){ pending[id]={resolve:res,reject:function(e){ delete loadedLibs[name]; rej(e); }}; post({t:'loadLib', reqId:id, name:name}); }); return loadedLibs[name]; },
     cssVar:function(name){ try{ return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }catch(e){ return ''; } }

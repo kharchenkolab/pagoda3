@@ -6,6 +6,7 @@ import type { EntityRef } from "../data/coord.ts";
 import type { WidgetHost } from "./runtime.ts";
 import type { ThemeInfo, CoordInfo, SelectionInfo, HintInfo, WidgetMsg } from "./contract.ts";
 import { themeIsDark } from "../render/theme.ts";
+import { runCapability } from "../agent/capabilities.ts";
 
 // The CSS custom properties a widget may use (injected into the iframe :root so it themes with the app). Mirrors
 // the set defined in app.css for both themes — read live so a theme flip re-pushes the new values.
@@ -74,6 +75,9 @@ export interface PreviewSim { selection?: SelectionInfo | null; selCells?: numbe
 // selection, not the live (empty) one — otherwise a "rankGenes over the current selection" widget tests as empty and
 // the agent chases a phantom (it cost ~3 iterations in a real session). Extend this set as such kinds are added.
 const SELECTION_DEFAULTING = new Set(["rankGenes"]);
+// compute() primitives that DEFAULT to the current selection (resolveCells) — a preview must feed them the SIMULATED
+// selection too, or "overdispersion of the selection" tests as empty (the exact lie the honest-preview rule forbids).
+const COMPUTE_SEL_DEFAULTING = new Set(["overdispersion", "markers"]);
 
 export function previewHost(app: App, sim?: PreviewSim): WidgetHost & { __emitted: string[]; pending: () => number } {
   const base = makeWidgetHost(app);
@@ -92,8 +96,13 @@ export function previewHost(app: App, sim?: PreviewSim): WidgetHost & { __emitte
       const a = args || {};
       if (sim && sim.selCells) {
         if (kind === "selectedCells") return track(Promise.resolve(sim.selCells.slice()));
+        const noCells = !Array.isArray(a.cells) && a.field == null && a.value == null;   // would fall back to the live selection
         // a selection-defaulting kind invoked WITHOUT an explicit cell set → feed it the simulated selection's cells
-        if (SELECTION_DEFAULTING.has(kind) && !Array.isArray(a.cells) && a.field == null && a.value == null) return track(base.data(kind, { ...a, cells: sim.selCells }));
+        if (SELECTION_DEFAULTING.has(kind) && noCells) return track(base.data(kind, { ...a, cells: sim.selCells }));
+        if (kind === "compute") {
+          if (COMPUTE_SEL_DEFAULTING.has(a.name) && noCells) return track(base.data(kind, { ...a, cells: sim.selCells }));
+          if (a.name === "de" && a.A == null && noCells) return track(base.data(kind, { ...a, A: { cells: sim.selCells } }));
+        }
       }
       return track(base.data(kind, a));
     },
@@ -162,43 +171,11 @@ export function makeWidgetHost(app: App): WidgetHost {
           return { values: m.values, min: m.min, max: m.max };
         }
         case "selectedCells": return Array.from(ctx.selectedCells());
-        case "groupStats": {
-          const m = await ctx.metaOf(String(a.field)) as any;
-          if (m.kind !== "categorical") throw new Error(`'${a.field}' is not categorical`);
-          const G = m.categories.length, codes = m.codes as Int32Array, genes: string[] = Array.isArray(a.genes) ? a.genes.map(String) : [];
-          const mean: number[][] = [], frac: number[][] = [];
-          for (const g of genes) {
-            let vals: Float32Array | null = null;
-            try { vals = (await ctx.view.geneExpression(g)).values; } catch { mean.push(new Array(G).fill(0)); frac.push(new Array(G).fill(0)); continue; }
-            const sum = new Array(G).fill(0), pos = new Array(G).fill(0), cnt = new Array(G).fill(0);
-            for (let i = 0; i < codes.length; i++) { const c = codes[i]; if (c >= 0) { const v = vals[i]; sum[c] += v; if (v > 0) pos[c]++; cnt[c]++; } }
-            mean.push(sum.map((s, j) => cnt[j] ? s / cnt[j] : 0));
-            frac.push(pos.map((p, j) => cnt[j] ? p / cnt[j] : 0));
-          }
-          return { groups: m.categories, genes, mean, frac };
-        }
-        case "rankGenes": {
-          // Top genes for a CELL SET vs the rest (markers) — DE over the WHOLE transcriptome, computed app-side in ONE
-          // call (subsampled, so fast), so widgets get a MEANINGFUL ranking (what's special about these cells) without
-          // looping per-gene expr (slow) or ranking by raw mean (which surfaces housekeeping genes). The cell set is
-          // explicit `cells`, a category {field,value}, or — by default — the CURRENT selection.
-          let cells: number[] | null = null;
-          if (Array.isArray(a.cells)) cells = a.cells.map(Number).filter((i: number) => i >= 0 && i < ctx.n);
-          else if (a.field != null && a.value != null) { await ctx.metaOf(String(a.field)); cells = Array.from(ctx.cellsOfCategory(String(a.field), String(a.value))); }
-          else cells = Array.from(ctx.selectedCells());
-          if (!cells || !cells.length) return { genes: [], nA: 0, note: "no cells in the set (nothing selected?)" };
-          const inA = new Uint8Array(ctx.n); for (const i of cells) inA[i] = 1;
-          const B: number[] = []; for (let i = 0; i < ctx.n; i++) if (!inA[i]) B.push(i);
-          const de = await ctx.view.subsampleDE(cells, B);
-          const n = Math.min(Math.max(1, Number(a.n) || 20), 100);
-          const dir = a.dir === "abs" ? "abs" : a.dir === "down" ? "down" : "up";
-          let ranked = de.ranked;
-          if (dir === "up") ranked = ranked.filter((r) => r.lfc > 0).sort((x, y) => y.lfc - x.lfc);
-          else if (dir === "down") ranked = ranked.filter((r) => r.lfc < 0).sort((x, y) => x.lfc - y.lfc);
-          // 'abs' keeps subsampleDE's existing |lfc| ordering
-          const genes = ranked.slice(0, n).map((r) => ({ symbol: r.symbol, lfc: +r.lfc.toFixed(3), meanA: +r.meanA.toFixed(3), meanB: +r.meanB.toFixed(3) }));
-          return { genes, nA: de.nA, approx: de.approx };
-        }
+        // COMPUTE primitives now live in ONE registry (agent/capabilities.ts) — the agent's compute tool, these widget
+        // kinds, and the docs all project from it, so a widget reaches the SAME kernel-backed analytics the analyst has.
+        case "groupStats": return runCapability(ctx as any, "groupStats", a);
+        case "rankGenes": return runCapability(ctx as any, "markers", a);
+        case "compute": return runCapability(ctx as any, String(a.name), a);   // pagoda.compute(name, args) → registry
         default: throw new Error("unknown data kind: " + kind);
       }
     },
