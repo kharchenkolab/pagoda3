@@ -7,6 +7,7 @@ import { getStyle, resolveStyle } from "../render/style.ts";
 import { EmbeddingStyle } from "../render/embedding.style.ts";
 import "./heatmap.style.ts";   // side-effect: the Heatmap panel's style descriptor self-registers
 import "./facets.style.ts";    // side-effect: the MetadataFacets panel's style descriptor self-registers
+import "./composition.style.ts";   // side-effect: the CompositionBars panel's style descriptor self-registers
 import { catColor } from "../data/view.ts";
 import type { EntityRef } from "../data/coord.ts";
 import { reconcile, crosstab, ReconRow, AnnotationLayer, CapRecord, labelChain } from "../anno/model.ts";
@@ -286,6 +287,7 @@ function geneListBody(p: Panel, hooks: PanelHooks): BuiltBody {
 }
 
 async function compositionBody(panel: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltBody> {
+  const s = resolvePanelStyleFor(ctx, "CompositionBars", panel.view);   // panel style (bar width/gap, ribbon opacities, axis font)
   const grouping = panel.view?.colorBy?.startsWith("meta:") ? panel.view.colorBy.slice(5) : ctx.defaultGrouping();   // per-panel stack grouping
   const { samples, conds, groups, props } = await ctx.composition(grouping);
   // remember each category's segment box per sample — geometry for the hover ribbons; recomputed each draw()
@@ -310,9 +312,9 @@ async function compositionBody(panel: Panel, ctx: Ctx, hooks: PanelHooks): Promi
     const svg = host.querySelector(".compsvg") as SVGSVGElement;   // size the SVG to the host in px (height:100% won't resolve against a flex parent)
     svg.setAttribute("width", String(W)); svg.setAttribute("height", String(H)); svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
     const p = 30, botH = 24, topPad = 6, barH = Math.max(20, H - botH - topPad);
-    const step = (W - p - 6) / samples.length; bw = Math.min(64, step - 8);
+    const step = (W - p - 6) / samples.length; bw = Math.min(s.bar.maxWidth, step - s.bar.gap);
     let g = "";
-    for (const f of [0, 0.5, 1]) { const y = topPad + barH * f; g += `<line x1="${p}" y1="${y.toFixed(1)}" x2="${W - 6}" y2="${y.toFixed(1)}" stroke="var(--line)" stroke-opacity="0.5" stroke-width="0.5"/><text class="axis" x="${p - 5}" y="${(y + 3).toFixed(1)}" text-anchor="end" style="font-size:8px">${Math.round((1 - f) * 100)}</text>`; }
+    for (const f of [0, 0.5, 1]) { const y = topPad + barH * f; g += `<line x1="${p}" y1="${y.toFixed(1)}" x2="${W - 6}" y2="${y.toFixed(1)}" stroke="var(--line)" stroke-opacity="0.5" stroke-width="0.5"/><text class="axis" x="${p - 5}" y="${(y + 3).toFixed(1)}" text-anchor="end" style="font-size:${s.axis.font}px">${Math.round((1 - f) * 100)}</text>`; }
     samples.forEach((sm, i) => {
       const x = p + i * step + (step - 6 - bw) / 2; let ya = topPad + barH;
       props[i].forEach((pr, t) => { const h = pr * barH; const yTop = ya - h; seg[t][i] = { x, yTop, yBot: ya };
@@ -344,8 +346,8 @@ async function compositionBody(panel: Panel, ctx: Ctx, hooks: PanelHooks): Promi
       s.classList.toggle("hov", inHov && !inSel); s.classList.toggle("hovdim", !hasSel && hasHov && !inHov); });
     leg.querySelectorAll<HTMLElement>(".lgi").forEach((e) => { const n = e.dataset.g!; e.classList.toggle("sel", !!selSet?.has(n)); e.classList.toggle("hov", !!hovSet?.has(n)); });
     let paths = "";
-    if (hasSel) for (const n of selSet!) paths += ribbonOf(n, 0.42);
-    if (hasHov) for (const n of hovSet!) if (!selSet?.has(n)) paths += ribbonOf(n, 0.16);
+    if (hasSel) for (const n of selSet!) paths += ribbonOf(n, s.ribbon.selOpacity);
+    if (hasHov) for (const n of hovSet!) if (!selSet?.has(n)) paths += ribbonOf(n, s.ribbon.hovOpacity);
     ribbons.innerHTML = paths;
   };
   // emit on hover (hint, light); click commits a SELECTION — the exact cell-set any panel would produce
