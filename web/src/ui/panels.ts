@@ -57,6 +57,8 @@ export interface PanelHooks {
   widgetHost: () => WidgetHost;                                // the coord/ctx/theme bridge a Widget panel's iframe talks to
   onTeardown: (fn: () => void) => void;                        // register cleanup (e.g. destroy a widget iframe) run on the next fullRender
   registerWidget: (panelId: number, handle: WidgetHandle) => void;   // expose a mounted widget so inspect_widget can read its live state
+  widgetNeedsConsent?: (p: Panel) => boolean;                  // Item 2/C: true if this widget is untrusted (imported) → don't auto-run its code
+  renderWidgetGate?: (p: Panel, wrap: HTMLElement) => void;    // render the consent placeholder instead of mounting
 }
 
 // A vocabulary-bound panel that reacts to the two tiers, distinctly: `setSelect` is the committed selection
@@ -96,6 +98,8 @@ function widgetBody(p: Panel, ctx: Ctx, hooks: PanelHooks): BuiltBody {
   const wrap = mk("div"); wrap.style.cssText = "position:absolute;inset:0;overflow:auto;background:transparent";
   const built: BuiltBody = { el: wrap };
   built.afterAttach = () => {
+    // Item 2/C: an untrusted (imported) widget is GATED — show the consent placeholder instead of executing its code.
+    if (hooks.widgetNeedsConsent?.(p) && hooks.renderWidgetGate) { hooks.renderWidgetGate(p, wrap); return; }
     const handle = mountWidget(wrap, p.source || "pagoda.ready({title:'(empty widget)'});", hooks.widgetHost());
     handle.iframe.style.height = "100%";
     hooks.onTeardown(() => handle.destroy());   // torn down (iframe + host subscription) on the next fullRender

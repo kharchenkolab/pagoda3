@@ -9,7 +9,19 @@ export const SESSION_KEY = "p3-session";
 export const WIDGETS_KEY = "p3-widgets";
 const VERSION = 2;
 
-export interface SavedWidget { id: string; name: string; source: string; controls?: { id: string; label: string }[]; createdAt: number; }
+export interface SavedWidget { id: string; name: string; source: string; controls?: { id: string; label: string }[]; createdAt: number; origin?: "authored" | "imported"; }
+
+// A stable content hash of a widget's source — the IDENTITY used for the trust registry (Item 2/C). Trust follows the
+// CODE, not a mutable flag: authoring (or consenting to) a source trusts that exact text, so re-importing identical
+// source is already trusted, and any edit re-gates. FNV-1a 32-bit → 8-hex; collision-resistant enough for a local
+// allow-list of a user's own widgets (not a security primitive against a crafted preimage — it gates accidental
+// auto-execution of FOREIGN code, paired with the sandbox/worker bounds that already contain every widget).
+export function widgetHash(source: string): string {
+  let h = 0x811c9dc5;
+  const s = String(source);
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+  return (h >>> 0).toString(16).padStart(8, "0");
+}
 // Dataset IDENTITY guard: a session/annotation is bound to a dataset's shape. `n` is decisive (annotation codes are
 // cell-indexed — they only align to a store with the same cell count); `fields` is informational (a view may colour by
 // a field a different dataset lacks). Used to refuse applying authored data to the wrong/changed dataset.
@@ -74,10 +86,10 @@ export function fingerprintMismatch(doc?: Fingerprint, live?: Fingerprint): stri
 
 // Upsert an authored widget into the library by NAME (re-saving the same name updates its source). Pure → returns a
 // new array. `now`/`id` are passed in so the caller controls timestamping (and tests stay deterministic).
-export function upsertWidget(list: SavedWidget[], w: { name: string; source: string; controls?: { id: string; label: string }[] }, now: number, id: string): SavedWidget[] {
+export function upsertWidget(list: SavedWidget[], w: { name: string; source: string; controls?: { id: string; label: string }[]; origin?: "authored" | "imported" }, now: number, id: string): SavedWidget[] {
   const name = (w.name || "Widget").trim();
   const i = list.findIndex((x) => x.name === name);
-  const entry: SavedWidget = { id: i >= 0 ? list[i].id : id, name, source: w.source, controls: w.controls, createdAt: i >= 0 ? list[i].createdAt : now };
+  const entry: SavedWidget = { id: i >= 0 ? list[i].id : id, name, source: w.source, controls: w.controls, createdAt: i >= 0 ? list[i].createdAt : now, origin: w.origin ?? (i >= 0 ? list[i].origin : undefined) };
   const out = list.slice();
   if (i >= 0) out[i] = entry; else out.push(entry);
   return out;

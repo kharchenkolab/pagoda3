@@ -14,7 +14,12 @@ import { setThemeColors } from "../render/theme.ts";
 import { installOverflow } from "./overflow.ts";
 import { makeWidgetHost } from "../widget/apphost.ts";
 import type { WidgetHost, WidgetHandle } from "../widget/runtime.ts";
-import { SESSION_KEY, WIDGETS_KEY, SavedWidget, SerAnnoLayer, Fingerprint, serializeSession, parseSession, serializeBundle, parseBundle, fingerprintMismatch, upsertWidget, loadWidgets } from "./persist.ts";
+import { SESSION_KEY, WIDGETS_KEY, SavedWidget, SerAnnoLayer, Fingerprint, serializeSession, parseSession, serializeBundle, parseBundle, fingerprintMismatch, upsertWidget, loadWidgets, widgetHash } from "./persist.ts";
+
+// Item 2/C — the trust registry: source-hashes of widgets the user has authored or explicitly consented to run. Foreign
+// widgets that arrive via an imported session file are NOT here, so they're GATED (rendered as a consent placeholder)
+// until the user reviews + trusts them — no auto-execution of code from a file. Persisted (the user's standing allow-list).
+const TRUST_KEY = "p3-trusted-widgets";
 import { paletteNames, normalizePalette } from "../render/palettes.ts";
 import { AnnotationLayer, seedLayer, setLabel, reconcile, compact, hierarchyDepth, rollupToLevel } from "../anno/model.ts";
 import { PBMC_MARKERS, MarkerDB } from "../anno/markerdb.ts";
@@ -47,6 +52,7 @@ export class App {
   themeSubs = new Set<() => void>();  // theme-change listeners (widgets re-theme their iframes); fired in applyTheme
   builtinWS!: Set<string>;            // code-defined workspace names (the rest are user-saved → persisted)
   widgetLib: SavedWidget[] = [];      // the custom-widget LIBRARY (authored widgets, re-addable from the menu); persisted
+  trustedWidgets = new Set<string>(); // source-hashes the user authored/consented to run (Item 2/C); foreign imports gate
   private _saveTimer: any = null;     // debounce for session persistence
   private lastSel: any;               // last selection dispatched to reactors — skip re-dispatch on colour-only repaints
   private reactorsStale = true;       // set when reactors are rebuilt (fullRender) → force one dispatch
@@ -179,6 +185,7 @@ export class App {
   }
   restoreSession() {
     this.widgetLib = loadWidgets(localStorage.getItem(WIDGETS_KEY));   // the widget LIBRARY is dataset-agnostic — always load it
+    this.loadTrust();   // the user's standing trust allow-list + their own library is trusted (Item 2/C)
     const doc = parseSession(localStorage.getItem(SESSION_KEY));
     if (!doc || doc.store !== this.currentStore()) return;   // no session, or one from a DIFFERENT dataset → keep this store's default layout (no redundant re-render)
     this.applySessionViews(doc);
@@ -206,7 +213,10 @@ export class App {
     if (!b) return { ok: false, msg: "Not a pagoda session file." };
     const mism = fingerprintMismatch(b.session.fingerprint, this.datasetFingerprint());
     let added = 0;   // widgets are dataset-agnostic → always merge into the library (upsert by name)
-    for (const w of b.widgets) { const before = this.widgetLib.length; this.widgetLib = upsertWidget(this.widgetLib, { name: w.name, source: w.source, controls: w.controls }, w.createdAt || Date.now(), w.id || "w" + Date.now().toString(36) + added); if (this.widgetLib.length > before) added++; }
+    // Imported widgets are tagged origin:"imported" and are NOT auto-trusted — their panels render a consent gate
+    // (Item 2/C) until the user reviews + runs them. (A re-import of source the user already trusts stays trusted: the
+    // trust list is content-addressed.)
+    for (const w of b.widgets) { const before = this.widgetLib.length; this.widgetLib = upsertWidget(this.widgetLib, { name: w.name, source: w.source, controls: w.controls, origin: "imported" }, w.createdAt || Date.now(), w.id || "w" + Date.now().toString(36) + added); if (this.widgetLib.length > before) added++; }
     if (b.widgets.length) try { localStorage.setItem(WIDGETS_KEY, JSON.stringify({ widgets: this.widgetLib })); } catch { /* */ }
     this.applySessionViews(b.session);
     if (b.session.annotation && !mism) this.restoreAnnotation(b.session.annotation);
@@ -241,13 +251,50 @@ export class App {
     inp.click();
   }
   // The custom-widget library (menu): upsert an authored widget, delete one, persist.
-  saveWidgetToLibrary(name: string, source: string, controls?: { id: string; label: string }[]) {
-    this.widgetLib = upsertWidget(this.widgetLib, { name: name || "Widget", source, controls }, Date.now(), "w" + Date.now().toString(36));
+  saveWidgetToLibrary(name: string, source: string, controls?: { id: string; label: string }[], origin: "authored" | "imported" = "authored") {
+    this.widgetLib = upsertWidget(this.widgetLib, { name: name || "Widget", source, controls, origin }, Date.now(), "w" + Date.now().toString(36));
     try { localStorage.setItem(WIDGETS_KEY, JSON.stringify({ widgets: this.widgetLib })); } catch { /* */ }
+    if (origin === "authored") this.trustWidget(source);   // a widget authored THIS session is trusted (the user watched it being built); a re-added IMPORTED one stays gated
   }
   deleteWidgetFromLibrary(id: string) {
     this.widgetLib = this.widgetLib.filter((w) => w.id !== id);
     try { localStorage.setItem(WIDGETS_KEY, JSON.stringify({ widgets: this.widgetLib })); } catch { /* */ }
+  }
+
+  // ---- Item 2/C: widget trust (provenance + consent) ----
+  // Load the persisted allow-list, and migrate: every widget already in the USER'S OWN library is trusted (they
+  // authored it in a prior session). Only FOREIGN source — arriving via an imported session file — stays ungated-list.
+  loadTrust() {
+    try { const arr = JSON.parse(localStorage.getItem(TRUST_KEY) || "[]"); if (Array.isArray(arr)) for (const h of arr) this.trustedWidgets.add(String(h)); } catch { /* */ }
+    // Migrate the user's OWN widgets (authored, or legacy with no origin) to trusted — but NOT ones tagged "imported",
+    // which must keep gating across restarts unless the user explicitly consented (that lands on the TRUST_KEY list above).
+    for (const w of this.widgetLib) if (w.source && w.origin !== "imported") this.trustedWidgets.add(widgetHash(w.source));
+    this.persistTrust();
+  }
+  private persistTrust() { try { localStorage.setItem(TRUST_KEY, JSON.stringify([...this.trustedWidgets])); } catch { /* */ } }
+  trustWidget(source: string) { if (source) { this.trustedWidgets.add(widgetHash(source)); this.persistTrust(); } }
+  revokeWidgetTrust(source: string) { if (source && this.trustedWidgets.delete(widgetHash(source))) { this.persistTrust(); this.fullRender(); } }
+  // A widget panel needs CONSENT before its code runs iff its exact source isn't on the trust list (i.e. it came from
+  // an imported file and the user hasn't reviewed it). Content-addressed, so an edit re-gates and a re-import of a
+  // trusted source does not.
+  widgetNeedsConsent(p: Panel): boolean { return p.type === "Widget" && !!p.source && !this.trustedWidgets.has(widgetHash(p.source)); }
+
+  // The CONSENT PLACEHOLDER shown instead of mounting an untrusted (imported) widget — review the source, then trust+run
+  // or remove. Built with textContent only (the title/source are foreign — never innerHTML them).
+  renderWidgetGate(p: Panel, wrap: HTMLElement) {
+    wrap.textContent = "";
+    const box = mk("div", "wgate"); box.style.cssText = "position:absolute;inset:0;display:flex;flex-direction:column;gap:8px;padding:14px;overflow:auto";
+    const h = mk("div"); h.style.cssText = "font-weight:600;color:var(--text)"; h.textContent = "⚠ Untrusted widget";
+    const msg = mk("div"); msg.style.cssText = "font-size:12px;color:var(--dim);line-height:1.45";
+    msg.textContent = `“${p.title || "Widget"}” arrived in an imported session — its code has NOT run. Review it, then choose whether to run it. It would be sandboxed (no DOM/page access) and its compute terminable, but it can still read your data, drive selections/colour, and fetch from allow-listed biodata sources.`;
+    const pre = mk("pre"); pre.style.cssText = "display:none;flex:1;min-height:60px;overflow:auto;font:11px var(--mono);background:var(--inset);border:1px solid var(--line);border-radius:6px;padding:8px;white-space:pre-wrap;color:var(--text)";
+    pre.textContent = p.source || "";
+    const row = mk("div"); row.style.cssText = "display:flex;gap:8px;flex-wrap:wrap";
+    const review = mk("button"); review.textContent = "Review source"; review.onclick = () => { const on = pre.style.display === "none"; pre.style.display = on ? "block" : "none"; review.textContent = on ? "Hide source" : "Review source"; };
+    const trust = mk("button"); trust.textContent = "Trust & run"; trust.style.cssText = "border-color:var(--good);color:var(--good)";
+    trust.onclick = () => this.confirmModal({ title: "Run this imported widget?", body: "This is custom code from an imported session. Running it lets it read your data, drive selections/colour, and fetch from allow-listed biodata sources. Only run widgets from a source you trust.", ok: "Trust & run", onConfirm: () => { this.trustWidget(p.source || ""); this.fullRender(); } });
+    const remove = mk("button"); remove.textContent = "Remove"; remove.onclick = () => { this.removePanel(p.id); this.fullRender(); };
+    row.append(review, trust, remove); box.append(h, msg, row, pre); wrap.appendChild(box);
   }
 
   // ---------- workbench ----------
@@ -276,6 +323,8 @@ export class App {
       widgetHost: () => this.widgetHost(),
       onTeardown: (fn) => { this.teardowns.push(fn); },   // run + cleared each fullRender (like coordSubs) — no iframe leak
       registerWidget: (id, handle) => { this.widgetHandles.set(id, handle); },   // so inspect_widget can read a live widget's state
+      widgetNeedsConsent: (p) => this.widgetNeedsConsent(p),                      // Item 2/C: gate untrusted (imported) widget code
+      renderWidgetGate: (p, wrap) => this.renderWidgetGate(p, wrap),
     };
   }
 
@@ -1149,9 +1198,9 @@ export class App {
   // If a Widget panel with the SAME title is already on the canvas, UPDATE it in place (the re-author / "clean it up"
   // flow) instead of mounting a duplicate — mirrors the library's by-name upsert. fullRender re-mounts the iframe
   // from the new .source, so the running widget picks up the new code. Returns {id, updated}.
-  addWidgetPanel(source: string, title?: string, controls?: { id: string; label: string }[]): { id: number; updated: boolean } {
+  addWidgetPanel(source: string, title?: string, controls?: { id: string; label: string }[], origin: "authored" | "imported" = "authored"): { id: number; updated: boolean } {
     const name = title || "Widget";
-    this.saveWidgetToLibrary(name, source, controls);   // also keep it in the re-addable library
+    this.saveWidgetToLibrary(name, source, controls, origin);   // also keep it in the re-addable library (authored → trusted; imported → still gated)
     const existing = this.canvas.find((p) => p.type === "Widget" && p.title === name);
     if (existing) {
       existing.source = source; existing.controls = controls;
@@ -1227,7 +1276,7 @@ export class App {
       else if (a === "import") { c.classList.remove("show"); void this.importSessionFromFile(); }
       else if (a === "reset") { c.classList.remove("show"); this.confirmReset(); } });   // confirm first — reset wipes the saved session
     c.querySelectorAll<HTMLElement>("[data-std]").forEach((el) => el.onclick = () => { const s = standard[Number(el.dataset.std)]; if (s) { this.addPanel({ ...s.spec }); this.toast(`Added ${s.name}`, null); } c.classList.remove("show"); });
-    c.querySelectorAll<HTMLElement>("[data-add]").forEach((el) => el.onclick = () => { const w = this.widgetLib.find((x) => x.id === el.dataset.add); if (w) { this.addWidgetPanel(w.source, w.name, w.controls); this.toast(`Added widget “${w.name}”`, null); } c.classList.remove("show"); });
+    c.querySelectorAll<HTMLElement>("[data-add]").forEach((el) => el.onclick = () => { const w = this.widgetLib.find((x) => x.id === el.dataset.add); if (w) { this.addWidgetPanel(w.source, w.name, w.controls, w.origin === "imported" ? "imported" : "authored"); this.toast(`Added widget “${w.name}”`, null); } c.classList.remove("show"); });
     c.querySelectorAll<HTMLElement>("[data-del]").forEach((el) => el.onclick = (e) => { e.stopPropagation();   // confirm first — deleting from the library is irreversible
       const id = el.dataset.del!; const w = this.widgetLib.find((x) => x.id === id); const name = w ? w.name : "this widget";
       this.confirmModal({

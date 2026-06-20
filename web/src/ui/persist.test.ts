@@ -1,7 +1,7 @@
 // Unit tests for session/widget persistence helpers. Run: `node --test src/ui/persist.test.ts`.
 import { test } from "node:test";
 import assert from "node:assert";
-import { serializeSession, parseSession, upsertWidget, loadWidgets, serializeBundle, parseBundle, fingerprintMismatch } from "./persist.ts";
+import { serializeSession, parseSession, upsertWidget, loadWidgets, serializeBundle, parseBundle, fingerprintMismatch, widgetHash } from "./persist.ts";
 
 test("session carries the dataset fingerprint + annotation layers through serialize/parse", () => {
   const s = { store: "/pbmc6.lstar.zarr", fingerprint: { n: 35391, fields: ["cell_type", "leiden"] }, currentWS: "Annotate", colorBy: "meta:annotation", canvas: [], userWS: [],
@@ -70,4 +70,21 @@ test("loadWidgets accepts an array or {widgets:[]} and drops malformed", () => {
   assert.deepEqual(loadWidgets(null), []);
   assert.equal(loadWidgets(JSON.stringify([{ source: "a" }, { nope: 1 }])).length, 1);
   assert.equal(loadWidgets(JSON.stringify({ widgets: [{ source: "a" }] })).length, 1);
+});
+
+test("widgetHash (Item 2/C): stable per source, differs on any edit — the trust key follows the code", () => {
+  const a = widgetHash("pagoda.ready({title:'x'})");
+  assert.equal(a, widgetHash("pagoda.ready({title:'x'})"));   // deterministic
+  assert.notEqual(a, widgetHash("pagoda.ready({title:'y'})"));   // an edit re-gates
+  assert.match(a, /^[0-9a-f]{8}$/);                              // 8-hex
+  assert.equal(widgetHash(""), widgetHash(""));
+});
+
+test("upsertWidget carries origin (authored vs imported) and preserves it on update", () => {
+  let lib = upsertWidget([], { name: "W", source: "v1", origin: "imported" }, 1, "id1");
+  assert.equal(lib[0].origin, "imported");
+  lib = upsertWidget(lib, { name: "W", source: "v2" }, 2, "id2");   // update without origin keeps the prior one
+  assert.equal(lib[0].origin, "imported");
+  const authored = upsertWidget([], { name: "A", source: "s", origin: "authored" }, 1, "ida");
+  assert.equal(authored[0].origin, "authored");
 });
