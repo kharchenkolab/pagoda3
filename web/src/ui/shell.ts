@@ -349,14 +349,16 @@ export class App {
       openSelectionMenu: (anchor) => { this.lastSelAnchor = anchor; this.openSelpop(); },   // ops menu for the current selection (facet/lasso/etc.)
       onConfigurePanel: (id, patch) => this.configurePanel(id, patch),
       registerGeneHover: (fn) => this.geneHoverSinks.push(fn),
-      annotate: (ids, label, layer) => this.labelCells(ids, label, layer),
-      annoLayer: (name) => this.annoLayers.get(name),
-      saveRecord: (layerName, record) => { const L = this.annoLayers.get(layerName); if (L) { L.records = L.records || {}; const prev = L.records[record.label]; L.records[record.label] = record; if (layerName === "annotation" && prev?.category !== record.category) { this.refreshHierarchyLevels(L); this.repaint(); this.syncColorSelects(); } } },   // lineage changed → rebuild the L1/L2 rollups
-      adoptSource: (name) => { this.adoptSource(name); },
-      renameLabel: (layerName, from, to) => { this.renameLabel(layerName, from, to); },
-      proposeRecord: (layerName, label) => { this.proposeRecord(label, layerName); },
-      proposeAllNames: (layerName) => { this.proposeAllNames(layerName); },
-      splitLabel: (label) => { this.splitLabel(label); },
+      annotation: {   // the annotation-workflow capability namespace (only Reconcile/AnnoRecord use it)
+        annotate: (ids, label, layer) => this.labelCells(ids, label, layer),
+        annoLayer: (name) => this.annoLayers.get(name),
+        saveRecord: (layerName, record) => { const L = this.annoLayers.get(layerName); if (L) { L.records = L.records || {}; const prev = L.records[record.label]; L.records[record.label] = record; if (layerName === "annotation" && prev?.category !== record.category) { this.refreshHierarchyLevels(L); this.repaint(); this.syncColorSelects(); } } },   // lineage changed → rebuild the L1/L2 rollups
+        adoptSource: (name) => { this.adoptSource(name); },
+        renameLabel: (layerName, from, to) => { this.renameLabel(layerName, from, to); },
+        proposeRecord: (layerName, label) => { this.proposeRecord(label, layerName); },
+        proposeAllNames: (layerName) => { this.proposeAllNames(layerName); },
+        splitLabel: (label) => { this.splitLabel(label); },
+      },
       widgetHost: () => this.widgetHost(),
       onTeardown: (fn) => { this.teardowns.push(fn); },   // run + cleared each fullRender (like coordSubs) — no iframe leak
       registerWidget: (id, handle) => { this.widgetHandles.set(id, handle); },   // so inspect_widget can read a live widget's state

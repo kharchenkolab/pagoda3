@@ -55,14 +55,19 @@ export interface PanelHooks {
   openSelectionMenu: (anchor: { left: number; top: number; right?: number }) => void;   // open the selection ops menu (DE/label/ask); `right` right-aligns it to a right-side trigger
   onConfigurePanel: (panelId: number, patch: any) => void;     // a panel reconfiguring itself (e.g. dismissing pinned genes)
   registerGeneHover: (fn: (sym: string | null) => void) => void;   // a panel that highlights a gene's row on cross-panel geneHint
-  annotate: (cellIds: ArrayLike<number>, label: string, layer?: string) => void;   // write a label onto a cell set in an annotation layer (default the working draft)
-  annoLayer: (name: string) => AnnotationLayer | undefined;   // the rich annotation layer (with CAP records)
-  saveRecord: (layerName: string, record: CapRecord) => void; // persist a per-label CAP record
-  adoptSource: (name: string) => void;                        // set the working draft to a source's per-cluster labeling
-  renameLabel: (layerName: string, from: string, to: string) => void;   // rename a working label (to an existing one = merge)
-  proposeRecord: (layerName: string, label: string) => void;  // ask the agent to suggest a CAP record for one label
-  proposeAllNames: (layerName: string) => void;               // ask the agent to name+explain all working clusters
-  splitLabel: (label: string) => void;                        // isolate a working label's cells to split it (brush a subset)
+  // APP-DOMAIN capability namespace: the annotation WORKFLOW. Grouped (not flat) so the generic panel-module surface
+  // above isn't polluted by a specific domain — only annotation panels (Reconcile/AnnoRecord) reach into here, and an
+  // external module would have to DECLARE the "annotation" capability to get it (P4).
+  annotation: {
+    annotate: (cellIds: ArrayLike<number>, label: string, layer?: string) => void;   // write a label onto a cell set in an annotation layer (default the working draft)
+    annoLayer: (name: string) => AnnotationLayer | undefined;   // the rich annotation layer (with CAP records)
+    saveRecord: (layerName: string, record: CapRecord) => void; // persist a per-label CAP record
+    adoptSource: (name: string) => void;                        // set the working draft to a source's per-cluster labeling
+    renameLabel: (layerName: string, from: string, to: string) => void;   // rename a working label (to an existing one = merge)
+    proposeRecord: (layerName: string, label: string) => void;  // ask the agent to suggest a CAP record for one label
+    proposeAllNames: (layerName: string) => void;               // ask the agent to name+explain all working clusters
+    splitLabel: (label: string) => void;                        // isolate a working label's cells to split it (brush a subset)
+  };
   widgetHost: () => WidgetHost;                                // the coord/ctx/theme bridge a Widget panel's iframe talks to
   onTeardown: (fn: () => void) => void;                        // register cleanup (e.g. destroy a widget iframe) run on the next fullRender
   registerWidget: (panelId: number, handle: WidgetHandle) => void;   // expose a mounted widget so inspect_widget can read its live state
@@ -701,7 +706,7 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
   const hdr = mk("div"); hdr.style.cssText = "flex:0 0 auto;display:flex;align-items:center;gap:7px;padding:6px 10px;border-bottom:1px solid var(--line2);flex-wrap:wrap";
   const nResolved = workRows ? workRows.filter((r) => r.sources[0].label != null).length : 0;
   hdr.innerHTML = `<span style="color:var(--faint)">base</span> <b>${esc(base)}</b> · <span style="color:var(--faint)">${rows.length} clusters, ${nResolved} labeled</span> <span style="color:var(--faint)">·</span> ${sources.length ? sources.map((s) => `<span style="border:1px solid var(--line2);border-radius:5px;padding:1px 6px;color:var(--dim)">${esc(s.name)} <span class="rcadopt" data-adopt="${esc(s.name)}" title="adopt this source as the working draft" style="cursor:pointer;color:var(--cyan)">⤵</span></span>`).join(" ") + ' <span style="color:var(--faint);font-size:11px">— click a cell to accept one label, ⤵ to adopt a whole source</span>' : '<span style="color:var(--amber,#e0a458)">no sources — run scType or add one</span>'}`;
-  hdr.querySelectorAll<HTMLElement>(".rcadopt").forEach((el) => el.addEventListener("click", (e) => { e.stopPropagation(); hooks.adoptSource(el.dataset.adopt!); }));
+  hdr.querySelectorAll<HTMLElement>(".rcadopt").forEach((el) => el.addEventListener("click", (e) => { e.stopPropagation(); hooks.annotation.adoptSource(el.dataset.adopt!); }));
   // view toggle: table (reconcile) · matrix (confusion, vocab-agnostic) · labels (review the working draft)
   const layers = [...(workMeta ? [{ name: "working", codes: workMeta.codes, categories: workMeta.categories }] : []), ...sources];
   const seg = mk("div", "segtog"); seg.style.marginLeft = "auto";
@@ -720,7 +725,7 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
   // the CAP record for the selected cluster's working label — folded in here (cohesive single panel, not a
   // separate full-width one). Follows the selection; updates on accept.
   const recDetail = mk("div", "rcrec"); recDetail.style.cssText = "flex:0 0 auto;max-height:46%;overflow:auto;border-top:1px solid var(--line);padding:8px 10px;background:var(--card)"; w.appendChild(recDetail);
-  const workLayer = hooks.annoLayer("annotation");
+  const workLayer = hooks.annotation.annoLayer("annotation");
   let recLabel: string | null = (p as any).recordLabel || null;
   let selCluster: string | null = null;   // the base cluster the user last clicked (drives the card's context line)
   let recCollapsed: boolean = !!(p as any).recCollapsed;   // user minimized the card (frees space, esp. in matrix view)
@@ -752,10 +757,10 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
         const byLabel = new Map<string, string[]>();
         for (const s of row.sources) if (s.label) { const e = byLabel.get(s.label) || []; e.push(s.name); byLabel.set(s.label, e); }
         const options = [...byLabel].map(([label, srcs]) => ({ label, sources: srcs }));
-        if (options.length) accept = { cluster: selCluster, current: l, options, onAccept: (lab) => { (p as any).recordLabel = lab; hooks.annotate(ctx.cellsOfCategory(base, selCluster!), lab); } };
+        if (options.length) accept = { cluster: selCluster, current: l, options, onAccept: (lab) => { (p as any).recordLabel = lab; hooks.annotation.annotate(ctx.cellsOfCategory(base, selCluster!), lab); } };
       }
     }
-    renderCapRecord(recDetail, workLayer!, l, ctx, hooks, { context, accept, onRename: (to) => { (p as any).recordLabel = to; hooks.renameLabel("annotation", l, to); }, onCollapse: () => { recCollapsed = true; (p as any).recCollapsed = true; showRecord(l); } });
+    renderCapRecord(recDetail, workLayer!, l, ctx, hooks, { context, accept, onRename: (to) => { (p as any).recordLabel = to; hooks.annotation.renameLabel("annotation", l, to); }, onCollapse: () => { recCollapsed = true; (p as any).recCollapsed = true; showRecord(l); } });
     flashCard();
   };
   // "labels" view: review the whole working annotation before export — each label's colour, cell count, and
@@ -782,7 +787,7 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
     h += `</tbody></table>`;
     lhost.innerHTML = h;
     lhost.querySelectorAll<HTMLElement>("tr.lrow").forEach((tr) => tr.addEventListener("click", () => { selCluster = null; showRecord(tr.dataset.l!); }));
-    const sb = lhost.querySelector("#lsuggest") as HTMLButtonElement | null; if (sb) sb.onclick = () => { sb.disabled = true; sb.textContent = "✨ thinking…"; hooks.proposeAllNames(workLayer!.name); };
+    const sb = lhost.querySelector("#lsuggest") as HTMLButtonElement | null; if (sb) sb.onclick = () => { sb.disabled = true; sb.textContent = "✨ thinking…"; hooks.annotation.proposeAllNames(workLayer!.name); };
     const eb = lhost.querySelector("#lexport") as HTMLButtonElement | null; if (eb) eb.onclick = () => exportCap(workLayer!, ctx);
   };
 
@@ -992,7 +997,7 @@ async function renderCapRecord(host: HTMLElement, layer: AnnotationLayer, label:
   host.querySelectorAll<HTMLElement>("label").forEach((l) => l.style.cssText = "display:flex;flex-direction:column;gap:3px;color:var(--faint);font-size:11px");
   const val = (id: string) => (host.querySelector("#" + id) as HTMLInputElement | null)?.value || "";
   const flash = () => { const s = host.querySelector("#arsaved") as HTMLElement | null; if (s) { s.style.opacity = "1"; setTimeout(() => { s.style.opacity = "0"; }, 1200); } };
-  const save = () => { hooks.saveRecord(layerName, { label, fullName: val("ar_full"), category: val("ar_cat"), ontologyTermId: val("ar_oid"), ontologyTerm: val("ar_oterm"), canonicalMarkers: val("ar_canon").split(",").map((s) => s.trim()).filter(Boolean), rationale: val("ar_rat"), markerEvidence: rec.markerEvidence }); flash(); };
+  const save = () => { hooks.annotation.saveRecord(layerName, { label, fullName: val("ar_full"), category: val("ar_cat"), ontologyTermId: val("ar_oid"), ontologyTerm: val("ar_oterm"), canonicalMarkers: val("ar_canon").split(",").map((s) => s.trim()).filter(Boolean), rationale: val("ar_rat"), markerEvidence: rec.markerEvidence }); flash(); };
   host.querySelectorAll("input:not(#arname),textarea").forEach((i) => i.addEventListener("change", save));
   // click any gene chip (marker evidence / canonical) → colour the embedding by that gene's expression.
   // onclick (NOT addEventListener): renderCapRecord re-runs on the SAME persistent host every card re-render —
@@ -1011,16 +1016,16 @@ async function renderCapRecord(host: HTMLElement, layer: AnnotationLayer, label:
     box.querySelectorAll<HTMLElement>(".olshit").forEach((el) => el.onclick = () => { (host.querySelector("#ar_oid") as HTMLInputElement).value = el.dataset.id!; (host.querySelector("#ar_oterm") as HTMLInputElement).value = el.dataset.label!; save(); box.innerHTML = ""; });
   };
   const sug = host.querySelector("#arsuggest") as HTMLButtonElement;
-  sug.onclick = () => { sug.disabled = true; sug.textContent = "✨ thinking…"; save(); hooks.proposeRecord(layerName, label); };   // save current edits, then let the agent propose (re-renders on propose_label)
+  sug.onclick = () => { sug.disabled = true; sug.textContent = "✨ thinking…"; save(); hooks.annotation.proposeRecord(layerName, label); };   // save current edits, then let the agent propose (re-renders on propose_label)
   const minBtn = host.querySelector("#armin") as HTMLButtonElement | null; if (minBtn && opts?.onCollapse) minBtn.onclick = () => { save(); opts.onCollapse!(); };
   // SPLIT: isolate this label's cells (focus), then the user brushes a subset + labels it (the rest stay). MERGE:
   // pick another working label → rename-to-existing collapses the two (the existing merge path).
-  const splitBtn = host.querySelector("#ar_split") as HTMLButtonElement | null; if (splitBtn) splitBtn.onclick = () => hooks.splitLabel(label);
+  const splitBtn = host.querySelector("#ar_split") as HTMLButtonElement | null; if (splitBtn) splitBtn.onclick = () => hooks.annotation.splitLabel(label);
   const mergeBtn = host.querySelector("#ar_merge") as HTMLButtonElement | null; const mergeSel = host.querySelector("#ar_mergesel") as HTMLSelectElement | null;
   if (mergeBtn && mergeSel) {
     const others = layer.categories.filter((c) => c !== label && layer.codes.some((x) => x === layer.categories.indexOf(c)));
     mergeBtn.onclick = () => { if (!others.length) return; mergeSel.innerHTML = `<option value="">merge “${esc(label)}” into…</option>` + others.map((c) => `<option>${esc(c)}</option>`).join(""); mergeBtn.style.display = "none"; mergeSel.style.display = ""; mergeSel.focus(); };
-    mergeSel.onchange = () => { const to = mergeSel.value; if (to) hooks.renameLabel("annotation", label, to); };
+    mergeSel.onchange = () => { const to = mergeSel.value; if (to) hooks.annotation.renameLabel("annotation", label, to); };
   }
   if (opts?.accept) host.querySelectorAll<HTMLButtonElement>(".rcacc").forEach((b) => b.onclick = () => { const o = opts.accept!.options[+b.dataset.acc!]; if (o) opts.accept!.onAccept(o.label); });
   // fill marker evidence asynchronously (the DE call is slow — don't block the card). Staleness-guarded: if the
@@ -1047,7 +1052,7 @@ async function exportCap(layer: AnnotationLayer, ctx: Ctx): Promise<void> {
 
 // Standalone record panel (optional) — a label picker + the shared CAP form, following the selection.
 async function annoRecordBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltBody> {
-  const layer = hooks.annoLayer("annotation");
+  const layer = hooks.annotation.annoLayer("annotation");
   if (!layer || !layer.categories.length) { const m = mk("div", "panelerr"); m.textContent = "No working annotation yet — accept labels in the Reconcile panel first."; return { el: m }; }
   const w = mk("div"); w.style.cssText = "position:absolute;inset:0;overflow:auto;font-size:12px;padding:10px 12px";
   let current = (p as any).recordLabel && layer.categories.includes((p as any).recordLabel) ? (p as any).recordLabel : layer.categories[0];
