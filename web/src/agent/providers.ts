@@ -38,7 +38,7 @@ export function providerModel(p: Provider): string { return MODELS[p] || MODELS.
 export const PROVIDER_KEY = "p3-agent-provider";
 export function getProvider(): Provider {
   try { const v = typeof localStorage !== "undefined" ? localStorage.getItem(PROVIDER_KEY) : null; if (v === "openai" || v === "anthropic") return v as Provider; } catch { /* node / private mode */ }
-  return "openai";   // TEMP active-testing default → local qwen/vLLM. p2.setProvider("anthropic") overrides per-browser; flip this line back to "anthropic" when done.
+  return "anthropic";   // default = Anthropic/Opus. Flip per-browser with p2.setProvider("openai") to test the local qwen/vLLM model.
 }
 export function adapterFor(p: Provider): ProviderAdapter { return p === "openai" ? openaiAdapter : anthropicAdapter; }
 
