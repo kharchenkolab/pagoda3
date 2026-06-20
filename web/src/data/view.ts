@@ -3,7 +3,7 @@
 import type { LstarDataset } from "./store.ts";
 import { kernels } from "./kernels.ts";
 import { DIM_RGB, DIM_A, themeIsDark } from "../render/theme.ts";   // theme-aware non-focus dot colour (live binding)
-import { sample, overdispersedCore } from "../compute/odcore.ts";   // pure kernel core (shared by the fallback, the worker, and node tests)
+import { sample, overdispersedCore, deCore } from "../compute/odcore.ts";   // pure kernel cores (shared by the fallback, the worker, and node tests)
 import type { ComputePool } from "../compute/pool.ts";
 import { isolationAvailable } from "../compute/pool.ts";
 
@@ -278,24 +278,18 @@ export class LstarView {
 
     const dp = await this.dePanel();
     if (dp) {
-      // Zero-copy JS loop over the cached cell-major panel, touching only the sampled rows (O(rows)).
-      // The panel is raw counts (state=raw) -> log1p here; a legacy log1p panel is summed directly.
-      const { data, indices, indptr, symbols, geneCol, nGenes, lognorm } = dp;
-      const sumA = new Float64Array(nGenes), sumB = new Float64Array(nGenes);
-      if (lognorm) {
-        for (const i of A) for (let k = indptr[i]; k < indptr[i + 1]; k++) sumA[indices[k]] += data[k];
-        for (const i of B) for (let k = indptr[i]; k < indptr[i + 1]; k++) sumB[indices[k]] += data[k];
-      } else {
-        for (const i of A) for (let k = indptr[i]; k < indptr[i + 1]; k++) sumA[indices[k]] += Math.log1p(data[k]);
-        for (const i of B) for (let k = indptr[i]; k < indptr[i + 1]; k++) sumB[indices[k]] += Math.log1p(data[k]);
-      }
-      const ranked: DEResult[] = new Array(nGenes);
-      for (let g = 0; g < nGenes; g++) {
-        const ma = sumA[g] / na, mb = sumB[g] / nb;
-        ranked[g] = { gene: geneCol ? geneCol[g] : g, symbol: symbols[g], meanA: ma, meanB: mb, lfc: ma - mb };
-      }
-      ranked.sort((a, b) => Math.abs(b.lfc) - Math.abs(a.lfc));
-      return { ranked, nA: A.length, nB: B.length, approx, panel: true, nGenesRanked: nGenes };
+      // Whole-transcriptome reduction over the cell-major panel — OFF the main thread when isolated + the panel is
+      // SAB-backed, else the SAME deCore inline (byte-identical). The core returns the panel gene index g; we map
+      // g -> {global gene, symbol} here. A worker failure degrades to the inline core.
+      const panel = { data: dp.data, indices: dp.indices, indptr: dp.indptr, nGenes: dp.nGenes, lognorm: dp.lognorm };
+      const inline = () => deCore(panel, A, B);
+      let raw: { g: number; meanA: number; meanB: number; lfc: number }[];
+      if (this.computePool?.isolated && dp.shared) {
+        try { raw = await this.computePool.run("de", { panel: { data: dp.data.buffer, indices: dp.indices.buffer, indptr: dp.indptr.buffer, nGenes: dp.nGenes, lognorm: dp.lognorm }, A, B }); }
+        catch { raw = inline(); }
+      } else { raw = inline(); }
+      const ranked: DEResult[] = raw.map((r) => ({ gene: dp.geneCol ? dp.geneCol[r.g] : r.g, symbol: dp.symbols[r.g], meanA: r.meanA, meanB: r.meanB, lfc: r.lfc }));
+      return { ranked, nA: A.length, nB: B.length, approx, panel: true, nGenesRanked: dp.nGenes };
     }
 
     // Fallback: load counts CSC once (cached), per-group sums via the libstar WASM kernel.

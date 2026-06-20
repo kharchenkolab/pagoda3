@@ -53,6 +53,27 @@ export function overdispersedCore(panel: ODPanel, cellIds: ArrayLike<number>, to
   return out.slice(0, topN);
 }
 
+// Subsample DE reduction — A and B are PRE-SUBSAMPLED cell sets (the deterministic sample() runs on the main thread).
+// Per-gene mean(log1p) for each group over the panel rows, ranked by |logFC|. Returns the PANEL gene index g (the caller
+// maps g -> {global gene, symbol}). Whole-transcriptome; cost is O(sum of A+B row lengths). Mirrors view.subsampleDE's
+// fast path exactly so worker == inline byte-for-byte.
+export function deCore(panel: ODPanel, A: ArrayLike<number>, B: ArrayLike<number>): { g: number; meanA: number; meanB: number; lfc: number }[] {
+  const { data, indices, indptr, nGenes, lognorm } = panel;
+  const na = Math.max(A.length, 1), nb = Math.max(B.length, 1);
+  const sumA = new Float64Array(nGenes), sumB = new Float64Array(nGenes);
+  if (lognorm) {
+    for (let j = 0; j < A.length; j++) { const i = A[j]; for (let k = indptr[i]; k < indptr[i + 1]; k++) sumA[indices[k]] += data[k]; }
+    for (let j = 0; j < B.length; j++) { const i = B[j]; for (let k = indptr[i]; k < indptr[i + 1]; k++) sumB[indices[k]] += data[k]; }
+  } else {
+    for (let j = 0; j < A.length; j++) { const i = A[j]; for (let k = indptr[i]; k < indptr[i + 1]; k++) sumA[indices[k]] += Math.log1p(data[k]); }
+    for (let j = 0; j < B.length; j++) { const i = B[j]; for (let k = indptr[i]; k < indptr[i + 1]; k++) sumB[indices[k]] += Math.log1p(data[k]); }
+  }
+  const ranked = new Array(nGenes);
+  for (let g = 0; g < nGenes; g++) { const ma = sumA[g] / na, mb = sumB[g] / nb; ranked[g] = { g, meanA: ma, meanB: mb, lfc: ma - mb }; }
+  ranked.sort((a, b) => Math.abs(b.lfc) - Math.abs(a.lfc));
+  return ranked;
+}
+
 // ----- LOWESS: tricube-weighted local linear fit of y~x at anchors, linearly interpolated -----
 function lowess(xs: number[], ys: number[], span = 0.3, nAnchor = 200): (x: number) => number {
   const n = xs.length;

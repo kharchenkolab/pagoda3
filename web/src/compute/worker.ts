@@ -3,7 +3,12 @@
 // S0 proved the SAB→worker→result round-trip; S1 runs the first real kernel (overdispersion) here. The numeric cores
 // live in pure modules (compute/odcore.ts) imported by BOTH this worker and node tests, so the math is unit-tested
 // while the wiring is OODA'd live under cross-origin isolation.
-import { overdispersedCore, type ODPanel } from "./odcore.ts";
+import { overdispersedCore, deCore, type ODPanel } from "./odcore.ts";
+
+// Reconstruct a panel from SAB-backed buffers posted by the main thread (mapped ZERO-COPY — the buffers are shared).
+function panelFrom(p: any): ODPanel {
+  return { data: new Float64Array(p.data), indices: new Int32Array(p.indices), indptr: new Int32Array(p.indptr), nGenes: p.nGenes, lognorm: p.lognorm };
+}
 
 type Req = { id: number; op: string; args: any };
 
@@ -29,12 +34,9 @@ function run(op: string, args: any): any {
       a[0] = s;                                                   // write the result back into the shared buffer
       return { sum: s, n: a.length - 1 };
     }
-    // overdispersion (HVG): map the SAB-backed panel ZERO-COPY (the buffers are shared, not cloned) and run the kernel.
-    case "overdispersion": {
-      const p = args.panel;
-      const panel: ODPanel = { data: new Float64Array(p.data), indices: new Int32Array(p.indices), indptr: new Int32Array(p.indptr), nGenes: p.nGenes, lognorm: p.lognorm };
-      return overdispersedCore(panel, args.cellIds, args.topN, args.maxCells);
-    }
+    // overdispersion (HVG) + DE: map the SAB-backed panel ZERO-COPY (the buffers are shared, not cloned), run the kernel.
+    case "overdispersion": return overdispersedCore(panelFrom(args.panel), args.cellIds, args.topN, args.maxCells);
+    case "de": return deCore(panelFrom(args.panel), args.A, args.B);
     default:
       throw new Error("unknown compute op: " + op);
   }
