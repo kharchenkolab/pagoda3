@@ -92,6 +92,18 @@ export function groupStatsForCellsCore(
   return { mean, frac, n };
 }
 
+// Per-gene mean + variance of log1p over a CELL SUBSET, from the cell-major panel — the subset counterpart to the WASM
+// colMeanVar (which is all-cells). Returns the panel gene index g; the caller maps g -> symbol.
+export function meanVarCore(panel: ODPanel, cells: ArrayLike<number>): { g: number; mean: number; var: number; nnz: number }[] {
+  const { data, indices, indptr, nGenes, lognorm } = panel;
+  const n = Math.max(cells.length, 1);
+  const sum = new Float64Array(nGenes), sumsq = new Float64Array(nGenes), nobs = new Int32Array(nGenes);
+  for (let j = 0; j < cells.length; j++) { const i = cells[j]; for (let k = indptr[i]; k < indptr[i + 1]; k++) { const g = indices[k], v = lognorm ? data[k] : Math.log1p(data[k]); sum[g] += v; sumsq[g] += v * v; nobs[g]++; } }
+  const out = new Array(nGenes);
+  for (let g = 0; g < nGenes; g++) { const m = sum[g] / n; out[g] = { g, mean: m, var: Math.max(sumsq[g] / n - m * m, 0), nnz: nobs[g] }; }
+  return out;
+}
+
 // ----- LOWESS: tricube-weighted local linear fit of y~x at anchors, linearly interpolated -----
 function lowess(xs: number[], ys: number[], span = 0.3, nAnchor = 200): (x: number) => number {
   const n = xs.length;

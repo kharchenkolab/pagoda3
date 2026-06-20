@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { sample, overdispersedCore, deCore, groupStatsForCellsCore, logFupperTail, type ODPanel } from "./odcore.ts";
+import { sample, overdispersedCore, deCore, groupStatsForCellsCore, meanVarCore, logFupperTail, type ODPanel } from "./odcore.ts";
 
 // Build a cell-major CSR panel from a dense [cell][gene] matrix (stores only nonzeros, like the real panel).
 function buildPanel(dense: number[][], lognorm = true): ODPanel {
@@ -82,6 +82,17 @@ test("groupStatsForCellsCore: per-group mean(log1p) + fraction-expressing over a
   near(r.frac[2], 1 / 3);      // g1 gene0 expressed in 1 of 3
   // determinism
   assert.deepEqual(groupStatsForCellsCore(panel, null, 2, codes, 2, [0, 1, 2, 3, 4, 5]), r);
+});
+
+test("meanVarCore: per-gene mean+var over a CELL SUBSET (the subset counterpart to colMeanVar)", () => {
+  const dense = [[2, 1], [2, 0], [2, 1], [0, 3], [0, 3], [0, 3]];
+  const panel = buildPanel(dense);
+  const near = (a: number, b: number) => assert.ok(Math.abs(a - b) < 1e-5, `${a} ≈ ${b}`);
+  const sub = meanVarCore(panel, [0, 1, 2]);        // cells 0-2 only
+  near(sub[0].mean, 2); near(sub[0].var, 0); assert.equal(sub[0].nnz, 3);     // gene0: [2,2,2]
+  near(sub[1].mean, 2 / 3); near(sub[1].var, 2 / 9); assert.equal(sub[1].nnz, 2);   // gene1: [1,0,1]
+  const all = meanVarCore(panel, [0, 1, 2, 3, 4, 5]);   // all cells
+  near(all[0].mean, 1); near(all[0].var, 1);            // gene0: [2,2,2,0,0,0] → mean 1, var 1
 });
 
 test("logFupperTail: monotone — a larger variance ratio is more significant (more negative log p)", () => {

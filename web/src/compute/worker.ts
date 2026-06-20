@@ -3,7 +3,7 @@
 // S0 proved the SAB→worker→result round-trip; S1 runs the first real kernel (overdispersion) here. The numeric cores
 // live in pure modules (compute/odcore.ts) imported by BOTH this worker and node tests, so the math is unit-tested
 // while the wiring is OODA'd live under cross-origin isolation.
-import { overdispersedCore, deCore, groupStatsForCellsCore, type ODPanel } from "./odcore.ts";
+import { overdispersedCore, deCore, groupStatsForCellsCore, meanVarCore, type ODPanel } from "./odcore.ts";
 
 // Reconstruct a panel from SAB-backed buffers posted by the main thread (mapped ZERO-COPY — the buffers are shared).
 function panelFrom(p: any): ODPanel {
@@ -85,19 +85,39 @@ function runWidgetCode(args: any): Promise<any> {
     stats: s.stats || null,
     args: s.args || null,
     // KERNELS over the shared panel (whole-transcriptome; only present when cross-origin isolated → the panel was shared).
-    de: panel ? (A: number[], B: number[], topN = 30) => deCore(panel, A, B).slice(0, topN).map((r) => ({ symbol: symFor(r.g), lfc: r.lfc, meanA: r.meanA, meanB: r.meanB })) : undefined,
-    overdispersion: panel ? (cells: number[], topN = 50) => overdispersedCore(panel, cells, topN, 2000).map((r) => ({ symbol: symFor(r.g), score: r.resid, mean: r.mean })) : undefined,
-    // WASM KERNEL (native libstar, in the worker): genome-wide per-gene mean+variance over ALL cells — the heavy
-    // computation behind a mean-variance / HVG plot. Async (loads the WASM lazily, then caches it).
-    meanVar: counts ? async (lognorm = true) => {
-      const M = await wasm();
-      if (!M) throw new Error("WASM kernels unavailable in the worker");
-      const r = M.colMeanVar(new Float32Array(counts.data), new Int32Array(counts.indptr), counts.nCells, 1, !!lognorm);
-      const cs = counts.symbols; const out = [];
-      for (let g = 0; g < r.mean.length; g++) out.push({ symbol: cs ? cs[g] : g, mean: r.mean[g], var: r.var[g], nnz: r.nnz[g] });
-      return out;
+    // Each kernel takes an optional opts: { topN?, genes? } — genes is a SUBSET (symbol list) the result is filtered to.
+    // (topN may also be passed positionally for back-compat.) Cell scoping is each kernel's natural arg (A/B, cells).
+    de: panel ? (A: number[], B: number[], opt?: any) => {
+      const o = optOf(opt, 30); let rk = deCore(panel, A, B);            // {g,lfc,meanA,meanB}[] all genes, |lfc|-sorted
+      if (o.genes) rk = rk.filter((r) => o.genes.has(String(symFor(r.g))));   // gene-subset filter (g-level, before mapping)
+      return rk.slice(0, o.topN).map((r) => ({ symbol: symFor(r.g), lfc: r.lfc, meanA: r.meanA, meanB: r.meanB }));
+    } : undefined,
+    overdispersion: panel ? (cells: number[], opt?: any) => {
+      const o = optOf(opt, 50); let rk = overdispersedCore(panel, cells, o.genes ? 1e9 : o.topN, 2000);
+      if (o.genes) rk = rk.filter((r) => o.genes.has(String(symFor(r.g))));
+      return rk.slice(0, o.topN).map((r) => ({ symbol: symFor(r.g), score: r.resid, mean: r.mean }));
+    } : undefined,
+    // mean+variance per gene: over a CELL SUBSET (cell-major panel) when opts.cells given, else genome-wide over ALL
+    // cells via the native libstar WASM colMeanVar (heavy → off-thread). Async (loads the WASM lazily). genes filters.
+    meanVar: (panel || counts) ? async (opt?: any) => {
+      const o = optOf(opt, 0);
+      let rows: { symbol: any; mean: number; var: number; nnz: number }[];
+      if (o.cells) {
+        if (!panel) throw new Error("meanVar over a cell subset needs the panel");
+        rows = meanVarCore(panel, o.cells).map((r) => ({ symbol: symFor(r.g), mean: r.mean, var: r.var, nnz: r.nnz }));
+      } else {
+        if (!counts) throw new Error("genome-wide meanVar needs cross-origin isolation (the shared counts)");
+        const M = await wasm(); if (!M) throw new Error("WASM kernels unavailable in the worker");
+        const r = M.colMeanVar(new Float32Array(counts.data), new Int32Array(counts.indptr), counts.nCells, 1, o.lognorm !== false);
+        const cs = counts.symbols; rows = [];
+        for (let g = 0; g < r.mean.length; g++) rows.push({ symbol: cs ? cs[g] : g, mean: r.mean[g], var: r.var[g], nnz: r.nnz[g] });
+      }
+      return pickGenes(rows, o.genes);
     } : undefined,
   };
+  // normalize a kernel's opts arg: a bare number is topN (back-compat); else { topN?, genes?, cells?, lognorm? }.
+  function optOf(opt: any, defTopN: number): any { const o = typeof opt === "number" ? { topN: opt } : (opt || {}); if (o.topN == null) o.topN = defTopN; if (Array.isArray(o.genes)) o.genes = new Set(o.genes.map(String)); return o; }
+  function pickGenes<R extends { symbol: any }>(rows: R[], genes: Set<string> | undefined): R[] { return genes ? rows.filter((r) => genes.has(String(r.symbol))) : rows; }
   const fn = new Function("api", "fetch", "XMLHttpRequest", "importScripts", "WebSocket", "self", "globalThis", "postMessage", "onmessage",
     '"use strict"; return (async function(){ ' + String(args.code) + "\n})();");
   return Promise.resolve(fn(api));
