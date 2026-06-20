@@ -40,6 +40,9 @@ export interface Panel {
   source?: string;                    // Widget panel: the author-written widget source (runs in a sandboxed iframe)
   controls?: { id: string; label: string }[];   // Widget panel: header controls the widget declared (folded into ⋯)
   params?: { id: string; label: string; type: string; value: any; min?: number; max?: number; step?: number; options?: string[] }[];   // Widget panel: typed value knobs (header inputs + describe_panel)
+  version?: string;                                                          // Widget panel: declared module version (for sharing/import)
+  description?: string;                                                      // Widget panel: declared description (shown at the consent gate)
+  permissions?: { external?: string[]; compute?: boolean };                  // Widget panel: declared capabilities (shown at the consent gate for informed trust)
 }
 
 export interface PanelHooks {

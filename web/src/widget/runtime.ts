@@ -1,7 +1,7 @@
 // Browser-side widget runtime: mount an author-written widget in a sandboxed iframe and bridge it to a WidgetHost
 // (the app provides a real one over coord/ctx; the dev harness provides a mock). Decoupled from the app — it only
 // speaks the contract.ts protocol + this WidgetHost interface.
-import { ThemeInfo, CoordInfo, HintInfo, WidgetManifest, WidgetMsg, validateManifest, widgetSrcdoc } from "./contract.ts";
+import { type ThemeInfo, type CoordInfo, type HintInfo, type WidgetManifest, type WidgetMsg, validateManifest, widgetSrcdoc } from "./contract.ts";
 
 // What a host must provide. The runtime never touches app state directly — it asks the host.
 export interface WidgetHost {
@@ -27,6 +27,14 @@ export interface WidgetHandle {
   sendParam(id: string, value: any): void;                       // host → widget: a declared parameter was set (header input or agent)
   snapshot(timeoutMs?: number): Promise<string>;                 // ask the widget for its rendered text (preview feedback)
   destroy(): void;
+}
+
+// Does `url`'s host match one of the widget's declared external hosts? Exact host or a subdomain of it
+// ("rcsb.org" matches "files.rcsb.org" but not "evil-rcsb.org" or "rcsb.org.evil.com"). Pure — node-testable.
+export function hostMatches(url: string, allow: string[]): boolean {
+  let h = "";
+  try { h = new URL(url).hostname.toLowerCase(); } catch { return false; }   // unparseable URL → never allowed
+  return allow.some((a) => h === a || h.endsWith("." + a));
 }
 
 // Mount `source` into `container`. `actions` lets the caller pre-tap widget→host messages (the harness logs them);
@@ -59,11 +67,20 @@ export function mountWidget(container: HTMLElement, source: string, host: Widget
         (payload) => post({ t: "data", reqId: m.reqId, ok: true, payload }),
         (err) => post({ t: "data", reqId: m.reqId, ok: false, error: String(err?.message || err) }));
         break;
-      case "fetchExternal":
+      case "fetchExternal": {
+        // Enforce the widget's own declaration: if it declared permissions.external, that list is BINDING —
+        // it may fetch only from those hosts (the host's global allowlist still applies on top, as an outer bound).
+        // A widget that declared nothing is unchanged (host allowlist governs) — backward-compatible.
+        const decl = manifest?.permissions?.external;
+        if (decl && decl.length && !hostMatches(m.url, decl)) {
+          post({ t: "extData", reqId: m.reqId, ok: false, error: "blocked: " + m.url + " is not among this widget's declared external hosts (" + decl.join(", ") + ")" });
+          break;
+        }
         (host.fetchExternal ? host.fetchExternal(m.url, { as: m.as }) : Promise.reject(new Error("external fetch not available in this host"))).then(
           (payload) => post({ t: "extData", reqId: m.reqId, ok: true, payload }),
           (err) => post({ t: "extData", reqId: m.reqId, ok: false, error: String(err?.message || err) }));
         break;
+      }
       case "loadLib":
         (host.loadLib ? host.loadLib(m.name) : Promise.reject(new Error("loadLib not available in this host"))).then(
           (source) => post({ t: "libResult", reqId: m.reqId, ok: true, source }),

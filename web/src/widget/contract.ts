@@ -23,10 +23,16 @@ export type HintInfo = null | { kind: "cells"; ids: number[] } | { kind: "catego
 // style knobs (the strong-C completion). A change arrives as a {t:"param"} message; the widget reacts via on('param').
 export interface WidgetParam { id: string; label: string; type: "number" | "select" | "bool" | "color" | "text"; value: any; min?: number; max?: number; step?: number; options?: string[]; }
 
+// A module's declared PERMISSIONS — the capabilities it intends to use, declared up front so an IMPORTED widget can be
+// trusted by INSPECTION (the consent gate shows them) and (future) ENFORCED (the host narrows fetchExternal to the
+// declared hosts). external = the biodata hosts it fetches from (a subset of the global allowlist); compute = it runs
+// off-thread runCompute. Captured when the author runs the widget + persisted, so they're known at gate time (pre-run).
+export interface WidgetPermissions { external?: string[]; compute?: boolean; }
+
 // A widget's self-declared metadata. controls become standard header buttons the HOST renders (uniform ⋯/toolbar
 // policy); a click comes back as a {t:"control"} message. params become header INPUTS + describe_panel knobs. height
-// lets a widget request its natural body height.
-export interface WidgetManifest { title?: string; height?: number; controls?: { id: string; label: string }[]; params?: WidgetParam[]; }
+// lets a widget request its natural body height. version/description/permissions make it an installable MODULE (P4).
+export interface WidgetManifest { title?: string; height?: number; controls?: { id: string; label: string }[]; params?: WidgetParam[]; version?: string; description?: string; permissions?: WidgetPermissions; }
 
 // host → widget
 export type HostMsg =
@@ -70,6 +76,14 @@ export function validateManifest(m: any): WidgetManifest {
       if (Array.isArray(p.options)) o.options = p.options.map((x: any) => String(x));
       return o;
     });
+    if (typeof m.version === "string") out.version = m.version.slice(0, 40);
+    if (typeof m.description === "string") out.description = m.description.slice(0, 400);
+    if (m.permissions && typeof m.permissions === "object") {
+      const perm: WidgetPermissions = {};
+      if (Array.isArray(m.permissions.external)) perm.external = m.permissions.external.filter((h: any) => typeof h === "string" && h.trim()).map((h: any) => h.trim().toLowerCase());
+      if (m.permissions.compute === true) perm.compute = true;
+      if (perm.external?.length || perm.compute) out.permissions = perm;
+    }
   }
   return out;
 }
@@ -133,7 +147,9 @@ export const WIDGET_API_DOC =
   "type:'number'|'select'|'bool'|'color'|'text', value, min?, max?, step?, options?}]}) — the host renders them as header " +
   "inputs AND exposes them to the agent (describe_panel shows each param's current value/range; update_view sets them); " +
   "react to a change via pagoda.on('param', (id, value) => …). Use controls for ACTIONS, params for VALUES. " +
-  "Keep it self-contained — no external network/CDN.";
+  "For a SHAREABLE widget, also declare in ready(): version, description, and permissions:{external:['uniprot.org', …] " +
+  "(the biodata hosts you fetchExternal from), compute:true (if you use runCompute)} — these are shown at the consent " +
+  "gate so an imported widget is trusted by inspection. Keep it self-contained — no external network/CDN.";
 
 // Escape a source string so it can't break out of the <script> it's injected into.
 export function escapeForScript(src: string): string { return String(src).replace(/<\/(script)/gi, "<\\/$1"); }

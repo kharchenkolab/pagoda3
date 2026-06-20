@@ -324,6 +324,17 @@ export class App {
     const h = mk("div"); h.style.cssText = "font-weight:600;color:var(--text)"; h.textContent = "⚠ Untrusted widget";
     const msg = mk("div"); msg.style.cssText = "font-size:12px;color:var(--dim);line-height:1.45";
     msg.textContent = `“${p.title || "Widget"}” arrived in an imported session — its code has NOT run. Review it, then choose whether to run it. It would be sandboxed (no DOM/page access) and its compute terminable, but it can still read your data, drive selections/colour, and fetch from allow-listed biodata sources.`;
+    // DECLARED module metadata (P4) — built with textContent (the manifest is foreign data; never innerHTML it) so the
+    // user trusts an imported widget BY INSPECTION of what it says it does.
+    const declares = mk("div"); declares.style.cssText = "font-size:11.5px;color:var(--text);background:var(--inset);border:1px solid var(--line);border-radius:6px;padding:8px;line-height:1.55";
+    const addLine = (label: string, value: string) => { const d = mk("div"); const s = mk("span", undefined, label); s.style.cssText = "color:var(--faint);margin-right:6px"; d.append(s, document.createTextNode(value)); declares.appendChild(d); };
+    if (p.version) addLine("version", p.version);
+    if (p.description) { const d = mk("div"); d.textContent = p.description; declares.appendChild(d); }
+    const caps: string[] = [];
+    if (p.permissions?.external?.length) caps.push("fetches external data from: " + p.permissions.external.join(", "));
+    if (p.permissions?.compute) caps.push("runs off-thread compute");
+    caps.push("reads your data; can drive selection/colour");
+    addLine("declares:", caps.join(" · "));
     const pre = mk("pre"); pre.style.cssText = "display:none;flex:1;min-height:60px;overflow:auto;font:11px var(--mono);background:var(--inset);border:1px solid var(--line);border-radius:6px;padding:8px;white-space:pre-wrap;color:var(--text)";
     pre.textContent = p.source || "";
     const row = mk("div"); row.style.cssText = "display:flex;gap:8px;flex-wrap:wrap";
@@ -331,7 +342,7 @@ export class App {
     const trust = mk("button"); trust.textContent = "Trust & run"; trust.style.cssText = "border-color:var(--good);color:var(--good)";
     trust.onclick = () => this.confirmModal({ title: "Run this imported widget?", body: "This is custom code from an imported session. Running it lets it read your data, drive selections/colour, and fetch from allow-listed biodata sources. Only run widgets from a source you trust.", ok: "Trust & run", onConfirm: () => { this.trustWidget(p.source || ""); this.fullRender(); } });
     const remove = mk("button"); remove.textContent = "Remove"; remove.onclick = () => { this.removePanel(p.id); this.fullRender(); };
-    row.append(review, trust, remove); box.append(h, msg, row, pre); wrap.appendChild(box);
+    row.append(review, trust, remove); box.append(h, msg, declares, row, pre); wrap.appendChild(box);
   }
 
   // ---------- workbench ----------
@@ -543,6 +554,7 @@ export class App {
     (p.params || []).forEach((pr) => addParam(pr, false));
     handle.onManifest((m) => {   // first/updated manifest
       p.controls = m?.controls || [];
+      if (m?.version) p.version = m.version; if (m?.description) p.description = m.description; if (m?.permissions) p.permissions = m.permissions;   // module metadata → persisted, shown at the consent gate on import
       // params: keep the manifest's DEFINITION (label/type/range) but a RESTORED value wins; re-apply restored values
       // to the freshly-mounted widget so its state matches what was persisted.
       const declared: any[] = m?.params || [], saved: any[] = p.params || [];
@@ -1466,7 +1478,7 @@ export class App {
     if (user) { this.toast("Switched to " + name, "A workspace is a named, reversible layout — your previous one is a step back in History."); this.checkpoint("workspace → " + name, "Deliberate workspace switch."); }
   }
 
-  captureLayout(): Partial<Panel>[] { return this.canvas.map((p) => ({ type: p.type, title: p.title, cap: p.cap, full: p.full, col: p.col, bind: p.bind, group: p.group, gene: p.gene, heatMode: p.heatMode, genes: p.genes, view: p.view ? JSON.parse(JSON.stringify(p.view)) : undefined, rows: this.capRows(p), source: p.source, controls: p.controls ? JSON.parse(JSON.stringify(p.controls)) : undefined, params: p.params ? JSON.parse(JSON.stringify(p.params)) : undefined })); }
+  captureLayout(): Partial<Panel>[] { return this.canvas.map((p) => ({ type: p.type, title: p.title, cap: p.cap, full: p.full, col: p.col, bind: p.bind, group: p.group, gene: p.gene, heatMode: p.heatMode, genes: p.genes, view: p.view ? JSON.parse(JSON.stringify(p.view)) : undefined, rows: this.capRows(p), source: p.source, controls: p.controls ? JSON.parse(JSON.stringify(p.controls)) : undefined, params: p.params ? JSON.parse(JSON.stringify(p.params)) : undefined, version: p.version, description: p.description, permissions: p.permissions ? JSON.parse(JSON.stringify(p.permissions)) : undefined })); }
   // Result tables now hold the FULL ranked gene list (all tested genes) for live search; cap what we PERSIST so a
   // big-gene-set DE/overdispersion panel doesn't bloat the session doc (the tail is recomputable; live search keeps all).
   private capRows(p: Panel): any[] | undefined { const r = p.rows; if (!r) return undefined; return (p.type === "DeTable" || p.type === "GeneList") && r.length > 500 ? r.slice(0, 500) : r; }

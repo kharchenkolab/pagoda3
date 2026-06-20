@@ -24,6 +24,15 @@ test("validateManifest: title/height/controls + typed PARAMS; junk filtered", ()
   assert.equal(m.params![2].type, "bool");
 });
 
+test("validateManifest: module metadata — version/description/permissions (P4)", () => {
+  const m = validateManifest({ version: "1.2.0", description: "  protein viewer  ", permissions: { external: ["UniProt.org", "  ", "rcsb.org"], compute: true } });
+  assert.equal(m.version, "1.2.0");
+  assert.equal(m.description, "  protein viewer  ");
+  assert.deepEqual(m.permissions, { external: ["uniprot.org", "rcsb.org"], compute: true });   // lower-cased, blanks dropped
+  assert.equal(validateManifest({ permissions: { external: [], compute: false } }).permissions, undefined);   // empty perms → omitted
+  assert.equal(validateManifest({ version: 5 }).version, undefined);   // non-string ignored
+});
+
 test("validateManifest: tolerant of empty / missing", () => {
   assert.deepEqual(validateManifest(null), {});
   assert.deepEqual(validateManifest({}), {});
