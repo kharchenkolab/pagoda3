@@ -14,7 +14,7 @@ async function boot() {
   const view = new LstarView(ds);
   const computePool = new ComputePool();   // off-main-thread kernel pool; view dispatches to it when cross-origin isolated, else runs the same core inline
   view.setComputePool(computePool);
-  if (computePool.isolated) void computePool.ping();   // spawn + warm the worker at boot so the first real compute isn't cold (the spawn cost is paid off-thread, up front)
+  if (computePool.isolated) void computePool.ping().catch(() => { /* worker warm-up is best-effort; kernels fall back to the main thread */ });   // spawn + warm the worker at boot so the first real compute isn't cold
   const coord = new Coord();
   const ctx = new Ctx(view, coord);
   await ctx.init();

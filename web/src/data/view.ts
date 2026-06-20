@@ -377,14 +377,18 @@ export class LstarView {
     // OFF the main thread when isolated + the panel is SAB-backed (posting it SHARES, no copy); else run the SAME core
     // inline. Both paths call overdispersedCore → byte-identical; only the thread differs. The core returns the PANEL
     // gene index g; we map g -> {global gene, symbol} HERE (so no symbol table crosses to the worker).
+    const inline = () => overdispersedCore({ data: dp.data, indices: dp.indices, indptr: dp.indptr, nGenes: dp.nGenes, lognorm: dp.lognorm }, cellIds, topN, maxCells);
     let raw: { g: number; mean: number; varr: number; resid: number; nobs: number }[];
     if (this.computePool?.isolated && dp.shared) {
-      raw = await this.computePool.run("overdispersion", {
-        panel: { data: dp.data.buffer, indices: dp.indices.buffer, indptr: dp.indptr.buffer, nGenes: dp.nGenes, lognorm: dp.lognorm },
-        cellIds: Array.from(cellIds), topN, maxCells,
-      });
+      // worker is an OPTIMIZATION; any worker failure degrades to the identical main-thread core (never throws on the kernel).
+      try {
+        raw = await this.computePool.run("overdispersion", {
+          panel: { data: dp.data.buffer, indices: dp.indices.buffer, indptr: dp.indptr.buffer, nGenes: dp.nGenes, lognorm: dp.lognorm },
+          cellIds: Array.from(cellIds), topN, maxCells,
+        });
+      } catch { raw = inline(); }
     } else {
-      raw = overdispersedCore({ data: dp.data, indices: dp.indices, indptr: dp.indptr, nGenes: dp.nGenes, lognorm: dp.lognorm }, cellIds, topN, maxCells);
+      raw = inline();
     }
     return raw.map((r) => ({ gene: dp.geneCol ? dp.geneCol[r.g] : r.g, symbol: dp.symbols[r.g], mean: r.mean, varr: r.varr, resid: r.resid, nobs: r.nobs }));
   }
