@@ -8,6 +8,8 @@ import { EmbeddingStyle } from "../render/embedding.style.ts";
 import "./heatmap.style.ts";   // side-effect: the Heatmap panel's style descriptor self-registers
 import "./facets.style.ts";    // side-effect: the MetadataFacets panel's style descriptor self-registers
 import "./composition.style.ts";   // side-effect: the CompositionBars panel's style descriptor self-registers
+import "./volcano.style.ts";    // side-effect: the Volcano panel's style descriptor self-registers
+import "./box.style.ts";        // side-effect: the BoxBySample panel's style descriptor self-registers
 import { catColor } from "../data/view.ts";
 import type { EntityRef } from "../data/coord.ts";
 import { reconcile, crosstab, ReconRow, AnnotationLayer, CapRecord, labelChain } from "../anno/model.ts";
@@ -646,8 +648,9 @@ async function facetsBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltB
   } };
 }
 
-function volcanoBody(p: Panel, _ctx: Ctx): BuiltBody {
-  const W = 420, H = 240, pad = 28, lT = 1, pT = 0.05, xm = 3, ym = 5;
+function volcanoBody(p: Panel, ctx: Ctx): BuiltBody {
+  const s = resolvePanelStyleFor(ctx, "Volcano", p.view);   // hit thresholds, dot radius, label cutoff, axis limits
+  const W = 420, H = 240, pad = 28, lT = s.thresh.lfc, pT = s.thresh.p, xm = s.axis.xMax, ym = s.axis.yMax;
   const rows = (p.rows || []);
   const sx = (v: number) => pad + (Math.max(-xm, Math.min(xm, v)) + xm) / (2 * xm) * (W - pad - 6);
   const sy = (v: number) => H - pad - Math.min(v, ym) / ym * (H - 2 * pad);
@@ -655,8 +658,8 @@ function volcanoBody(p: Panel, _ctx: Ctx): BuiltBody {
   for (const r of rows) {
     const lfc = r.lfc ?? 0, pj = r.padj ?? 1;
     const y = -Math.log10(Math.max(pj, 1e-12)); const hit = Math.abs(lfc) >= lT && pj <= pT;
-    g += `<circle cx="${sx(lfc).toFixed(1)}" cy="${sy(y).toFixed(1)}" r="3.4" fill="${hit ? (lfc > 0 ? "var(--bad)" : "var(--cyan)") : "var(--faint)"}"/>`;
-    if (hit && Math.abs(lfc) > 1.4) g += `<text class="axis" x="${(sx(lfc) + 5).toFixed(1)}" y="${(sy(y) + 3).toFixed(1)}">${r.symbol}</text>`;
+    g += `<circle cx="${sx(lfc).toFixed(1)}" cy="${sy(y).toFixed(1)}" r="${s.dot.radius}" fill="${hit ? (lfc > 0 ? "var(--bad)" : "var(--cyan)") : "var(--faint)"}"/>`;
+    if (hit && Math.abs(lfc) > s.label.lfc) g += `<text class="axis" x="${(sx(lfc) + 5).toFixed(1)}" y="${(sy(y) + 3).toFixed(1)}">${r.symbol}</text>`;
   }
   g += `<text class="axis" x="${W / 2}" y="${H - 3}" text-anchor="middle">log2 fold-change</text>`;
   const svg = S("svg", { viewBox: `0 0 ${W} ${H}` }); svg.innerHTML = g;
@@ -664,6 +667,7 @@ function volcanoBody(p: Panel, _ctx: Ctx): BuiltBody {
 }
 
 async function boxBody(p: Panel, ctx: Ctx): Promise<BuiltBody> {
+  const s = resolvePanelStyleFor(ctx, "BoxBySample", p.view);   // point radius/opacity, decimation cap, mean-line width
   const gene = p.gene || "IL6";
   const bins = await ctx.exprBySample(gene, p.group);
   const W = 540, H = 180, pad = 28; const allMax = Math.max(...bins.flatMap((b) => b.vals), 1);
@@ -672,9 +676,9 @@ async function boxBody(p: Panel, ctx: Ctx): Promise<BuiltBody> {
   let g = "";
   bins.forEach((b, i) => {
     const x = sx(i), col = b.cond === "disease" ? "var(--bad)" : "var(--cyan)";
-    const step = Math.max(1, Math.floor(b.vals.length / 60));
-    for (let k = 0; k < b.vals.length; k += step) g += `<circle cx="${(x + (k % 9 - 4)).toFixed(1)}" cy="${sy(b.vals[k]).toFixed(1)}" r="2" fill="${col}" fill-opacity=".4"/>`;
-    g += `<line x1="${x - 13}" y1="${sy(b.mean).toFixed(1)}" x2="${x + 13}" y2="${sy(b.mean).toFixed(1)}" stroke="${col}" stroke-width="2.4"/>`;
+    const step = Math.max(1, Math.floor(b.vals.length / s.dot.maxPer));
+    for (let k = 0; k < b.vals.length; k += step) g += `<circle cx="${(x + (k % 9 - 4)).toFixed(1)}" cy="${sy(b.vals[k]).toFixed(1)}" r="${s.dot.radius}" fill="${col}" fill-opacity="${s.dot.opacity}"/>`;
+    g += `<line x1="${x - 13}" y1="${sy(b.mean).toFixed(1)}" x2="${x + 13}" y2="${sy(b.mean).toFixed(1)}" stroke="${col}" stroke-width="${s.mean.width}"/>`;
     g += `<text class="axis" x="${x}" y="${H - 12}" text-anchor="middle">${b.sample}</text><text class="axis" x="${x}" y="${H - 3}" text-anchor="middle" fill="${col}">${b.cond}</text>`;
   });
   const svg = S("svg", { viewBox: `0 0 ${W} ${H}` }); svg.innerHTML = g;
