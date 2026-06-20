@@ -163,7 +163,17 @@ export class App {
   scheduleSave() { if (this._saveTimer) return; this._saveTimer = setTimeout(() => { this._saveTimer = null; this.persistSession(); }, 400); }
   // dataset IDENTITY for the persistence guard — cell count is decisive (annotation codes are cell-indexed), field
   // names are informational. A session/annotation only safely reapplies where these align.
-  datasetFingerprint(): Fingerprint { try { return { n: this.ctx.n, fields: this.ctx.categoricalFields().slice().sort() }; } catch { return { n: 0, fields: [] }; } }
+  // The fingerprint identifies the IMMUTABLE BASE dataset (so a session only reapplies where the data aligns). It must
+  // therefore exclude SESSION-CREATED categoricals — the annotation draft + agent/UI-derived categories — which live in
+  // ctx.meta as categoricals too. Including them was self-defeating: a session carrying a derived category recorded that
+  // field in its own fingerprint, so on RELOAD (before restore, the field absent) the fingerprint mismatched and the
+  // whole annotation block — the category AND the working draft — was refused restoration.
+  datasetFingerprint(): Fingerprint {
+    try {
+      const overlay = new Set<string>([...this.ctx.annotationLayers(), ...this.ctx.derivedGroupings()]);
+      return { n: this.ctx.n, fields: this.ctx.categoricalFields().filter((f) => !overlay.has(f)).sort() };
+    } catch { return { n: 0, fields: [] }; }
+  }
   // AUTHORED data → materialized in full: every annotation layer's per-cell codes + label names + CAP records.
   serializeAnnotation(): SerAnnoLayer[] { return [...this.annoLayers.values()].map((L) => ({ name: L.name, source: L.source, categories: L.categories.slice(), codes: Array.from(L.codes as Int32Array), records: L.records, provenance: L.provenance })); }
   restoreAnnotation(layers: SerAnnoLayer[]): void { for (const s of layers) { try { this.commitLayer({ name: s.name, source: s.source as any, codes: Int32Array.from(s.codes), categories: s.categories.slice(), records: s.records || {}, provenance: s.provenance } as AnnotationLayer, false); } catch { /* a malformed layer must not abort the rest */ } } }
