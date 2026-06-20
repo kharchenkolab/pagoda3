@@ -85,6 +85,12 @@ test("display alpha is clamped; booleans pass through", () => {
   assert.deepEqual((find(flags.ops, "display")[0] as any).patch, { labels: false, legend: true });
 });
 
+test("colorStops: a custom numeric gradient normalizes to a customPalette op; blanks dropped; empty rejected", () => {
+  const w = makeWorld();
+  assert.deepEqual((find(normalizeViewPatch({ colorStops: ["#000", "  ", "#f00"] }, w).ops, "customPalette")[0] as any), { kind: "customPalette", stops: ["#000", "#f00"] });
+  assert.match(normalizeViewPatch({ colorStops: ["  "] }, w).rejected[0], /at least one css colour/);
+});
+
 test("recolor: per-value colour overrides normalize; blank colours dropped; clear + empty handled", () => {
   const w = makeWorld();
   const r = normalizeViewPatch({ recolor: { field: "cell_type", colors: { low: "lightgrey", "": "#ccc", bad: "  " } } }, w);

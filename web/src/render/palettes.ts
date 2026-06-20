@@ -25,6 +25,20 @@ export const PALETTES: Record<string, Palette> = {
   greys: ramp([[245, 245, 245], [20, 20, 20]]),
 };
 
+PALETTES.custom = ramp([[27, 34, 48], [224, 164, 88]]);   // a user/agent-DEFINED gradient (set via setCustomPalette); inits to amber so the name always resolves to a valid fn
+
+// A CUSTOM numeric palette from agent/user-supplied RGB stops (low → high). Stored so the session can persist it; the
+// "custom" colormap then renders it like any named palette. One stop = a flat colour; ≥2 = a gradient.
+let customStops: number[][] | null = null;
+export function setCustomPalette(stops: number[][]): boolean {
+  if (!Array.isArray(stops) || !stops.length) return false;
+  customStops = stops.map((c) => [c[0] | 0, c[1] | 0, c[2] | 0]);
+  PALETTES.custom = ramp(customStops.length === 1 ? [customStops[0], customStops[0]] : customStops);
+  return true;
+}
+export function serializeCustomPalette(): number[][] | null { return customStops; }
+export function restoreCustomPalette(stops?: number[][] | null): void { if (stops && stops.length) setCustomPalette(stops); else customStops = null; }
+
 // user/agent spelling → canonical name (after stripping case, spaces, dashes, underscores)
 const ALIASES: Record<string, string> = {
   amber: "amber", default: "amber", fire: "amber",
@@ -34,6 +48,7 @@ const ALIASES: Record<string, string> = {
   bluered: "bluered", bluetored: "bluered", bwr: "bluered", coolwarm: "bluered",
   blues: "blues", blue: "blues",
   greys: "greys", grays: "greys", grey: "greys", gray: "greys",
+  custom: "custom",   // the agent/user-defined gradient (setCustomPalette)
 };
 
 /** Canonical palette name for an arbitrary user/agent spelling, or null if unknown. */

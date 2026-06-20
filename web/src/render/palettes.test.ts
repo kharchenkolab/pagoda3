@@ -1,7 +1,19 @@
 // Unit tests for the pure palette module. Run: `node --test src/render/palettes.test.ts`.
 import { test } from "node:test";
 import assert from "node:assert";
-import { PALETTES, normalizePalette, paletteNames } from "./palettes.ts";
+import { PALETTES, normalizePalette, paletteNames, setCustomPalette, serializeCustomPalette, restoreCustomPalette } from "./palettes.ts";
+
+test("custom palette: setCustomPalette builds a gradient from stops; serialize/restore round-trips; 'custom' resolves", () => {
+  assert.equal(normalizePalette("custom"), "custom");
+  assert.equal(setCustomPalette([[0, 0, 0], [255, 0, 0]]), true);
+  assert.deepEqual(PALETTES.custom(0), [0, 0, 0]);     // low stop
+  assert.deepEqual(PALETTES.custom(1), [255, 0, 0]);   // high stop
+  assert.deepEqual(PALETTES.custom(0.5), [128, 0, 0]); // midpoint interpolation
+  assert.deepEqual(serializeCustomPalette(), [[0, 0, 0], [255, 0, 0]]);
+  assert.equal(setCustomPalette([]), false);           // empty → no-op
+  restoreCustomPalette([[10, 20, 30]]);                 // single stop = flat colour
+  assert.deepEqual(PALETTES.custom(0.7), [10, 20, 30]);
+});
 
 test("normalizePalette accepts spellings/aliases, rejects unknown", () => {
   assert.equal(normalizePalette("red-to-blue"), "rdbu");

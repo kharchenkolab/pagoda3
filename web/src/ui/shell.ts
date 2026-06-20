@@ -11,6 +11,7 @@ import { validateCellSet, resolveCellSet, describeCellSet, CellSet, CellWorld, C
 import { validateComputeResult, runInWorker, buildComputeSnapshot } from "../agent/codeapi.ts";
 import { setCodeValues, setConfValues, invalidateColor, setCategoryColor, clearCategoryColors, serializeCategoryColors, restoreCategoryColors } from "../render/colors.ts";
 import { clampStyle, deepMerge, describeStyle, getStyle } from "../render/style.ts";
+import { setCustomPalette, serializeCustomPalette, restoreCustomPalette } from "../render/palettes.ts";
 import { themeIsDark } from "../render/theme.ts";
 import { setThemeColors } from "../render/theme.ts";
 import { installOverflow } from "./overflow.ts";
@@ -206,7 +207,7 @@ export class App {
   }
   persistSession() {
     const userWS = this.wsOrder.filter((n) => !this.builtinWS.has(n) && this.WS[n]).map((n) => ({ name: n, ws: this.WS[n] }));
-    const base = { store: this.currentStore(), fingerprint: this.datasetFingerprint(), currentWS: this.currentWS, colorBy: this.coord.state.colorBy, canvas: this.captureLayout(), userWS, annotation: this.serializeAnnotation(), catColors: serializeCategoryColors(), style: (this.coord.state as any).style };
+    const base = { store: this.currentStore(), fingerprint: this.datasetFingerprint(), currentWS: this.currentWS, colorBy: this.coord.state.colorBy, canvas: this.captureLayout(), userWS, annotation: this.serializeAnnotation(), catColors: serializeCategoryColors(), style: (this.coord.state as any).style, customPalette: serializeCustomPalette() };
     // Try the full doc (incl. the chat log); if it busts the ~5MB quota, retry WITHOUT the conversation so views +
     // annotation still persist (the chat is the biggest + most droppable part — it's also in the exportable file).
     try { localStorage.setItem(SESSION_KEY, serializeSession({ ...base, conversation: this.serializeConversation() })); }
@@ -220,6 +221,7 @@ export class App {
     this.applySessionViews(doc);
     restoreCategoryColors((doc as any).catColors);   // per-value colour overrides (keyed by field+value, not cell-indexed → no fingerprint gate; a missing field just won't apply)
     (this.coord.state as any).style = (doc as any).style;   // global style overrides (view layer, not cell-indexed)
+    restoreCustomPalette((doc as any).customPalette);   // a user-defined numeric gradient (view layer)
     if (doc.annotation && !fingerprintMismatch(doc.fingerprint, this.datasetFingerprint())) this.restoreAnnotation(doc.annotation);   // cell-indexed → only when the dataset still aligns
     this.restoreConversation(doc.conversation);   // the chat log survives a reload (not cell-indexed → no fingerprint gate)
     this.fullRender();
@@ -236,7 +238,7 @@ export class App {
   // ---- the portable session DOCUMENT (file) — see persist.ts. A bundle = the session + the widget library it uses.
   buildBundle(): string {
     const userWS = this.wsOrder.filter((n) => !this.builtinWS.has(n) && this.WS[n]).map((n) => ({ name: n, ws: this.WS[n] }));
-    const session = parseSession(serializeSession({ store: this.currentStore(), fingerprint: this.datasetFingerprint(), currentWS: this.currentWS, colorBy: this.coord.state.colorBy, canvas: this.captureLayout(), userWS, annotation: this.serializeAnnotation(), conversation: this.serializeConversation(), catColors: serializeCategoryColors(), style: (this.coord.state as any).style }))!;
+    const session = parseSession(serializeSession({ store: this.currentStore(), fingerprint: this.datasetFingerprint(), currentWS: this.currentWS, colorBy: this.coord.state.colorBy, canvas: this.captureLayout(), userWS, annotation: this.serializeAnnotation(), conversation: this.serializeConversation(), catColors: serializeCategoryColors(), style: (this.coord.state as any).style, customPalette: serializeCustomPalette() }))!;
     return serializeBundle({ session, widgets: this.widgetLib, savedAt: Date.now() });
   }
   applyBundle(raw: string): { ok: boolean; msg: string } {
@@ -252,6 +254,7 @@ export class App {
     this.applySessionViews(b.session);
     restoreCategoryColors((b.session as any).catColors);   // per-value colour overrides travel with the file
     (this.coord.state as any).style = (b.session as any).style;   // style overrides travel with the file
+    restoreCustomPalette((b.session as any).customPalette);   // the custom palette travels with the file
     if (b.session.annotation && !mism) this.restoreAnnotation(b.session.annotation);
     this.restoreConversation(b.session.conversation);   // chat log travels with the file (not cell-indexed)
     this.fullRender(); this.renderWS(); this.scheduleSave();
@@ -712,6 +715,14 @@ export class App {
         else if (op.kind === "triggerControl") {   // fire a widget's declared control (the widget self-updates in its iframe)
           const { ok, error } = this.triggerWidgetControl(op.id, op.control);
           if (error) rejected.push(error); else applied.push(ok!);
+        }
+        else if (op.kind === "customPalette") {   // a user/agent-defined numeric gradient → apply as the "custom" colormap
+          const rgbs = op.stops.map((c) => parseCssColorToRGB(c)).filter(Boolean) as [number, number, number][];
+          if (rgbs.length !== op.stops.length) rejected.push(`colorStops: ${op.stops.length - rgbs.length} colour(s) weren't recognisable`);
+          if (rgbs.length && setCustomPalette(rgbs)) {
+            for (const z of this.canvas) if (z.type === "Embedding") z.view = { ...z.view, colormap: "custom" };
+            applied.push(`custom palette (${rgbs.length} stop${rgbs.length > 1 ? "s" : ""})`); needFull = true;
+          } else if (!rgbs.length) rejected.push("colorStops: no usable colours");
         }
         else if (op.kind === "addPanel") { const id = this.addPanelModel(op.spec); applied.push(`+#${id} ${op.spec.type}${op.spec.heatMode === "dot" ? " · dotplot" : ""}`); needFull = true; }
         else if (op.kind === "configPanel") { const p = all().find((z) => z.id === op.id); if (p) { if (this.applyPanelModel(p, this.patchToModel(op.patch))) needFull = true; needRepaint = true; applied.push(`#${op.id} ${Object.keys(op.patch).join("/")}`); } }

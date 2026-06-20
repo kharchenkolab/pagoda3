@@ -45,6 +45,7 @@ export interface RawViewPatch {
   clearSelect?: boolean;
   display?: { labels?: boolean; legend?: boolean; alpha?: number; winsor?: number };
   recolor?: { field?: string; colors?: Record<string, string>; clear?: boolean };   // per-VALUE colour overrides for a categorical field: {value: css-colour}; field defaults to the current colour-by; value "" / "unassigned" targets the no-category cells; clear:true resets the field's overrides
+  colorStops?: string[];   // define a CUSTOM numeric palette (low→high css colours, e.g. ['#000','#f00']) for gene/qc/score colourings + apply it
   style?: Record<string, any>;   // OPEN per-panel style patch (the view escape hatch): nested rendering knobs e.g. {point:{radius:4,opacity:0.5}, label:{fontSize:16}, selection:{ringWidth:3}, fit:{pad:0.7}}
   stylePanel?: number;           // target one panel id (else the global Embedding default)
   styleReset?: boolean;          // clear style overrides (global, or for stylePanel)
@@ -68,6 +69,7 @@ export type NormOp =
   | { kind: "clearSelect" }
   | { kind: "display"; patch: { labels?: boolean; legend?: boolean; alpha?: number; winsor?: number } }
   | { kind: "catColors"; field?: string; colors: Record<string, string>; clear?: boolean }
+  | { kind: "customPalette"; stops: string[] }
   | { kind: "style"; panel?: number; reset?: boolean; patch: Record<string, any> }
   | { kind: "triggerControl"; id: number; control: string }
   | { kind: "addPanel"; spec: PanelSpec }
@@ -175,6 +177,11 @@ export function normalizeViewPatch(patch: RawViewPatch, w: World): NormResult {
     const colors: Record<string, string> = {};
     if (r.colors && typeof r.colors === "object") for (const k of Object.keys(r.colors)) { const v = (r.colors as any)[k]; if (typeof v === "string" && v.trim()) colors[k] = v.trim(); }
     if (Object.keys(colors).length || r.clear) ops.push({ kind: "catColors", field: typeof r.field === "string" && r.field.trim() ? r.field.trim() : undefined, colors, clear: !!r.clear });
+  }
+  if (Array.isArray(patch.colorStops)) {
+    const stops = patch.colorStops.filter((c) => typeof c === "string" && c.trim()).map((c) => c.trim());
+    if (stops.length) ops.push({ kind: "customPalette", stops });
+    else rejected.push("colorStops: pass at least one css colour (low→high), e.g. ['#000','#f00']");
   }
   if (patch.style != null || patch.stylePanel != null || patch.styleReset || patch.pointSize != null || patch.labelSize != null) {
     // the OPEN style escape hatch + ergonomic aliases. Assemble the sources into one patch (2-level merge keeps the
