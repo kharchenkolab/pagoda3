@@ -86,11 +86,20 @@ export function mountWidget(container: HTMLElement, source: string, host: Widget
           (source) => post({ t: "libResult", reqId: m.reqId, ok: true, source }),
           (err) => post({ t: "libResult", reqId: m.reqId, ok: false, error: String(err?.message || err) }));
         break;
-      case "requestCompute":
+      case "requestCompute": {
+        // Symmetric to fetchExternal (P4): off-thread runCompute runs arbitrary author code in a worker. If the widget
+        // declared its permissions but NOT compute, it told the user it doesn't compute — so honour that and deny.
+        // A widget that declared no permissions at all is unchanged (the host governs) — backward-compatible.
+        const perms = manifest?.permissions;
+        if (perms && !perms.compute) {
+          post({ t: "computeResult", reqId: m.reqId, ok: false, error: "blocked: this widget did not declare the 'compute' permission (off-thread runCompute)" });
+          break;
+        }
         (host.runCompute ? host.runCompute(m.code, m.opts) : Promise.reject(new Error("runCompute not available in this host"))).then(
           (payload) => post({ t: "computeResult", reqId: m.reqId, ok: true, payload }),
           (err) => post({ t: "computeResult", reqId: m.reqId, ok: false, error: String(err?.message || err) }));
         break;
+      }
       case "setSelection": case "setColor": case "setHint": case "updateView": host.apply(m); break;
     }
   };
