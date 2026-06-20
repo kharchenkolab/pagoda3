@@ -119,6 +119,14 @@ test("per-panel control: a widget control trigger normalizes to a triggerControl
   assert.equal(find(normalizeViewPatch({ panels: [{ id: 5, control: "  " }] }, w).ops, "triggerControl").length, 0);   // blank → no op
 });
 
+test("per-panel param: a widget param-set normalizes to a setParam op (no spurious 'no change')", () => {
+  const w = makeWorld();
+  const r = normalizeViewPatch({ panels: [{ id: 7, param: { id: "threshold", value: 5 } }] }, w);
+  assert.deepEqual(find(r.ops, "setParam")[0], { kind: "setParam", id: 7, param: "threshold", value: 5 });
+  assert.equal(r.rejected.length, 0);   // param-only op must not also report "no change"
+  assert.equal(find(normalizeViewPatch({ panels: [{ id: 7, param: { value: 5 } }] }, w).ops, "setParam").length, 0);   // missing id → no op
+});
+
 test("add panel: valid type with config; unknown type rejected", () => {
   const w = makeWorld();
   const ok = normalizeViewPatch({ panels: [{ add: "Embedding", title: "X", colorBy: "gene:CD3D", embedding: "umap.unintegrated" }] }, w);

@@ -18,9 +18,15 @@ export interface CoordInfo { colorBy: string; selection: SelectionInfo; focus: {
 // hover churn never re-fires coord handlers. Hints are small (a hovered cell, or a category), so they carry content.
 export type HintInfo = null | { kind: "cells"; ids: number[] } | { kind: "category"; grouping: string; value: string };
 
+// A typed PARAMETER a widget declares — a VALUE knob (vs a control, which is an action button). The host renders it as
+// a header input AND exposes it to describe_panel/update_view, so the agent + user drive it uniformly with built-in
+// style knobs (the strong-C completion). A change arrives as a {t:"param"} message; the widget reacts via on('param').
+export interface WidgetParam { id: string; label: string; type: "number" | "select" | "bool" | "color" | "text"; value: any; min?: number; max?: number; step?: number; options?: string[]; }
+
 // A widget's self-declared metadata. controls become standard header buttons the HOST renders (uniform ⋯/toolbar
-// policy); a click comes back as a {t:"control"} message. height lets a widget request its natural body height.
-export interface WidgetManifest { title?: string; height?: number; controls?: { id: string; label: string }[]; }
+// policy); a click comes back as a {t:"control"} message. params become header INPUTS + describe_panel knobs. height
+// lets a widget request its natural body height.
+export interface WidgetManifest { title?: string; height?: number; controls?: { id: string; label: string }[]; params?: WidgetParam[]; }
 
 // host → widget
 export type HostMsg =
@@ -29,6 +35,7 @@ export type HostMsg =
   | { t: "hint"; hint: HintInfo }                                 // cross-panel hover changed (ephemeral)
   | { t: "theme"; theme: ThemeInfo }
   | { t: "control"; id: string }                                  // a host-rendered header control was clicked
+  | { t: "param"; id: string; value: any }                        // a host-rendered/agent-set parameter changed
   | { t: "data"; reqId: number; ok: boolean; payload?: any; error?: string }   // reply to a requestData
   | { t: "extData"; reqId: number; ok: boolean; payload?: any; error?: string }   // reply to a fetchExternal
   | { t: "libResult"; reqId: number; ok: boolean; source?: string; error?: string }   // reply to a loadLib (the pinned library JS source)
@@ -57,6 +64,12 @@ export function validateManifest(m: any): WidgetManifest {
     if (typeof m.title === "string") out.title = m.title;
     if (typeof m.height === "number" && m.height > 0) out.height = Math.min(2000, m.height);
     if (Array.isArray(m.controls)) out.controls = m.controls.filter((c: any) => c && typeof c.id === "string" && typeof c.label === "string").map((c: any) => ({ id: c.id, label: c.label }));
+    if (Array.isArray(m.params)) out.params = m.params.filter((p: any) => p && typeof p.id === "string" && typeof p.label === "string" && ["number", "select", "bool", "color", "text"].includes(p.type)).map((p: any) => {
+      const o: WidgetParam = { id: p.id, label: p.label, type: p.type, value: p.value };
+      if (typeof p.min === "number") o.min = p.min; if (typeof p.max === "number") o.max = p.max; if (typeof p.step === "number") o.step = p.step;
+      if (Array.isArray(p.options)) o.options = p.options.map((x: any) => String(x));
+      return o;
+    });
   }
   return out;
 }
@@ -74,7 +87,7 @@ export const WIDGET_API_DOC =
   "`pagoda.coord` (current {colorBy, selection, focus}); selection is a small descriptor — null, {kind:'cells',count} or " +
   "{kind:'category',grouping,value,count} — NOT the cell ids (pull those with data('selectedCells') when you need them); " +
   "`pagoda.theme` ({dark, vars}); " +
-  "`pagoda.on('coord'|'hint'|'theme'|'control', cb)` → subscribe (returns an unsubscribe fn). HOVER/CLICK like a native " +
+  "`pagoda.on('coord'|'hint'|'theme'|'control'|'param', cb)` → subscribe (returns an unsubscribe fn). HOVER/CLICK like a native " +
   "panel: EMIT hover with pagoda.setHint({cells:[i]}|{category:{grouping,value}}|null) and clicks with " +
   "pagoda.setSelection(...); REACT to cross-panel hover via pagoda.on('hint', h => …) where h is null|{kind:'cells',ids}|" +
   "{kind:'category',grouping,value} (`pagoda.hint` is the current one) — the ephemeral hover tier, separate from coord; " +
@@ -116,7 +129,11 @@ export const WIDGET_API_DOC =
   "Example: pagoda.runCompute(\"const gs=api.genesAvailable, M=gs.map(g=>api.expr(g)); /*…correlate…*/ return {genes:gs, corr};\", {genes:['CD3D','CD8A','NKG7','MS4A1']}). " +
   "Errors/console are forwarded to the host for debugging; an uncaught " +
   "throw shows an error state. Header `controls` you declare are rendered by the host in the standard panel chrome; " +
-  "a click arrives as pagoda.on('control', id => …). Keep it self-contained — no external network/CDN.";
+  "a click arrives as pagoda.on('control', id => …). Declare typed PARAMS (value knobs) in ready({params:[{id, label, " +
+  "type:'number'|'select'|'bool'|'color'|'text', value, min?, max?, step?, options?}]}) — the host renders them as header " +
+  "inputs AND exposes them to the agent (describe_panel shows each param's current value/range; update_view sets them); " +
+  "react to a change via pagoda.on('param', (id, value) => …). Use controls for ACTIONS, params for VALUES. " +
+  "Keep it self-contained — no external network/CDN.";
 
 // Escape a source string so it can't break out of the <script> it's injected into.
 export function escapeForScript(src: string): string { return String(src).replace(/<\/(script)/gi, "<\\/$1"); }
@@ -140,12 +157,12 @@ a{color:var(--cyan,#1f7faf)}
 // postMessage, applies theme vars, forwards console/errors, auto-resizes. A string (no app import).
 export const WIDGET_BOOTSTRAP = `
 (function(){
-  var pending={}, reqId=0, coord=null, theme=null, hint=null, loadedLibs={}, listeners={coord:[],theme:[],control:[],hint:[]}, parentWin=window.parent;
+  var pending={}, reqId=0, coord=null, theme=null, hint=null, loadedLibs={}, listeners={coord:[],theme:[],control:[],hint:[],param:[]}, parentWin=window.parent;
   function post(m){ try{ parentWin.postMessage(m,'*'); }catch(e){} }
   // serialize a console arg so it's USEFUL to the agent: an Error JSON.stringifies to "{}" (message/stack are
   // non-enumerable), so pull them out explicitly; for other objects that stringify to "{}" fall back to String(x).
   function ser(x){ if(x instanceof Error){ return (x.name||'Error')+': '+(x.message||String(x))+(x.stack?(' | '+String(x.stack).split('\\n').slice(0,3).join(' / ')):''); } if(typeof x==='string') return x; if(x==null) return String(x); try{ var s=JSON.stringify(x); return (s===undefined||s==='{}')?String(x):s; }catch(e){ return String(x); } }
-  function fire(ev,arg){ (listeners[ev]||[]).forEach(function(f){ try{ f(arg); }catch(err){ reportError(err); } }); }
+  function fire(ev){ var args=[].slice.call(arguments,1); (listeners[ev]||[]).forEach(function(f){ try{ f.apply(null,args); }catch(err){ reportError(err); } }); }
   function reportError(err){ post({t:'error', message:String(err&&err.message?err.message:err), stack: err&&err.stack ? String(err.stack) : undefined }); }
   function applyTheme(t){ if(!t) return; var s=document.getElementById('pg-theme'); if(!s){ s=document.createElement('style'); s.id='pg-theme'; document.head.appendChild(s); } var v=t.vars||{}; s.textContent=':root{'+Object.keys(v).map(function(k){return k+':'+v[k];}).join(';')+'}'; document.documentElement.setAttribute('data-theme', t.dark?'dark':'light'); }
   window.addEventListener('message', function(e){ var m=e.data; if(!m||!m.t) return;
@@ -154,6 +171,7 @@ export const WIDGET_BOOTSTRAP = `
     else if(m.t==='hint'){ hint=m.hint||null; fire('hint',hint); }
     else if(m.t==='theme'){ theme=m.theme; applyTheme(theme); fire('theme',theme); }
     else if(m.t==='control'){ fire('control', m.id); }
+    else if(m.t==='param'){ fire('param', m.id, m.value); }
     else if(m.t==='snapshot'){
       // text alone is blind to SVG/canvas charts (no innerText) — so also summarize the VISUAL content (element counts +
       // sizes) so a preview can tell whether a chart actually drew, without the author writing a DOM-counting probe.

@@ -24,6 +24,7 @@ export interface WidgetHandle {
   onManifest(cb: (m: WidgetManifest) => void): void;             // fired when the widget calls pagoda.ready() — host renders chrome
   onResize(cb: (h: number) => void): void;
   sendControl(id: string): void;                                 // host → widget: a declared header control was clicked
+  sendParam(id: string, value: any): void;                       // host → widget: a declared parameter was set (header input or agent)
   snapshot(timeoutMs?: number): Promise<string>;                 // ask the widget for its rendered text (preview feedback)
   destroy(): void;
 }
@@ -95,6 +96,7 @@ export function mountWidget(container: HTMLElement, source: string, host: Widget
     onManifest: (cb) => { if (manifest) cb(manifest); else manifestCbs.push(cb); },
     onResize: (cb) => resizeCbs.push(cb),
     sendControl: (id) => post({ t: "control", id }),
+    sendParam: (id, value) => post({ t: "param", id, value }),
     snapshot: (timeoutMs = 1500) => new Promise<string>((res) => { snapWaiters.push(res); post({ t: "snapshot" }); setTimeout(() => res(""), timeoutMs); }),
     destroy: () => { window.removeEventListener("message", onMsg); unsub(); iframe.remove(); },
   };

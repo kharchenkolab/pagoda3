@@ -39,6 +39,7 @@ export interface Panel {
   rows?: { gene?: number; symbol: string; lfc?: number; padj?: number; score?: number; meanA?: number; meanB?: number }[];
   source?: string;                    // Widget panel: the author-written widget source (runs in a sandboxed iframe)
   controls?: { id: string; label: string }[];   // Widget panel: header controls the widget declared (folded into ⋯)
+  params?: { id: string; label: string; type: string; value: any; min?: number; max?: number; step?: number; options?: string[] }[];   // Widget panel: typed value knobs (header inputs + describe_panel)
 }
 
 export interface PanelHooks {

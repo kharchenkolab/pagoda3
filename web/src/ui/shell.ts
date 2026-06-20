@@ -512,16 +512,43 @@ export class App {
   // Render a Widget panel's declared header controls as standard mini buttons (before the maximize button so they
   // fold from the end like every panel's controls). Controls known from a prior render appear synchronously (managed
   // by installOverflow); ones that arrive later (the iframe's first manifest) are added via _ovfAdd so they fold too.
-  private wireWidgetControls(p: Panel, h: HTMLElement, sp: HTMLElement, beforeEl: HTMLElement, handle: { sendControl: (id: string) => void; onManifest: (cb: (m: any) => void) => void }) {
+  private wireWidgetControls(p: Panel, h: HTMLElement, sp: HTMLElement, beforeEl: HTMLElement, handle: { sendControl: (id: string) => void; sendParam: (id: string, v: any) => void; onManifest: (cb: (m: any) => void) => void }) {
     const rendered = new Set<string>();
+    const place = (node: HTMLElement, late: boolean) => { if (late) (h as any)._ovfAdd?.(node, beforeEl); else sp.insertBefore(node, beforeEl); };
     const addBtn = (c: { id: string; label: string }, late: boolean) => {
-      if (!c || !c.id || rendered.has(c.id)) return; rendered.add(c.id);
+      if (!c || !c.id || rendered.has("c:" + c.id)) return; rendered.add("c:" + c.id);
       const btn = Object.assign(mk("button", "mini", c.label), { title: c.label }) as HTMLButtonElement;
       btn.dataset.wcid = c.id; btn.onclick = () => handle.sendControl(c.id);
-      if (late) (h as any)._ovfAdd?.(btn, beforeEl); else sp.insertBefore(btn, beforeEl);
+      place(btn, late);
     };
-    (p.controls || []).forEach((c) => addBtn(c, false));   // before installOverflow → managed normally
-    handle.onManifest((m) => { p.controls = (m?.controls || []); p.controls.forEach((c) => addBtn(c, true)); });   // first/updated manifest
+    // a typed PARAM renders as a header INPUT; a change routes through setWidgetParam (coerce/clamp + persist + → widget)
+    const addParam = (pr: any, late: boolean) => {
+      if (!pr || !pr.id || rendered.has("p:" + pr.id)) return; rendered.add("p:" + pr.id);
+      const wrap = mk("span", "mini wparam"); wrap.style.cssText = "display:inline-flex;align-items:center;gap:4px;padding:1px 5px";
+      const lab = mk("span", undefined, pr.label); lab.style.cssText = "color:var(--faint);font-size:10px";
+      let input: HTMLInputElement | HTMLSelectElement;
+      if (pr.type === "select") { const s = document.createElement("select"); (pr.options || []).forEach((o: string) => { const op = document.createElement("option"); op.value = o; op.textContent = o; s.appendChild(op); }); s.value = String(pr.value); input = s; }
+      else if (pr.type === "bool") { const i = document.createElement("input"); i.type = "checkbox"; i.checked = !!pr.value; input = i; }
+      else if (pr.type === "color") { const i = document.createElement("input"); i.type = "color"; i.value = String(pr.value); input = i; }
+      else if (pr.type === "number") { const i = document.createElement("input"); i.type = "number"; if (pr.min != null) i.min = String(pr.min); if (pr.max != null) i.max = String(pr.max); if (pr.step != null) i.step = String(pr.step); i.value = String(pr.value); i.style.width = "58px"; input = i; }
+      else { const i = document.createElement("input"); i.type = "text"; i.value = String(pr.value ?? ""); i.style.width = "84px"; input = i; }
+      (input as HTMLElement).dataset.wpid = pr.id;
+      input.onchange = () => { const v = pr.type === "bool" ? (input as HTMLInputElement).checked : pr.type === "number" ? Number((input as HTMLInputElement).value) : (input as any).value; this.setWidgetParam(p.id, pr.id, v); };
+      wrap.appendChild(lab); wrap.appendChild(input);
+      place(wrap, late);
+    };
+    (p.controls || []).forEach((c) => addBtn(c, false));   // known from a prior render → before installOverflow
+    (p.params || []).forEach((pr) => addParam(pr, false));
+    handle.onManifest((m) => {   // first/updated manifest
+      p.controls = m?.controls || [];
+      // params: keep the manifest's DEFINITION (label/type/range) but a RESTORED value wins; re-apply restored values
+      // to the freshly-mounted widget so its state matches what was persisted.
+      const declared: any[] = m?.params || [], saved: any[] = p.params || [];
+      p.params = declared.map((d) => { const s = saved.find((x) => x.id === d.id); return s && s.value !== undefined ? { ...d, value: s.value } : d; });
+      for (const pr of p.params) { const d = declared.find((x) => x.id === pr.id); if (d && JSON.stringify(pr.value) !== JSON.stringify(d.value)) handle.sendParam(pr.id, pr.value); }
+      p.controls.forEach((c) => addBtn(c, true));
+      p.params.forEach((pr) => addParam(pr, true));
+    });
   }
 
   // Place the canvas into an N-column grid. The column count grows to fit the layout's deepest pin — default 2
@@ -625,8 +652,12 @@ export class App {
     // style registry, but the affordances come from the panel instance, not a type descriptor). The agent triggers
     // one like clicking the header button. This is the widget arm of strong-C: built-ins + widgets, one describe surface.
     if (type === "Widget" && panel) {
-      const controls = panel.controls || [];
-      return { id: panel.id, type, controls, note: controls.length ? `trigger one with update_view({panels:[{id:${panel.id}, control:'<id>'}]}); read its live state with inspect_widget.` : `this widget declares no header controls; read its live state with inspect_widget.` };
+      const controls = panel.controls || [], wparams = panel.params || [];
+      const hints: string[] = [];
+      if (wparams.length) hints.push(`set a param with update_view({panels:[{id:${panel.id}, param:{id:'<id>', value:…}}]})`);
+      if (controls.length) hints.push(`trigger a control with update_view({panels:[{id:${panel.id}, control:'<id>'}]})`);
+      hints.push("read its live state with inspect_widget");
+      return { id: panel.id, type, controls, params: wparams.length ? wparams : undefined, note: hints.join("; ") + "." };
     }
     const d = getStyle(type);   // the PANEL's own registered descriptor (no central knowledge of this type)
     if (!d) return { id: panel?.id, type, note: `"${type}" exposes no styleable params or controls yet.` };
@@ -645,6 +676,28 @@ export class App {
     if (!handle) return { error: `widget #${id} isn't mounted/live` };
     handle.sendControl(control);
     return { ok: `triggered control "${control}" on widget #${id}` };
+  }
+
+  // Set a widget's declared PARAM (a typed value knob) — coerce + clamp by type, store the value (for describe_panel +
+  // persistence), send it to the widget, and reflect it in the header input. The agent's analog of editing the input.
+  setWidgetParam(id: number, param: string, value: any): { ok?: string; error?: string } {
+    const panel = this.canvas.find((p) => p.id === id);
+    if (!panel) return { error: `no panel #${id}` };
+    if (panel.type !== "Widget") return { error: `panel #${id} (${panel.type}) is not a widget — params are a widget affordance` };
+    const pr = (panel.params || []).find((x) => x.id === param);
+    if (!pr) return { error: `widget #${id} has no param "${param}" (declared: ${(panel.params || []).map((x) => x.id).join(", ") || "none"})` };
+    const handle = this.widgetHandles.get(id);
+    if (!handle) return { error: `widget #${id} isn't mounted/live` };
+    let v = value;
+    if (pr.type === "number") { v = Number(value); if (Number.isNaN(v)) return { error: `param "${param}" expects a number` }; if (pr.min != null) v = Math.max(pr.min, v); if (pr.max != null) v = Math.min(pr.max, v); }
+    else if (pr.type === "bool") v = !!value;
+    else if (pr.type === "select" && pr.options && !pr.options.includes(String(value))) return { error: `param "${param}" must be one of: ${pr.options.join(", ")}` };
+    pr.value = v;   // persisted + reflected by describe_panel
+    handle.sendParam(param, v);
+    const inp = document.querySelector(`.panel[data-pid="${id}"] [data-wpid="${param}"]`) as HTMLInputElement | null;   // reflect an agent-driven change in the header input
+    if (inp) { if (pr.type === "bool") inp.checked = !!v; else inp.value = String(v); }
+    this.scheduleSave();
+    return { ok: `set "${param}" = ${JSON.stringify(v)} on widget #${id}` };
   }
 
   // ----- declarative view patcher: the single agent surface for "what to show" -----
@@ -715,6 +768,10 @@ export class App {
         }
         else if (op.kind === "triggerControl") {   // fire a widget's declared control (the widget self-updates in its iframe)
           const { ok, error } = this.triggerWidgetControl(op.id, op.control);
+          if (error) rejected.push(error); else applied.push(ok!);
+        }
+        else if (op.kind === "setParam") {   // set a widget's declared typed param (the widget self-updates)
+          const { ok, error } = this.setWidgetParam(op.id, op.param, op.value);
           if (error) rejected.push(error); else applied.push(ok!);
         }
         else if (op.kind === "customPalette") {   // a user/agent-defined numeric gradient → apply as the "custom" colormap
@@ -1407,7 +1464,7 @@ export class App {
     if (user) { this.toast("Switched to " + name, "A workspace is a named, reversible layout — your previous one is a step back in History."); this.checkpoint("workspace → " + name, "Deliberate workspace switch."); }
   }
 
-  captureLayout(): Partial<Panel>[] { return this.canvas.map((p) => ({ type: p.type, title: p.title, cap: p.cap, full: p.full, col: p.col, bind: p.bind, group: p.group, gene: p.gene, heatMode: p.heatMode, genes: p.genes, view: p.view ? JSON.parse(JSON.stringify(p.view)) : undefined, rows: this.capRows(p), source: p.source, controls: p.controls ? JSON.parse(JSON.stringify(p.controls)) : undefined })); }
+  captureLayout(): Partial<Panel>[] { return this.canvas.map((p) => ({ type: p.type, title: p.title, cap: p.cap, full: p.full, col: p.col, bind: p.bind, group: p.group, gene: p.gene, heatMode: p.heatMode, genes: p.genes, view: p.view ? JSON.parse(JSON.stringify(p.view)) : undefined, rows: this.capRows(p), source: p.source, controls: p.controls ? JSON.parse(JSON.stringify(p.controls)) : undefined, params: p.params ? JSON.parse(JSON.stringify(p.params)) : undefined })); }
   // Result tables now hold the FULL ranked gene list (all tested genes) for live search; cap what we PERSIST so a
   // big-gene-set DE/overdispersion panel doesn't bloat the session doc (the tail is recomputable; live search keeps all).
   private capRows(p: Panel): any[] | undefined { const r = p.rows; if (!r) return undefined; return (p.type === "DeTable" || p.type === "GeneList") && r.length > 500 ? r.slice(0, 500) : r; }
