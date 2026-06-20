@@ -613,14 +613,34 @@ export class App {
   // CURRENT effective value, default, and range — read from the same DEFAULT_STYLE the renderer paints from, so it
   // can't drift from what's actually honoured. P0 covers the Embedding family; other panel types report their named
   // knobs instead. The agent reads this like an MCP tool's schema, then sets keys via update_view({style}).
-  describePanelStyle(id?: number): { id?: number; type: string; params?: any[]; note?: string } {
+  describePanel(id?: number): { id?: number; type: string; params?: any[]; controls?: { id: string; label: string }[]; note?: string } {
     const panel = id != null ? this.canvas.find((p) => p.id === id) : this.canvas.find((p) => p.type === "Embedding");
     if (id != null && !panel) return { id, type: "?", note: `no panel #${id}` };
     const type = panel?.type || "Embedding";
+    // WIDGETS describe themselves at the INSTANCE level — from their own declared header controls (same idea as the
+    // style registry, but the affordances come from the panel instance, not a type descriptor). The agent triggers
+    // one like clicking the header button. This is the widget arm of strong-C: built-ins + widgets, one describe surface.
+    if (type === "Widget" && panel) {
+      const controls = panel.controls || [];
+      return { id: panel.id, type, controls, note: controls.length ? `trigger one with update_view({panels:[{id:${panel.id}, control:'<id>'}]}); read its live state with inspect_widget.` : `this widget declares no header controls; read its live state with inspect_widget.` };
+    }
     const d = getStyle(type);   // the PANEL's own registered descriptor (no central knowledge of this type)
-    if (!d) return { id: panel?.id, type, note: `"${type}" doesn't expose a style descriptor yet — style it via the named knobs colorBy / colormap / scope / group / genes / heatMode.` };
+    if (!d) return { id: panel?.id, type, note: `"${type}" exposes no styleable params or controls yet.` };
     const resolved = resolvePanelStyleFor(this.ctx, type, panel?.view);
     return { id: panel?.id, type, params: describeStyle(d, themeIsDark(), resolved) };
+  }
+
+  // Trigger a widget's declared header control programmatically — the agent's analog of clicking the header button
+  // (sends {t:"control", id} to the iframe). The widget self-updates; no host re-render needed.
+  triggerWidgetControl(id: number, control: string): { ok?: string; error?: string } {
+    const panel = this.canvas.find((p) => p.id === id);
+    if (!panel) return { error: `no panel #${id}` };
+    if (panel.type !== "Widget") return { error: `panel #${id} (${panel.type}) is not a widget — controls are a widget affordance` };
+    if (!(panel.controls || []).some((c) => c.id === control)) return { error: `widget #${id} has no control "${control}" (declared: ${(panel.controls || []).map((c) => c.id).join(", ") || "none"})` };
+    const handle = this.widgetHandles.get(id);
+    if (!handle) return { error: `widget #${id} isn't mounted/live` };
+    handle.sendControl(control);
+    return { ok: `triggered control "${control}" on widget #${id}` };
   }
 
   // ----- declarative view patcher: the single agent surface for "what to show" -----
@@ -688,6 +708,10 @@ export class App {
             cs.style = op.reset ? undefined : { ...(cs.style || {}), Embedding: deepMerge(cs.style?.Embedding || {}, clean) };
             applied.push(`style ${op.reset ? "reset" : Object.keys(clean).join("/")}`); needFull = true;
           }
+        }
+        else if (op.kind === "triggerControl") {   // fire a widget's declared control (the widget self-updates in its iframe)
+          const { ok, error } = this.triggerWidgetControl(op.id, op.control);
+          if (error) rejected.push(error); else applied.push(ok!);
         }
         else if (op.kind === "addPanel") { const id = this.addPanelModel(op.spec); applied.push(`+#${id} ${op.spec.type}${op.spec.heatMode === "dot" ? " · dotplot" : ""}`); needFull = true; }
         else if (op.kind === "configPanel") { const p = all().find((z) => z.id === op.id); if (p) { if (this.applyPanelModel(p, this.patchToModel(op.patch))) needFull = true; needRepaint = true; applied.push(`#${op.id} ${Object.keys(op.patch).join("/")}`); } }

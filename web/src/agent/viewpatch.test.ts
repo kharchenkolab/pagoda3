@@ -106,6 +106,13 @@ test("style: open patch + pointSize/labelSize aliases merge into one op; panel +
   assert.equal(find(normalizeViewPatch({}, w).ops, "style").length, 0);   // nothing → no op
 });
 
+test("per-panel control: a widget control trigger normalizes to a triggerControl op", () => {
+  const w = makeWorld();
+  const op = find(normalizeViewPatch({ panels: [{ id: 5, control: "reset" }] }, w).ops, "triggerControl")[0] as any;
+  assert.deepEqual(op, { kind: "triggerControl", id: 5, control: "reset" });
+  assert.equal(find(normalizeViewPatch({ panels: [{ id: 5, control: "  " }] }, w).ops, "triggerControl").length, 0);   // blank → no op
+});
+
 test("add panel: valid type with config; unknown type rejected", () => {
   const w = makeWorld();
   const ok = normalizeViewPatch({ panels: [{ add: "Embedding", title: "X", colorBy: "gene:CD3D", embedding: "umap.unintegrated" }] }, w);

@@ -31,6 +31,7 @@ export interface RawPanelOp {
   colormap?: string;       // palette for numeric colourings (amber/viridis/rdbu/…); aliases like "red-to-blue" ok
   group?: string;          // Heatmap grouping
   style?: Record<string, any>;   // per-panel STYLE overrides (point/label/selection/… — see render/style.ts)
+  control?: string;              // TRIGGER a widget panel's declared header control (discover ids with describe_panel)
   heatMode?: string;       // "heatmap" | "dotplot" (also accepts "heat" | "dot")
   genes?: string[];        // Heatmap: pin these genes (merged with existing unless clearGenes)
   clearGenes?: boolean;
@@ -68,6 +69,7 @@ export type NormOp =
   | { kind: "display"; patch: { labels?: boolean; legend?: boolean; alpha?: number; winsor?: number } }
   | { kind: "catColors"; field?: string; colors: Record<string, string>; clear?: boolean }
   | { kind: "style"; panel?: number; reset?: boolean; patch: Record<string, any> }
+  | { kind: "triggerControl"; id: number; control: string }
   | { kind: "addPanel"; spec: PanelSpec }
   | { kind: "configPanel"; id: number; patch: PanelPatch }
   | { kind: "removePanel"; id: number }
@@ -240,6 +242,8 @@ export function normalizeViewPatch(patch: RawViewPatch, w: World): NormResult {
     if (typeof op.colormap === "string" && op.colormap) { const cm = w.normalizeColormap(op.colormap); if (cm) pp.colormap = cm; else rejected.push(`${where}: unknown colormap "${op.colormap}" (have: ${w.colormaps.join(", ")})`); }
     if (groupable && op.group) { if (w.groupings.includes(op.group)) pp.group = op.group; else rejected.push(`${where}: unknown grouping "${op.group}"`); }   // Heatmap stacking / Reconcile base partition
     if (op.style && typeof op.style === "object" && !Array.isArray(op.style)) pp.style = op.style;   // per-panel style override (the natural per-panel path, alongside the top-level style/stylePanel)
+    const triggeredControl = typeof op.control === "string" && !!op.control.trim() && op.id != null;
+    if (triggeredControl) ops.push({ kind: "triggerControl", id: op.id!, control: op.control!.trim() });   // trigger a widget's declared control (an action, not a config patch)
     if (isHeat) {
       const hm = normHeatMode(op.heatMode); if (hm) pp.heatMode = hm; else if (op.heatMode != null) notes.push(`${where}: heatMode "${op.heatMode}" ignored`);
       if (op.clearGenes || op.genes) { const base = op.clearGenes ? [] : w.panelGenes(op.id); pp.genes = resolveGenes(base, op.genes, w, where, notes); }
@@ -247,7 +251,7 @@ export function normalizeViewPatch(patch: RawViewPatch, w: World): NormResult {
       notes.push(`${where}: heatMode/genes apply only to Heatmap panels`);
     }
     if (Object.keys(pp).length) ops.push({ kind: "configPanel", id: op.id, patch: pp });
-    else if (!movedFacet) {
+    else if (!movedFacet && !triggeredControl) {   // a control-only op already did its thing (trigger) — don't also report "no change"
       // NEVER reject silently: say what this panel type DOES accept and, if the model tried to mutate `type`,
       // point it at the real move (add a new panel). This is what lets a weak model recover instead of looping.
       const valid = ptype === HEAT_TYPE ? "group, heatMode, genes, colorBy, scope, col, full"
