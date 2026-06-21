@@ -146,13 +146,22 @@ export const WIDGET_API_DOC =
   "a click arrives as pagoda.on('control', id => …). Declare typed PARAMS (value knobs) in ready({params:[{id, label, " +
   "type:'number'|'select'|'bool'|'color'|'text', value, min?, max?, step?, options?}]}) — the host renders them as header " +
   "inputs AND exposes them to the agent (describe_panel shows each param's current value/range; update_view sets them); " +
-  "react to a change via pagoda.on('param', (id, value) => …). Use controls for ACTIONS, params for VALUES. " +
+  "react to a change via pagoda.on('param', (id, value) => …), and SEED the first render from the param's initial value " +
+  "(don't hardcode a separate default). Use controls for ACTIONS, params for VALUES. CRITICAL: ANY value a user might " +
+  "tune — a top-N, a threshold, a cutoff, a mode — MUST be a declared PARAM. Do NOT build an internal <input>/<select>/" +
+  "range slider in your widget DOM for it: an internal control is invisible outside the iframe — the agent can't read or " +
+  "set it (describe_panel/update_view only know DECLARED params), the user can't drive it by voice, and it isn't " +
+  "persisted across reload. Declaring it as a param makes the SAME knob settable by the header input, by you (the agent), " +
+  "and saved with the session. (e.g. a 'top N markers' widget: declare params:[{id:'n',type:'number',value:10,min:1,max:50}], NOT an <input type=range>.) " +
   "Declare in ready(): version, description, and permissions:{external:['uniprot.org', …] (EVERY biodata host you " +
   "fetchExternal from — list a host BEFORE you fetch it, and when you add a fetch, add its host), compute:true (if you " +
   "use runCompute)}. Permissions are DOCUMENTATION of what the widget touches — shown in the ⓘ inspector and at the " +
   "import consent gate so someone running it can trust it by inspection; keep them in sync with the code as you edit. " +
   "(They're only ENFORCED for an imported widget — held to what it declared; a widget authored here is never blocked by " +
-  "its own declaration.) Keep it self-contained — no external network/CDN.";
+  "its own declaration.) The declaration is AMENDABLE: if the user asks to give a widget access to a new host (even an " +
+  "imported one), the user's request IS the approval — ADD the host to permissions.external and wire the fetch, then say " +
+  "you did. Never refuse a user-requested capability change as 'blocked by permissions'; the binding only stops SILENT " +
+  "reach beyond what was agreed, not changes the user explicitly asks for. Keep it self-contained — no external network/CDN.";
 
 // Escape a source string so it can't break out of the <script> it's injected into.
 export function escapeForScript(src: string): string { return String(src).replace(/<\/(script)/gi, "<\\/$1"); }
