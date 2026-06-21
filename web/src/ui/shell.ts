@@ -20,6 +20,7 @@ import { makeWidgetHost } from "../widget/apphost.ts";
 import type { WidgetHost, WidgetHandle } from "../widget/runtime.ts";
 import { widgetLint } from "../widget/contract.ts";
 import { pseudobulkDECore } from "../compute/odcore.ts";
+import { fieldBuckets } from "../data/fieldroles.ts";
 import { SESSION_KEY, WIDGETS_KEY, SavedWidget, SerAnnoLayer, Fingerprint, serializeSession, parseSession, serializeBundle, parseBundle, fingerprintMismatch, upsertWidget, loadWidgets, widgetHash } from "./persist.ts";
 
 // Item 2/C — the trust registry: source-hashes of widgets the user has authored or explicitly consented to run. Foreign
@@ -718,6 +719,26 @@ export class App {
     if (!d) return { id: panel?.id, type, dataInputs, note: dataInputs ? "no styleable params yet; dataInputs are this panel's data config — set via update_view({panels:[{id, …}]})." : `"${type}" exposes no styleable params or controls yet.` };
     const resolved = resolvePanelStyleFor(this.ctx, type, panel?.view);
     return { id: panel?.id, type, params: describeStyle(d, themeIsDark(), resolved), dataInputs, note: dataInputs ? "params STYLE the panel (visual constants); dataInputs are WHAT IT SHOWS — set via update_view({panels:[{id, …}]})." : undefined };
+  }
+
+  // describe_data: the dataset's FIELDS bucketed by ROLE (the data analog of describe_panel) — so the agent picks the
+  // right field for the right slot instead of guessing. Heuristic (groupings()=clusterings, other categoricals=
+  // covariates, numeric, genes) + any set_field_roles override; flags the likely pseudobulk replicate. Lives here (not
+  // viewpatch) because it composes live ctx accessors; the pure bucketing is fieldroles.ts (node-tested).
+  describeData(): string {
+    const cats = this.ctx.categoricalFields().map((f) => ({ name: f, n: this.ctx.categoricalValues(f).length }));
+    const numeric = this.ctx.metadataFields().filter((f) => f.kind === "numeric").map((f) => f.name);
+    const b = fieldBuckets(this.ctx.groupings(), cats, numeric, this.ctx.view.nGenes, (f) => this.ctx.fieldRole(f) as any);
+    const g = b.groupings.map((x) => `${x.name} (${x.n})`).join(", ") || "—";
+    const cov = b.covariates.map((x) => `${x.name} (${x.n})${x.replicate ? " ⟵ replicate" : ""}`).join(", ") || "— (none — no experimental factors found)";
+    return [
+      "DATASET FIELDS by role — pick the right field for the right slot:",
+      `• groupings (clusterings WITH markers — the only valid Heatmap 'group' + get_markers fields): ${g}`,
+      `• covariates (experimental factors — COMPARE across these via facet / scope / pseudobulk replicate): ${cov}`,
+      `• numeric (colour / threshold / compute_code): ${b.numeric.join(", ") || "—"}`,
+      `• genes: ${b.geneCount.toLocaleString()} (HGNC symbols; address as gene:<SYMBOL>)`,
+      `A covariate is NOT a grouping — to compare a quantity across it, facet by it (visual) or compute stat:'pseudobulk' replicate:${b.replicate ? `'${b.replicate}'` : "<the donor field>"} (statistical). Roles are heuristic; correct a wrong one with set_field_roles.`,
+    ].join("\n");
   }
 
   // The configurable DATA inputs a panel type accepts (grouping/genes/scope/colour…) WITH live valid values — so the
