@@ -18,6 +18,7 @@ import { setThemeColors } from "../render/theme.ts";
 import { installOverflow } from "./overflow.ts";
 import { makeWidgetHost } from "../widget/apphost.ts";
 import type { WidgetHost, WidgetHandle } from "../widget/runtime.ts";
+import { widgetLint } from "../widget/contract.ts";
 import { SESSION_KEY, WIDGETS_KEY, SavedWidget, SerAnnoLayer, Fingerprint, serializeSession, parseSession, serializeBundle, parseBundle, fingerprintMismatch, upsertWidget, loadWidgets, widgetHash } from "./persist.ts";
 
 // Item 2/C — the trust registry: source-hashes of widgets the user has authored or explicitly consented to run. Foreign
@@ -1548,7 +1549,8 @@ export class App {
     const h = this.widgetHandles.get(target.id);
     if (!h) return `widget #${target.id} "${target.title}" is not mounted yet — try again`;
     const text = await h.snapshot(1500); const err = h.lastError();
-    return JSON.stringify({ panelId: target.id, title: target.title, manifest: h.manifest(), error: err ? err.message : null, logs: h.logs().slice(-8), renderedText: (text || "").slice(0, 600) });
+    const checks = widgetLint(target.source || "", h.manifest());   // REFLECT: well-formedness gaps to fix before declaring done (e.g. an internal slider that should be a param)
+    return JSON.stringify({ panelId: target.id, title: target.title, manifest: h.manifest(), error: err ? err.message : null, checks, logs: h.logs().slice(-8), renderedText: (text || "").slice(0, 600) });
   }
   startSaveWS() {
     const t = this.$("wstabs"); const inp = document.createElement("input"); inp.className = "wsinput"; inp.placeholder = "name workspace…"; t.appendChild(inp); inp.focus();

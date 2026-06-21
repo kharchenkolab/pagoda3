@@ -1,7 +1,7 @@
 // Unit tests for the widget manifest validator (pure). Run: `node --test src/widget/contract.test.ts`.
 import { test } from "node:test";
 import assert from "node:assert";
-import { validateManifest } from "./contract.ts";
+import { validateManifest, widgetLint } from "./contract.ts";
 
 test("validateManifest: title/height/controls + typed PARAMS; junk filtered", () => {
   const m = validateManifest({
@@ -37,4 +37,31 @@ test("validateManifest: tolerant of empty / missing", () => {
   assert.deepEqual(validateManifest(null), {});
   assert.deepEqual(validateManifest({}), {});
   assert.equal(validateManifest({ params: "nope" }).params, undefined);
+});
+
+test("widgetLint: flags an internal slider that should be a param (the slider-N class)", () => {
+  const src = "const i=document.createElement('input'); i.type='range'; i.oninput=()=>render();";
+  const w = widgetLint(src, { title: "x" });   // no params declared
+  assert.equal(w.length, 1);
+  assert.match(w[0], /declares NO params/);
+  // a <select> built in DOM with no params → same warning
+  assert.match(widgetLint("body.innerHTML='<select><option>a</option></select>'", {})[0], /slider \/ number-input \/ <select>/);
+});
+
+test("widgetLint: a well-formed param widget is clean", () => {
+  const src = "pagoda.on('param',(id,v)=>{N=v;render();}); pagoda.ready({params:[{id:'n',type:'number',value:7}]});";
+  assert.deepEqual(widgetLint(src, { params: [{ id: "n", label: "N", type: "number", value: 7 }] }), []);   // declares param + wires on('param') + no internal knob
+});
+
+test("widgetLint: declared-but-unwired params/controls, and undeclared fetch/compute", () => {
+  // declares a param but never subscribes to on('param')
+  assert.match(widgetLint("render();", { params: [{ id: "n", label: "N", type: "number", value: 1 }] })[0], /never calls on\('param'/);
+  // declares a control but never on('control')
+  assert.match(widgetLint("render();", { controls: [{ id: "go", label: "Go" }] })[0], /never calls on\('control'/);
+  // fetches without declaring the host
+  assert.match(widgetLint("pagoda.fetchExternal('https://x.org')", {})[0], /declares no permissions\.external/);
+  // computes without declaring it
+  assert.match(widgetLint("pagoda.runCompute('return 1')", {})[0], /permissions\.compute/);
+  // fetch WITH the host declared → no fetch warning
+  assert.equal(widgetLint("pagoda.fetchExternal('https://x.org')", { permissions: { external: ["x.org"] } }).length, 0);
 });

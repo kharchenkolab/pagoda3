@@ -88,6 +88,26 @@ export function validateManifest(m: any): WidgetManifest {
   return out;
 }
 
+// REFLECTION checks — heuristic well-formedness lint on an authored widget, run by inspect_widget so the agent can
+// review what it built and FIX gaps before declaring done. Source-string + manifest based (the host has both); advisory,
+// not errors. The big one: a tunable VALUE built as an internal DOM control instead of a declared param (undriveable,
+// not persisted) — the slider-N class. Pure → node-testable.
+export function widgetLint(source: string, manifest: WidgetManifest | null): string[] {
+  const s = String(source || ""), m = manifest || {};
+  const params = m.params || [], controls = m.controls || [];
+  const w: string[] = [];
+  // 1) a tunable knob (slider / number input / dropdown) built in the widget's OWN DOM rather than declared as a param.
+  const buildsKnob = /type\s*=\s*['"]?(range|number)\b/i.test(s) || /setAttribute\(\s*['"]type['"]\s*,\s*['"](range|number)/i.test(s) || /<select\b/i.test(s) || /createElement\(\s*['"]select['"]/i.test(s);
+  if (buildsKnob && !params.length) w.push("builds a slider / number-input / <select> in its own DOM but declares NO params — an internal control can't be set by the agent or by voice and isn't persisted across reload. Declare each tunable VALUE as a param (ready({params:[{id,type:'number'|'select',…}]})) and react via on('param'); seed the first render from the param's value.");
+  // 2) declared params/controls that are never wired up → a dead knob/button.
+  if (params.length && !/on\(\s*['"]param['"]/.test(s)) w.push("declares params but never calls on('param', …) — setting one will do nothing. Subscribe and re-render on change.");
+  if (controls.length && !/on\(\s*['"]control['"]/.test(s)) w.push("declares controls but never calls on('control', …) — clicking the header button will do nothing.");
+  // 3) capability used but not declared → declaration out of sync with the code (shown at ⓘ inspector / import gate).
+  if (/fetchExternal\s*\(/.test(s) && !(m.permissions?.external?.length)) w.push("calls fetchExternal but declares no permissions.external — add the host(s) you fetch so it's documented (and allowed when the widget is imported).");
+  if (/runCompute\s*\(/.test(s) && !(m.permissions?.compute)) w.push("calls runCompute but didn't declare permissions.compute:true.");
+  return w;
+}
+
 // The data kinds a widget may request (host resolves them). Documented so the agent + the host stay in step.
 export const DATA_KINDS = ["n", "fields", "categories", "category", "cellsOf", "expr", "numeric", "selectedCells", "groupStats", "rankGenes", "compute"] as const;
 
