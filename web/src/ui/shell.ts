@@ -698,7 +698,7 @@ export class App {
   // CURRENT effective value, default, and range — read from the same DEFAULT_STYLE the renderer paints from, so it
   // can't drift from what's actually honoured. P0 covers the Embedding family; other panel types report their named
   // knobs instead. The agent reads this like an MCP tool's schema, then sets keys via update_view({style}).
-  describePanel(id?: number): { id?: number; type: string; params?: any[]; controls?: { id: string; label: string }[]; note?: string } {
+  describePanel(id?: number): { id?: number; type: string; params?: any[]; dataInputs?: Record<string, string>; controls?: { id: string; label: string }[]; note?: string } {
     const panel = id != null ? this.canvas.find((p) => p.id === id) : this.canvas.find((p) => p.type === "Embedding");
     if (id != null && !panel) return { id, type: "?", note: `no panel #${id}` };
     const type = panel?.type || "Embedding";
@@ -713,10 +713,35 @@ export class App {
       hints.push("read its live state with inspect_widget");
       return { id: panel.id, type, controls, params: wparams.length ? wparams : undefined, note: hints.join("; ") + "." };
     }
+    const dataInputs = this.panelDataInputs(type);   // WHAT-TO-SHOW config (grouping/genes/scope/…) with live valid values — distinct from STYLE (how it looks)
     const d = getStyle(type);   // the PANEL's own registered descriptor (no central knowledge of this type)
-    if (!d) return { id: panel?.id, type, note: `"${type}" exposes no styleable params or controls yet.` };
+    if (!d) return { id: panel?.id, type, dataInputs, note: dataInputs ? "no styleable params yet; dataInputs are this panel's data config — set via update_view({panels:[{id, …}]})." : `"${type}" exposes no styleable params or controls yet.` };
     const resolved = resolvePanelStyleFor(this.ctx, type, panel?.view);
-    return { id: panel?.id, type, params: describeStyle(d, themeIsDark(), resolved) };
+    return { id: panel?.id, type, params: describeStyle(d, themeIsDark(), resolved), dataInputs, note: dataInputs ? "params STYLE the panel (visual constants); dataInputs are WHAT IT SHOWS — set via update_view({panels:[{id, …}]})." : undefined };
+  }
+
+  // The configurable DATA inputs a panel type accepts (grouping/genes/scope/colour…) WITH live valid values — so the
+  // agent that calls describe_panel to learn "what can I set here" gets the answer (vs only style keys). The valid
+  // values come from ctx, so they can't go stale. Central per-type (like viewpatch's normalizer that enforces them);
+  // A2 will add proper field-ROLE typing for the scope/covariate hint. Returns undefined for types with no data config.
+  private panelDataInputs(type: string): Record<string, string> | undefined {
+    const grps = this.ctx.groupings(), cats = this.ctx.categoricalFields();
+    const covs = cats.filter((f) => !grps.includes(f));   // rough split (A2 types these properly): non-clustering categoricals read as covariates
+    const scopeHint = `restrict to ONE population — scopeGrouping+scopeValue, any categorical${covs.length ? ` (covariates: ${covs.join(", ")})` : ""}; clearScope to undo`;
+    if (type === "Heatmap") return {
+      group: `the marker GROUPING — a clustering with markers, one of: ${grps.join(", ") || "—"} (a covariate like sample/condition is NOT a grouping — facet by it instead)`,
+      heatMode: "'dotplot' (dot size = % expressing, colour = mean) | 'heatmap' (colour grid)",
+      genes: "pin specific gene symbols via genes:[…] (shows ANY gene; clearGenes resets)",
+      scope: scopeHint,
+    };
+    if (type === "Embedding") return {
+      colorBy: "colour handle — meta:<field> | gene:<SYMBOL> | qc:<numeric> | geneset:<name>",
+      colormap: `numeric palette — ${paletteNames().join(", ")}`,
+      embedding: `projection — ${this.ctx.embeddingNames().join(", ") || "umap"}`,
+      scope: scopeHint,
+    };
+    if (type === "CompositionBars") return { colorBy: "the grouping to stack by — meta:<grouping>", scope: scopeHint };
+    return undefined;
   }
 
   // Trigger a widget's declared header control programmatically — the agent's analog of clicking the header button
