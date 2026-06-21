@@ -316,16 +316,10 @@ export class App {
   // trusted source does not.
   widgetNeedsConsent(p: Panel): boolean { return p.type === "Widget" && !!p.source && !this.trustedWidgets.has(widgetHash(p.source)); }
 
-  // The CONSENT PLACEHOLDER shown instead of mounting an untrusted (imported) widget — review the source, then trust+run
-  // or remove. Built with textContent only (the title/source are foreign — never innerHTML them).
-  renderWidgetGate(p: Panel, wrap: HTMLElement) {
-    wrap.textContent = "";
-    const box = mk("div", "wgate"); box.style.cssText = "position:absolute;inset:0;display:flex;flex-direction:column;gap:8px;padding:14px;overflow:auto";
-    const h = mk("div"); h.style.cssText = "font-weight:600;color:var(--text)"; h.textContent = "⚠ Untrusted widget";
-    const msg = mk("div"); msg.style.cssText = "font-size:12px;color:var(--dim);line-height:1.45";
-    msg.textContent = `“${p.title || "Widget"}” arrived in an imported session — its code has NOT run. Review it, then choose whether to run it. It would be sandboxed (no DOM/page access) and its compute terminable, but it can still read your data, drive selections/colour, and fetch from allow-listed biodata sources.`;
-    // DECLARED module metadata (P4) — built with textContent (the manifest is foreign data; never innerHTML it) so the
-    // user trusts an imported widget BY INSPECTION of what it says it does.
+  // The DECLARES block — version/description/declared permissions — built with textContent (the manifest is foreign
+  // data; never innerHTML it). Shared by the import consent gate AND the trusted-widget inspector, so what a widget
+  // says it does is shown the same way before AND after you trust it.
+  private widgetDeclaresEl(p: Panel): HTMLElement {
     const declares = mk("div"); declares.style.cssText = "font-size:11.5px;color:var(--text);background:var(--inset);border:1px solid var(--line);border-radius:6px;padding:8px;line-height:1.55";
     const addLine = (label: string, value: string) => { const d = mk("div"); const s = mk("span", undefined, label); s.style.cssText = "color:var(--faint);margin-right:6px"; d.append(s, document.createTextNode(value)); declares.appendChild(d); };
     if (p.version) addLine("version", p.version);
@@ -335,6 +329,39 @@ export class App {
     if (p.permissions?.compute) caps.push("runs off-thread compute");
     caps.push("reads your data; can drive selection/colour");
     addLine("declares:", caps.join(" · "));
+    return declares;
+  }
+
+  // INSPECT a TRUSTED, already-running widget — the post-trust analog of the consent gate. An authored widget skips the
+  // gate (you watched it being built), so without this there's no UI to see what it DECLARED (permissions/version) or
+  // read its source after the fact. Opened from the ⓘ button in a widget panel's header. textContent only (foreign code).
+  // (Distinct from the agent-facing inspectWidget(panelId) below, which returns a live-state STRING for the model.)
+  showWidgetInfo(p: Panel) {
+    const ov = mk("div", "modal");
+    const card = mk("div", "modalcard"); card.style.cssText = "max-width:680px;width:90vw;display:flex;flex-direction:column;gap:10px;text-align:left";
+    const title = mk("div", "mtitle"); title.textContent = "Widget · " + (p.title || "Widget");
+    const pre = mk("pre"); pre.style.cssText = "max-height:50vh;overflow:auto;font:11px var(--mono);background:var(--inset);border:1px solid var(--line);border-radius:6px;padding:8px;white-space:pre-wrap;color:var(--text);margin:0";
+    pre.textContent = p.source || "(no source)";
+    const acts = mk("div", "macts"); const okb = mk("button", "mok"); okb.textContent = "Close"; acts.appendChild(okb);
+    card.append(title, this.widgetDeclaresEl(p), pre, acts); ov.appendChild(card);
+    const close = () => { ov.remove(); document.removeEventListener("keydown", onKey); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
+    ov.onclick = (e) => { if (e.target === ov) close(); };
+    okb.onclick = () => close();
+    document.body.appendChild(ov); document.addEventListener("keydown", onKey); okb.focus();
+  }
+
+  // The CONSENT PLACEHOLDER shown instead of mounting an untrusted (imported) widget — review the source, then trust+run
+  // or remove. Built with textContent only (the title/source are foreign — never innerHTML them).
+  renderWidgetGate(p: Panel, wrap: HTMLElement) {
+    wrap.textContent = "";
+    const box = mk("div", "wgate"); box.style.cssText = "position:absolute;inset:0;display:flex;flex-direction:column;gap:8px;padding:14px;overflow:auto";
+    const h = mk("div"); h.style.cssText = "font-weight:600;color:var(--text)"; h.textContent = "⚠ Untrusted widget";
+    const msg = mk("div"); msg.style.cssText = "font-size:12px;color:var(--dim);line-height:1.45";
+    msg.textContent = `“${p.title || "Widget"}” arrived in an imported session — its code has NOT run. Review it, then choose whether to run it. It would be sandboxed (no DOM/page access) and its compute terminable, but it can still read your data, drive selections/colour, and fetch from allow-listed biodata sources.`;
+    // DECLARED module metadata (P4) — the SAME block the trusted-widget inspector shows (one builder, built with
+    // textContent since the manifest is foreign data), so the user trusts an imported widget BY INSPECTION.
+    const declares = this.widgetDeclaresEl(p);
     const pre = mk("pre"); pre.style.cssText = "display:none;flex:1;min-height:60px;overflow:auto;font:11px var(--mono);background:var(--inset);border:1px solid var(--line);border-radius:6px;padding:8px;white-space:pre-wrap;color:var(--text)";
     pre.textContent = p.source || "";
     const row = mk("div"); row.style.cssText = "display:flex;gap:8px;flex-wrap:wrap";
@@ -490,6 +517,7 @@ export class App {
     span.onclick = () => { p.full = !isFull; this.fullRender(); this.checkpoint((p.full ? "maximize · " : "restore · ") + p.title, "You resized a panel — the layout is yours to shape."); };
     const close = Object.assign(mk("button", "mini", "✕"), { title: "remove" }) as HTMLButtonElement;
     close.onclick = () => { this.canvas = this.canvas.filter((z) => z.id !== p.id); this.fullRender(); this.checkpoint("remove " + p.title, "You removed a panel — direct edits to your own layout always win."); };
+    if (p.type === "Widget") { const info = Object.assign(mk("button", "mini", "ⓘ"), { title: "view source + declared permissions" }) as HTMLButtonElement; info.onclick = () => this.showWidgetInfo(p); sp.appendChild(info); }   // inspect a trusted widget (the post-trust analog of the consent gate)
     sp.appendChild(span); sp.appendChild(close);
     h.appendChild(sp); d.appendChild(h);
     const H = this.ctx.handleOf(p.bind);

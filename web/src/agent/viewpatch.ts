@@ -265,11 +265,15 @@ export function normalizeViewPatch(patch: RawViewPatch, w: World): NormResult {
     else if (!movedFacet && !triggeredControl && !setP) {   // a control/param-only op already did its thing — don't also report "no change"
       // NEVER reject silently: say what this panel type DOES accept and, if the model tried to mutate `type`,
       // point it at the real move (add a new panel). This is what lets a weak model recover instead of looping.
-      const valid = ptype === HEAT_TYPE ? "group, heatMode, genes, colorBy, scope, col, full"
-        : ptype === "Embedding" ? "colorBy, colormap, embedding, scope, col, full"
-        : "colorBy, scope, col, full";
+      const valid = ptype === HEAT_TYPE ? "group, heatMode, genes, colorBy, scope, col, full, style"
+        : ptype === "Embedding" ? "colorBy, colormap, embedding, scope, col, full, style"
+        : "colorBy, scope, col, full, style";
+      // Most "field doesn't apply" misses are really a styling request reaching for the wrong knob (e.g. colorStops,
+      // which is the EMBEDDING's global numeric palette, sent at a dotplot whose colour is style.ramp). Point at the
+      // per-panel style escape hatch + the discovery call so the model recovers instead of faking success elsewhere.
+      const styleHint = ` For visual styling (colours, ramp, point/font sizes), send style:{…} for THIS panel — call describe_panel(${op.id}) to see its exact style keys (e.g. a dotplot's colour is style.ramp.lo/hi, not colorStops).`;
       const triedType = (op as any).type ? ` You can't change a panel's TYPE in place — to get a ${(op as any).type}, ADD a new panel (add:"${(op as any).type}").` : "";
-      rejected.push(`panel #${op.id} (${ptype}): no change — the field(s) you sent don't apply to a ${ptype}, which accepts: ${valid}.${triedType}`);
+      rejected.push(`panel #${op.id} (${ptype}): no change — the field(s) you sent don't apply to a ${ptype}, which accepts: ${valid}.${styleHint}${triedType}`);
     }
   }
 
