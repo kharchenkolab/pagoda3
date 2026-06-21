@@ -12,15 +12,14 @@ function ramp(stops: number[][]): Palette {
   };
 }
 
-const RDBU = [[178, 24, 43], [239, 138, 98], [253, 219, 199], [247, 247, 247], [209, 229, 240], [103, 169, 207], [33, 102, 172]]; // low red → high blue
+const RDBU = [[33, 102, 172], [103, 169, 207], [209, 229, 240], [247, 247, 247], [253, 219, 199], [239, 138, 98], [178, 24, 43]]; // low BLUE → high RED (single-cell convention: high expression = warm/red)
 
 export const PALETTES: Record<string, Palette> = {
   amber: ramp([[27, 34, 48], [224, 164, 88]]),                                                  // the original fixed ramp (default, DARK theme): low fades into the dark canvas
   amberLight: ramp([[244, 240, 228], [240, 200, 120], [217, 122, 36], [150, 70, 14]]),          // LIGHT-theme default: low ≈ paper-white (fades into white), high = deep orange (reads on white)
   viridis: ramp([[68, 1, 84], [59, 82, 139], [33, 145, 140], [94, 201, 98], [253, 231, 37]]),   // perceptually uniform
   magma: ramp([[0, 0, 4], [81, 18, 124], [183, 55, 121], [252, 137, 97], [252, 253, 191]]),
-  rdbu: ramp(RDBU),                                                                              // diverging: red (low) → blue (high)
-  bluered: ramp([...RDBU].reverse()),                                                            // diverging: blue (low) → red (high)
+  rdbu: ramp(RDBU),                                                                              // diverging: blue (low) → red (high) — the single-cell standard; every red/blue spelling (bluered, coolwarm, bwr…) aliases here
   blues: ramp([[247, 251, 255], [198, 219, 239], [107, 174, 214], [33, 113, 181], [8, 48, 107]]),
   greys: ramp([[245, 245, 245], [20, 20, 20]]),
 };
@@ -44,8 +43,7 @@ const ALIASES: Record<string, string> = {
   amber: "amber", default: "amber", fire: "amber",
   viridis: "viridis",
   magma: "magma", inferno: "magma",
-  rdbu: "rdbu", redblue: "rdbu", redtoblue: "rdbu", rdtobu: "rdbu",
-  bluered: "bluered", bluetored: "bluered", bwr: "bluered", coolwarm: "bluered",
+  rdbu: "rdbu", redblue: "rdbu", redtoblue: "rdbu", rdtobu: "rdbu", bluered: "rdbu", bluetored: "rdbu", bwr: "rdbu", coolwarm: "rdbu",   // ONE diverging blue→red map (no red-low footgun for expression)
   blues: "blues", blue: "blues",
   greys: "greys", grays: "greys", grey: "greys", gray: "greys",
   custom: "custom",   // the agent/user-defined gradient (setCustomPalette)
