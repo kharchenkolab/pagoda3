@@ -1527,16 +1527,17 @@ export class App {
   // If a Widget panel with the SAME title is already on the canvas, UPDATE it in place (the re-author / "clean it up"
   // flow) instead of mounting a duplicate — mirrors the library's by-name upsert. fullRender re-mounts the iframe
   // from the new .source, so the running widget picks up the new code. Returns {id, updated}.
-  addWidgetPanel(source: string, title?: string, controls?: { id: string; label: string }[], origin: "authored" | "imported" = "authored"): { id: number; updated: boolean } {
+  addWidgetPanel(source: string, title?: string, controls?: { id: string; label: string }[], origin: "authored" | "imported" = "authored"): { id: number; updated: boolean; unchanged: boolean } {
     const name = title || "Widget";
     this.saveWidgetToLibrary(name, source, controls, origin);   // also keep it in the re-addable library (authored → trusted; imported → still gated)
     const existing = this.canvas.find((p) => p.type === "Widget" && p.title === name);
     if (existing) {
+      const unchanged = existing.source === source;   // a no-op "revision" (e.g. an edit_widget that didn't apply) — surfaced so the agent doesn't claim a change that didn't happen
       existing.source = source; existing.controls = controls;
       this.fullRender(); this.checkpoint("update widget · " + name, "The agent revised an existing widget in place — same panel, new code; a reversible checkpoint.");
-      return { id: existing.id, updated: true };
+      return { id: existing.id, updated: true, unchanged };
     }
-    return { id: this.addPanel({ type: "Widget", title: name, source, controls, bind: "widget:custom" }), updated: false };
+    return { id: this.addPanel({ type: "Widget", title: name, source, controls, bind: "widget:custom" }), updated: false, unchanged: false };
   }
 
   // CHECK A WIDGET'S LIVE USAGE after it's created: snapshot its current rendered text + recent logs + any error, so
