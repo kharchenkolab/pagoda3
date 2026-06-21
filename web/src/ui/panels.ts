@@ -75,6 +75,7 @@ export interface PanelHooks {
   onTeardown: (fn: () => void) => void;                        // register cleanup (e.g. destroy a widget iframe) run on the next fullRender
   registerWidget: (panelId: number, handle: WidgetHandle) => void;   // expose a mounted widget so inspect_widget can read its live state
   widgetNeedsConsent?: (p: Panel) => boolean;                  // Item 2/C: true if this widget is untrusted (imported) → don't auto-run its code
+  widgetIsImported?: (p: Panel) => boolean;                    // P4: true if this widget arrived via an imported session → BIND its declared permissions (foreign code held to stated terms); authored widgets aren't bound
   renderWidgetGate?: (p: Panel, wrap: HTMLElement) => void;    // render the consent placeholder instead of mounting
 }
 
@@ -101,7 +102,7 @@ function widgetBody(p: Panel, ctx: Ctx, hooks: PanelHooks): BuiltBody {
   built.afterAttach = () => {
     // Item 2/C: an untrusted (imported) widget is GATED — show the consent placeholder instead of executing its code.
     if (hooks.widgetNeedsConsent?.(p) && hooks.renderWidgetGate) { hooks.renderWidgetGate(p, wrap); return; }
-    const handle = mountWidget(wrap, p.source || "pagoda.ready({title:'(empty widget)'});", hooks.widgetHost());
+    const handle = mountWidget(wrap, p.source || "pagoda.ready({title:'(empty widget)'});", hooks.widgetHost(), undefined, hooks.widgetIsImported?.(p) ?? false);   // bind declared permissions only for imported (gate-trusted) widgets, never authored ones
     handle.iframe.style.height = "100%";
     hooks.onTeardown(() => handle.destroy());   // torn down (iframe + host subscription) on the next fullRender
     hooks.registerWidget(p.id, handle);         // discoverable by inspect_widget

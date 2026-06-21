@@ -315,6 +315,15 @@ export class App {
   // an imported file and the user hasn't reviewed it). Content-addressed, so an edit re-gates and a re-import of a
   // trusted source does not.
   widgetNeedsConsent(p: Panel): boolean { return p.type === "Widget" && !!p.source && !this.trustedWidgets.has(widgetHash(p.source)); }
+  // Was this widget's code IMPORTED (arrived via a session file), vs AUTHORED in a session? Only imported widgets get
+  // their declared permissions BOUND at runtime — they're foreign code the user accepted at the consent gate under
+  // stated terms. A widget you authored is governed only by the global host allowlist, so the declaration never blocks
+  // your own (agent-driven) edits — it's documentation, not a gate. Signal: a matching library entry tagged "imported".
+  widgetIsImported(p: Panel): boolean {
+    if (p.type !== "Widget" || !p.source) return false;
+    const h = widgetHash(p.source);
+    return this.widgetLib.some((w) => w.origin === "imported" && w.source && widgetHash(w.source) === h);
+  }
 
   // The DECLARES block — version/description/declared permissions — built with textContent (the manifest is foreign
   // data; never innerHTML it). Shared by the import consent gate AND the trusted-widget inspector, so what a widget
@@ -401,6 +410,7 @@ export class App {
       onTeardown: (fn) => { this.teardowns.push(fn); },   // run + cleared each fullRender (like coordSubs) — no iframe leak
       registerWidget: (id, handle) => { this.widgetHandles.set(id, handle); },   // so inspect_widget can read a live widget's state
       widgetNeedsConsent: (p) => this.widgetNeedsConsent(p),                      // Item 2/C: gate untrusted (imported) widget code
+      widgetIsImported: (p) => this.widgetIsImported(p),                          // P4: bind declared permissions for imported widgets only
       renderWidgetGate: (p, wrap) => this.renderWidgetGate(p, wrap),
     };
   }

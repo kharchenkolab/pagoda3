@@ -39,7 +39,11 @@ export function hostMatches(url: string, allow: string[]): boolean {
 
 // Mount `source` into `container`. `actions` lets the caller pre-tap widget→host messages (the harness logs them);
 // otherwise everything routes through `host`.
-export function mountWidget(container: HTMLElement, source: string, host: WidgetHost, tap?: (m: WidgetMsg) => void): WidgetHandle {
+// `enforcePermissions` BINDS the widget's declared permissions.external/compute (block undeclared hosts / off-thread
+// compute). Apply it ONLY to widgets trusted via the IMPORT consent gate — foreign code you accepted under stated
+// terms. For a widget you AUTHORED this session, leave it false: you (your agent) are the author, so the declaration
+// is documentation, not a gate on your own changes — the global host allowlist still bounds it either way.
+export function mountWidget(container: HTMLElement, source: string, host: WidgetHost, tap?: (m: WidgetMsg) => void, enforcePermissions = false): WidgetHandle {
   const iframe = document.createElement("iframe");
   iframe.setAttribute("sandbox", "allow-scripts");   // opaque origin → real isolation; postMessage still works (origin "null")
   iframe.style.cssText = "width:100%;border:0;display:block;background:transparent";
@@ -68,10 +72,10 @@ export function mountWidget(container: HTMLElement, source: string, host: Widget
         (err) => post({ t: "data", reqId: m.reqId, ok: false, error: String(err?.message || err) }));
         break;
       case "fetchExternal": {
-        // Enforce the widget's own declaration: if it declared permissions.external, that list is BINDING —
-        // it may fetch only from those hosts (the host's global allowlist still applies on top, as an outer bound).
-        // A widget that declared nothing is unchanged (host allowlist governs) — backward-compatible.
-        const decl = manifest?.permissions?.external;
+        // Enforce the widget's own declaration ONLY for imported (gate-trusted) widgets: it may fetch only from the
+        // hosts it declared (the host's global allowlist still applies on top, as an outer bound). An authored widget
+        // (enforcePermissions=false) or one that declared nothing is unconstrained here — the host allowlist governs.
+        const decl = enforcePermissions ? manifest?.permissions?.external : undefined;
         if (decl && decl.length && !hostMatches(m.url, decl)) {
           post({ t: "extData", reqId: m.reqId, ok: false, error: "blocked: " + m.url + " is not among this widget's declared external hosts (" + decl.join(", ") + ")" });
           break;
@@ -87,10 +91,10 @@ export function mountWidget(container: HTMLElement, source: string, host: Widget
           (err) => post({ t: "libResult", reqId: m.reqId, ok: false, error: String(err?.message || err) }));
         break;
       case "requestCompute": {
-        // Symmetric to fetchExternal (P4): off-thread runCompute runs arbitrary author code in a worker. If the widget
-        // declared its permissions but NOT compute, it told the user it doesn't compute — so honour that and deny.
-        // A widget that declared no permissions at all is unchanged (the host governs) — backward-compatible.
-        const perms = manifest?.permissions;
+        // Symmetric to fetchExternal: enforce ONLY for imported (gate-trusted) widgets. If such a widget declared its
+        // permissions but NOT compute, it told the user it doesn't compute — honour that and deny. Authored widgets
+        // (enforcePermissions=false) and ones that declared no permissions are unconstrained (the host governs).
+        const perms = enforcePermissions ? manifest?.permissions : undefined;
         if (perms && !perms.compute) {
           post({ t: "computeResult", reqId: m.reqId, ok: false, error: "blocked: this widget did not declare the 'compute' permission (off-thread runCompute)" });
           break;

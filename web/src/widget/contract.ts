@@ -147,9 +147,12 @@ export const WIDGET_API_DOC =
   "type:'number'|'select'|'bool'|'color'|'text', value, min?, max?, step?, options?}]}) — the host renders them as header " +
   "inputs AND exposes them to the agent (describe_panel shows each param's current value/range; update_view sets them); " +
   "react to a change via pagoda.on('param', (id, value) => …). Use controls for ACTIONS, params for VALUES. " +
-  "For a SHAREABLE widget, also declare in ready(): version, description, and permissions:{external:['uniprot.org', …] " +
-  "(the biodata hosts you fetchExternal from), compute:true (if you use runCompute)} — these are shown at the consent " +
-  "gate so an imported widget is trusted by inspection. Keep it self-contained — no external network/CDN.";
+  "Declare in ready(): version, description, and permissions:{external:['uniprot.org', …] (EVERY biodata host you " +
+  "fetchExternal from — list a host BEFORE you fetch it, and when you add a fetch, add its host), compute:true (if you " +
+  "use runCompute)}. Permissions are DOCUMENTATION of what the widget touches — shown in the ⓘ inspector and at the " +
+  "import consent gate so someone running it can trust it by inspection; keep them in sync with the code as you edit. " +
+  "(They're only ENFORCED for an imported widget — held to what it declared; a widget authored here is never blocked by " +
+  "its own declaration.) Keep it self-contained — no external network/CDN.";
 
 // Escape a source string so it can't break out of the <script> it's injected into.
 export function escapeForScript(src: string): string { return String(src).replace(/<\/(script)/gi, "<\\/$1"); }
