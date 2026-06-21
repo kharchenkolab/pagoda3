@@ -127,6 +127,17 @@ function scopeFrom(grouping: string, value: string, w: World, where: string, rej
   return { grouping, value };
 }
 
+// A grouping rejection that TEACHES instead of just saying "no". A Heatmap groups by a CLUSTERING with precomputed
+// markers (leiden/cell_type); a COVARIATE (sample/condition/donor) is a real field but the wrong ROLE for `group` —
+// so name the valid groupings AND, when the field exists, redirect to the mechanism that DOES compare across it
+// (facet / scope). This is the field-role analog of the style-rejection steer: turn the dead-end into a signpost.
+function groupingReject(where: string, group: string, w: World): string {
+  const valid = w.groupings.join(", ") || "(none — this dataset has no marker groupings)";
+  if (w.categoricals.includes(group))
+    return `${where}: "${group}" is a categorical field but NOT a marker grouping — a Heatmap groups by a CLUSTERING with precomputed markers (${valid}). "${group}" looks like a covariate; to COMPARE across its values use the top-level facet:{by:"${group}"} (aligned copies per value) or scope to one value (scopeGrouping:"${group}", scopeValue:…). For a statistical contrast across it, compute stat:'pseudobulk' (replicate:"${group}").`;
+  return `${where}: unknown grouping "${group}" — valid groupings (clusterings with markers): ${valid}.`;
+}
+
 // Merge `wanted` gene symbols into `base` (deduped, order-preserving); unknown symbols are reported as notes.
 function resolveGenes(base: string[], wanted: string[] | undefined, w: World, where: string, notes: string[]): string[] {
   const out = [...base]; const unknown: string[] = [];
@@ -223,7 +234,7 @@ export function normalizeViewPatch(patch: RawViewPatch, w: World): NormResult {
       if (typeof op.embedding === "string" && op.embedding) { if (w.embeddings.includes(op.embedding)) spec.embedding = op.embedding; else rejected.push(`${where}: unknown embedding "${op.embedding}" (have: ${w.embeddings.join(", ") || "umap"})`); }
       if (typeof op.colormap === "string" && op.colormap) { const cm = w.normalizeColormap(op.colormap); if (cm) spec.colormap = cm; else rejected.push(`${where}: unknown colormap "${op.colormap}" (have: ${w.colormaps.join(", ")})`); }
       if (isHeat) {
-        if (op.group) { if (w.groupings.includes(op.group)) spec.group = op.group; else rejected.push(`${where}: unknown grouping "${op.group}"`); }
+        if (op.group) { if (w.groupings.includes(op.group)) spec.group = op.group; else rejected.push(groupingReject(where, op.group, w)); }
         const hm = normHeatMode(op.heatMode); if (hm) spec.heatMode = hm; else if (op.heatMode != null) notes.push(`${where}: heatMode "${op.heatMode}" ignored (use heatmap|dotplot)`);
         const g = resolveGenes([], op.genes, w, where, notes); if (g.length) spec.genes = g;
       }
@@ -249,7 +260,7 @@ export function normalizeViewPatch(patch: RawViewPatch, w: World): NormResult {
     else if (op.scopeGrouping && op.scopeValue) { const s = scopeFrom(op.scopeGrouping, op.scopeValue, w, where, rejected); if (s) pp.scope = s; }
     if (typeof op.embedding === "string" && op.embedding) { if (w.embeddings.includes(op.embedding)) pp.embedding = op.embedding; else rejected.push(`${where}: unknown embedding "${op.embedding}"`); }
     if (typeof op.colormap === "string" && op.colormap) { const cm = w.normalizeColormap(op.colormap); if (cm) pp.colormap = cm; else rejected.push(`${where}: unknown colormap "${op.colormap}" (have: ${w.colormaps.join(", ")})`); }
-    if (groupable && op.group) { if (w.groupings.includes(op.group)) pp.group = op.group; else rejected.push(`${where}: unknown grouping "${op.group}"`); }   // Heatmap stacking / Reconcile base partition
+    if (groupable && op.group) { if (w.groupings.includes(op.group)) pp.group = op.group; else rejected.push(groupingReject(where, op.group, w)); }   // Heatmap stacking / Reconcile base partition
     if (op.style && typeof op.style === "object" && !Array.isArray(op.style)) pp.style = op.style;   // per-panel style override (the natural per-panel path, alongside the top-level style/stylePanel)
     const triggeredControl = typeof op.control === "string" && !!op.control.trim() && op.id != null;
     if (triggeredControl) ops.push({ kind: "triggerControl", id: op.id!, control: op.control!.trim() });   // trigger a widget's declared control (an action, not a config patch)
@@ -262,7 +273,7 @@ export function normalizeViewPatch(patch: RawViewPatch, w: World): NormResult {
       notes.push(`${where}: heatMode/genes apply only to Heatmap panels`);
     }
     if (Object.keys(pp).length) ops.push({ kind: "configPanel", id: op.id, patch: pp });
-    else if (!movedFacet && !triggeredControl && !setP) {   // a control/param-only op already did its thing — don't also report "no change"
+    else if (!movedFacet && !triggeredControl && !setP && !op.group) {   // a control/param-only op already did its thing — don't also report "no change"; and an invalid `group` already got a specific (steering) rejection, so don't pile on "fields don't apply" (group DOES apply to a Heatmap — its VALUE was wrong)
       // NEVER reject silently: say what this panel type DOES accept and, if the model tried to mutate `type`,
       // point it at the real move (add a new panel). This is what lets a weak model recover instead of looping.
       const valid = ptype === HEAT_TYPE ? "group, heatMode, genes, colorBy, scope, col, full, style"

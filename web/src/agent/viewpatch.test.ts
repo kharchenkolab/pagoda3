@@ -291,6 +291,25 @@ test("arrange: rows + columns place existing panels; bad ids / overflow rejected
   assert.match(normalizeViewPatch({ arrange: { rows: [[404]] } }, w).rejected.join(" "), /unknown panel/);
 });
 
+test("grouping rejection TEACHES: a covariate steers to facet; an unknown field lists valid groupings", () => {
+  const w = makeWorld();   // groupings: leiden, cell_type · categoricals also include sample, condition
+  // a real field, wrong ROLE (covariate) → name valid groupings AND redirect to facet/scope/pseudobulk
+  const covR = normalizeViewPatch({ panels: [{ id: 4, group: "sample" }] }, w).rejected;
+  const cov = covR.join(" ");
+  assert.equal(covR.length, 1);                     // ONE steering rejection, not also a redundant "no change"
+  assert.match(cov, /not a marker grouping/i);
+  assert.match(cov, /leiden, cell_type/);          // lists the valid groupings
+  assert.match(cov, /facet:\{by:"sample"\}/);       // redirects to the right mechanism
+  assert.match(cov, /pseudobulk/);                  // and the statistical contrast
+  // create-Heatmap path steers the same way
+  assert.match(normalizeViewPatch({ panels: [{ add: "Heatmap", group: "condition" }] }, w).rejected.join(" "), /facet:\{by:"condition"\}/);
+  // a field that doesn't exist at all → just lists valid groupings (no facet redirect)
+  const unk = normalizeViewPatch({ panels: [{ id: 4, group: "nope" }] }, w).rejected.join(" ");
+  assert.match(unk, /unknown grouping "nope"/);
+  assert.match(unk, /leiden, cell_type/);
+  assert.doesNotMatch(unk, /facet/);
+});
+
 test("panel col pin accepts a third column (clamped to MAX_COLS)", () => {
   const w = makeWorld();
   const third = normalizeViewPatch({ panels: [{ id: 5, col: 2 }] }, w);
