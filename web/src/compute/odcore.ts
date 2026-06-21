@@ -104,6 +104,45 @@ export function meanVarCore(panel: ODPanel, cells: ArrayLike<number>): { g: numb
   return out;
 }
 
+// ----- PSEUDOBULK (donor-level) DE: the statistically honest cross-condition contrast -----
+export interface PseudobulkRow { g: number; lfc: number; t: number; p: number; meanA: number; meanB: number; nA: number; nB: number; }
+// Aggregate to one value PER REPLICATE (donor/sample), then test ACROSS replicates — the replicate is the unit of
+// replication, so this carries a REAL p-value (unlike cell-level deCore, whose pooled cells overstate confidence).
+// Inputs are per-(replicate s, gene j) MEANS over each group's cells (from groupStatsForCells over A-cells / B-cells)
+// + nA/nB = cells-per-replicate in each group. A replicate joins a group's test only if it has ≥ minCells there.
+// Welch's t per gene; two-sided p via T²~F(1,df): p = exp(logFupperTail(t², 1, df_welch)). Pure → node-testable.
+export function pseudobulkDECore(
+  meanA: ArrayLike<number>, nA: ArrayLike<number>,
+  meanB: ArrayLike<number>, nB: ArrayLike<number>,
+  ng: number, G: number, minCells = 10,
+): { rows: PseudobulkRow[]; repsA: number[]; repsB: number[] } {
+  const repsA: number[] = [], repsB: number[] = [];
+  for (let s = 0; s < G; s++) { if (nA[s] >= minCells) repsA.push(s); if (nB[s] >= minCells) repsB.push(s); }
+  const ka = repsA.length, kb = repsB.length, rows: PseudobulkRow[] = [];
+  if (ka < 2 || kb < 2) return { rows, repsA, repsB };   // caller errors with a clear message — a t-test needs ≥2 replicates per group
+  for (let j = 0; j < ng; j++) {
+    let sa = 0, sb = 0;
+    for (const s of repsA) sa += meanA[s * ng + j];
+    for (const s of repsB) sb += meanB[s * ng + j];
+    const mA = sa / ka, mB = sb / kb, lfc = mA - mB;
+    let va = 0, vb = 0;
+    for (const s of repsA) { const d = meanA[s * ng + j] - mA; va += d * d; }
+    for (const s of repsB) { const d = meanB[s * ng + j] - mB; vb += d * d; }
+    va /= (ka - 1); vb /= (kb - 1);
+    const sa2 = va / ka, sb2 = vb / kb, se2 = sa2 + sb2;
+    let t = 0, df = ka + kb - 2;
+    if (se2 > 1e-12) {
+      t = lfc / Math.sqrt(se2);
+      const den = (sa2 * sa2) / (ka - 1) + (sb2 * sb2) / (kb - 1);   // Welch–Satterthwaite
+      if (den > 1e-12) df = (se2 * se2) / den;
+    } else if (Math.abs(lfc) > 1e-9) t = lfc > 0 ? 50 : -50;   // zero within-group variance but groups differ → near-perfect separation
+    const p = Math.exp(logFupperTail(t * t, 1, Math.max(df, 1)));
+    rows.push({ g: j, lfc, t, p, meanA: mA, meanB: mB, nA: ka, nB: kb });
+  }
+  rows.sort((x, y) => x.p - y.p || Math.abs(y.lfc) - Math.abs(x.lfc));
+  return { rows, repsA, repsB };
+}
+
 // ----- LOWESS: tricube-weighted local linear fit of y~x at anchors, linearly interpolated -----
 function lowess(xs: number[], ys: number[], span = 0.3, nAnchor = 200): (x: number) => number {
   const n = xs.length;

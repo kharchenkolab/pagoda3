@@ -19,6 +19,7 @@ import { installOverflow } from "./overflow.ts";
 import { makeWidgetHost } from "../widget/apphost.ts";
 import type { WidgetHost, WidgetHandle } from "../widget/runtime.ts";
 import { widgetLint } from "../widget/contract.ts";
+import { pseudobulkDECore } from "../compute/odcore.ts";
 import { SESSION_KEY, WIDGETS_KEY, SavedWidget, SerAnnoLayer, Fingerprint, serializeSession, parseSession, serializeBundle, parseBundle, fingerprintMismatch, upsertWidget, loadWidgets, widgetHash } from "./persist.ts";
 
 // Item 2/C — the trust registry: source-hashes of widgets the user has authored or explicitly consented to run. Foreign
@@ -1326,13 +1327,14 @@ export class App {
   // de(A, B=complement(A)) or overdispersion(A). A/B are CellSet exprs (category/selection/focus/all + boolean
   // ops), so the agent can test ANY set it can describe — not just the pre-baked selection-vs-rest etc. Binds
   // the result to the rail (or canvas with toCanvas) and returns a summary / error for the agent.
-  async runCompute(input: { stat?: string; A?: CellSet; B?: CellSet; toCanvas?: boolean; title?: string }): Promise<{ ok?: string; error?: string }> {
+  async runCompute(input: { stat?: string; A?: CellSet; B?: CellSet; replicate?: string; toCanvas?: boolean; title?: string }): Promise<{ ok?: string; error?: string }> {
     const ctx = this.ctx;
-    if (input.stat !== "de" && input.stat !== "overdispersion") return { error: `unknown stat "${input.stat}" — use "de" or "overdispersion"` };
+    if (input.stat !== "de" && input.stat !== "overdispersion" && input.stat !== "pseudobulk") return { error: `unknown stat "${input.stat}" — use "de", "pseudobulk", or "overdispersion"` };
     if (!input.A) { if (input.stat === "overdispersion") input.A = { all: true } as CellSet; else return { error: "A (a cell set) is required" }; }   // global variable genes when no scope given
     const world: CellWorld = { categoricals: ctx.categoricalFields(), valuesOf: (f) => ctx.categoricalValues(f), hasSelection: ctx.selectedCells().length > 0, hasFocus: !!ctx.coord.state.focus };
     const eA = validateCellSet(input.A, world, "A"); if (eA) return { error: eA };
-    const Bexpr: CellSet | undefined = input.stat === "de" ? (input.B ?? ({ complement: input.A } as CellSet)) : undefined;
+    const needsB = input.stat === "de" || input.stat === "pseudobulk";
+    const Bexpr: CellSet | undefined = needsB ? (input.B ?? ({ complement: input.A } as CellSet)) : undefined;
     if (Bexpr) { const eB = validateCellSet(Bexpr, world, "B"); if (eB) return { error: eB }; }
     const env: CellEnv = { n: ctx.n, category: (g, v) => ctx.cellsOfCategory(g, v), selection: () => ctx.selectedCells(), focus: () => ctx.coord.state.focus?.ids ?? [] };
     const Aids = [...resolveCellSet(input.A, env)];
@@ -1347,12 +1349,33 @@ export class App {
       place({ type: "GeneList", title: input.title || `Variable genes · ${label}`, cap: "overdispersion", bind: "hvg:scope", rows: hv.map((h) => ({ symbol: h.symbol, score: h.resid })) });
       return { ok: `top variable genes in ${label} (${Aids.length} cells), recomputed for this scope: ${hv.slice(0, 10).map((h) => h.symbol).join(", ")}` };
     }
-    // de
     const Bids = [...resolveCellSet(Bexpr!, env)];
     if (!Bids.length) return { error: `B (${describeCellSet(Bexpr!)}) resolves to no cells` };
+    const aL = describeCellSet(input.A), bL = input.B ? describeCellSet(Bexpr!) : "rest";
+
+    // PSEUDOBULK (donor-level): aggregate A and B to per-REPLICATE means, t-test ACROSS replicates → REAL p-values.
+    if (input.stat === "pseudobulk") {
+      const rep = String(input.replicate || "").trim();
+      if (!rep) return { error: "pseudobulk needs `replicate` — the donor/sample field that defines biological replicates (e.g. replicate:'sample'). The cells in A and B are aggregated to one value per replicate, then tested across replicates." };
+      if (!ctx.categoricalFields().includes(rep)) return { error: `pseudobulk: replicate "${rep}" is not a categorical field (have: ${ctx.categoricalFields().join(", ")})` };
+      const md: any = await ctx.view.metadata(rep);
+      if (md.kind !== "categorical") return { error: `pseudobulk: replicate "${rep}" must be categorical` };
+      const G = md.categories.length, ng = ctx.view.nGenes, minCells = 10;
+      const sA = await ctx.view.groupStatsForCells(md.codes, G, Aids);
+      const sB = await ctx.view.groupStatsForCells(md.codes, G, Bids);
+      const { rows: pr, repsA, repsB } = pseudobulkDECore(sA.mean, sA.n, sB.mean, sB.n, ng, G, minCells);
+      if (repsA.length < 2 || repsB.length < 2) return { error: `pseudobulk needs ≥2 replicates per group, but A has ${repsA.length} and B has ${repsB.length} ${rep}(s) with ≥${minCells} cells. Pick a replicate field with enough samples on each side (a 1-vs-1 or 3-vs-0 split can't carry a population claim).` };
+      const genes = await ctx.view.genes();
+      const rows = pr.map((r) => ({ gene: r.g, symbol: genes[r.g], lfc: r.lfc, p: r.p, meanA: r.meanA, meanB: r.meanB }));
+      place({ type: "DeTable", title: input.title || `Pseudobulk · ${aL} vs ${bL}`, cap: `${repsA.length} vs ${repsB.length} ${rep}s · donor-level`, bind: "pseudobulk:donor", aLabel: aL, bLabel: bL, rows });
+      const sig = rows.filter((r) => r.p < 0.05).length;
+      const top = rows.slice(0, 8).map((r) => `${r.symbol}${r.p < 0.05 ? "*" : ""}`).join(", ");
+      return { ok: `pseudobulk DE ${aL} vs ${bL} across ${rep}, ${repsA.length} vs ${repsB.length} replicates: ${sig} gene(s) at p<0.05 (Welch t-test on per-replicate mean log-expression). Top by p: ${top}. The replicate is the unit here, so unlike cell-level de this carries a real p-value and supports a population-level claim — but with few replicates power is limited; treat marginal hits cautiously.` };
+    }
+
+    // de (cell-level, ranking-grade)
     const { ranked, panel } = await ctx.view.subsampleDE(Aids, Bids);
     const rows = ranked.map((r: any) => ({ gene: r.gene, symbol: r.symbol, lfc: r.lfc, meanA: r.meanA, meanB: r.meanB }));   // ALL tested genes — the panel filters/searches the full list (render is capped)
-    const aL = describeCellSet(input.A), bL = input.B ? describeCellSet(Bexpr!) : "rest";
     place({ type: "DeTable", title: input.title || `DE · ${aL} vs ${bL}`, cap: `${aL} vs ${bL}${panel ? " · panel" : " · approx"}`, bind: "de:between", aLabel: aL, bLabel: bL, rows });
     const up = rows.filter((r: any) => r.lfc > 0).slice(0, 6).map((r: any) => r.symbol).join(", ");
     const dn = rows.filter((r: any) => r.lfc < 0).slice(0, 6).map((r: any) => r.symbol).join(", ");

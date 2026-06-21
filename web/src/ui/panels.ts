@@ -36,7 +36,7 @@ export interface Panel {
   genes?: string[];                   // Heatmap: extra genes pinned in beyond the precomputed markers (highlighted)
   view?: PanelView;
   split?: { levels: string[]; genes: string[]; means: number[][] };   // gene × donor concordance matrix (SplitHeat)
-  rows?: { gene?: number; symbol: string; lfc?: number; padj?: number; score?: number; meanA?: number; meanB?: number }[];
+  rows?: { gene?: number; symbol: string; lfc?: number; p?: number; padj?: number; score?: number; meanA?: number; meanB?: number }[];
   source?: string;                    // Widget panel: the author-written widget source (runs in a sandboxed iframe)
   controls?: { id: string; label: string }[];   // Widget panel: header controls the widget declared (folded into ⋯)
   params?: { id: string; label: string; type: string; value: any; min?: number; max?: number; step?: number; options?: string[] }[];   // Widget panel: typed value knobs (header inputs + describe_panel)
@@ -263,11 +263,13 @@ function deBody(p: Panel, _ctx: Ctx, hooks: PanelHooks): BuiltBody {
   // (one group vs rest) carries only logFC. Show the mean columns ONLY when they exist — otherwise the
   // table renders misleading 0.00s for genes whose logFC is plainly non-zero.
   const hasMeans = rows.some((r) => r.meanA != null || r.meanB != null);
+  const hasP = rows.some((r: any) => r.p != null);   // pseudobulk carries a real p-value; cell-level de does not
   const short = (s: string) => (s.length > 11 ? s.slice(0, 10) + "…" : s);
   const cols: any[] = [
     { key: "symbol", label: "gene", get: (r: any) => r.symbol },
     { key: "lfc", label: "logFC", num: true, get: (r: any) => r.lfc ?? 0, fmt: (v: number) => (v > 0 ? "+" : "") + v.toFixed(2), cls: (v: number) => (v > 0 ? "up" : "dn") },
   ];
+  if (hasP) cols.push({ key: "p", label: "p", num: true, get: (r: any) => r.p ?? 1, fmt: (v: number) => (v < 0.001 ? v.toExponential(1) : v.toFixed(3)), cls: (v: number) => (v < 0.05 ? "up" : "") });
   if (hasMeans) {
     cols.push({ key: "meanA", label: p.aLabel ? short(p.aLabel) : "A", num: true, get: (r: any) => r.meanA ?? 0, fmt: (v: number) => v.toFixed(2) });
     cols.push({ key: "meanB", label: p.bLabel ? short(p.bLabel) : "B", num: true, get: (r: any) => r.meanB ?? 0, fmt: (v: number) => v.toFixed(2) });

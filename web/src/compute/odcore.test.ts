@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { sample, overdispersedCore, deCore, groupStatsForCellsCore, meanVarCore, logFupperTail, type ODPanel } from "./odcore.ts";
+import { sample, overdispersedCore, deCore, groupStatsForCellsCore, meanVarCore, logFupperTail, pseudobulkDECore, type ODPanel } from "./odcore.ts";
 
 // Build a cell-major CSR panel from a dense [cell][gene] matrix (stores only nonzeros, like the real panel).
 function buildPanel(dense: number[][], lognorm = true): ODPanel {
@@ -99,4 +99,30 @@ test("logFupperTail: monotone — a larger variance ratio is more significant (m
   const a = logFupperTail(2, 50, 50), b = logFupperTail(10, 50, 50);
   assert.ok(b < a, "larger F → smaller upper-tail p → more negative log p");
   assert.equal(logFupperTail(0, 10, 10), 0);   // f<=0 guard
+});
+
+test("t-test p via T²~F(1,df): matches a known two-sided value", () => {
+  const p = Math.exp(logFupperTail(2 * 2, 1, 10));   // |t|=2, df=10 → two-sided p ≈ 0.0734
+  assert.ok(Math.abs(p - 0.0734) < 0.002, `p=${p} ≈ 0.0734`);
+});
+
+test("pseudobulkDECore: a gene that differs across replicate groups beats a null gene; ≥2-reps guard", () => {
+  const ng = 2, G = 4;   // samples 0,1 = group A; 2,3 = group B (per-replicate means, row-major s*ng+j)
+  //                gene0          gene1
+  const meanA = [ 2.0, 1.0,   2.2, 1.1,   0, 0,    0, 0   ];   // reps 0,1 carry A
+  const nA    = [ 50, 50, 0, 0 ];
+  const meanB = [ 0, 0,   0, 0,   0.5, 1.05,  0.6, 0.95 ];     // reps 2,3 carry B
+  const nB    = [ 0, 0, 50, 50 ];
+  const { rows, repsA, repsB } = pseudobulkDECore(meanA, nA, meanB, nB, ng, G, 10);
+  assert.deepEqual(repsA, [0, 1]); assert.deepEqual(repsB, [2, 3]);   // ≥minCells filter picks the right replicates
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].g, 0);                          // the strongly-different gene ranks first
+  assert.ok(Math.abs(rows[0].lfc - 1.55) < 1e-6);      // (2.1) − (0.55)
+  assert.equal(rows[0].nA, 2); assert.equal(rows[0].nB, 2);   // replicate counts, not cell counts
+  assert.ok(rows[0].p < rows[1].p, "differing gene more significant than the null gene");
+  const nullGene = rows.find((r) => r.g === 1)!;
+  assert.ok(nullGene.p > 0.3, `null gene not significant (p=${nullGene.p})`);
+  // a group with <2 replicates → no rows (caller turns repsA/repsB into a clear error)
+  const one = pseudobulkDECore(meanA, [50, 0, 0, 0], meanB, nB, ng, G, 10);
+  assert.equal(one.rows.length, 0); assert.deepEqual(one.repsA, [0]);
 });
