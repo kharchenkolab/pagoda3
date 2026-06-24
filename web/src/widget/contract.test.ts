@@ -22,6 +22,9 @@ test("validateManifest: title/height/controls + typed PARAMS; junk filtered", ()
   assert.deepEqual(m.params![0], { id: "thr", label: "Threshold", type: "number", value: 5, min: 0, max: 100, step: 1 });
   assert.deepEqual(m.params![1], { id: "mode", label: "Mode", type: "select", value: "a", options: ["a", "b"] });
   assert.equal(m.params![2].type, "bool");
+  // select options accept {value,label} objects (a labelled menu) AND plain strings — must NOT stringify to "[object Object]"
+  const lm = validateManifest({ params: [{ id: "rep", label: "View", type: "select", value: "cartoon", options: [{ value: "cartoon", label: "Cartoon" }, "stick"] }] });
+  assert.deepEqual(lm.params![0].options, [{ value: "cartoon", label: "Cartoon" }, "stick"]);
 });
 
 test("validateManifest: module metadata — version/description/permissions (P4)", () => {
@@ -39,13 +42,15 @@ test("validateManifest: tolerant of empty / missing", () => {
   assert.equal(validateManifest({ params: "nope" }).params, undefined);
 });
 
-test("widgetLint: flags an internal slider that should be a param (the slider-N class)", () => {
-  const src = "const i=document.createElement('input'); i.type='range'; i.oninput=()=>render();";
-  const w = widgetLint(src, { title: "x" });   // no params declared
+test("widgetLint: advises a param for an internal RANGE slider, but never flags a <select> (bespoke UI is fine)", () => {
+  const slider = "const i=document.createElement('input'); i.type='range'; i.oninput=()=>render();";
+  const w = widgetLint(slider, { title: "x" });   // no params declared
   assert.equal(w.length, 1);
-  assert.match(w[0], /declares NO params/);
-  // a <select> built in DOM with no params → same warning
-  assert.match(widgetLint("body.innerHTML='<select><option>a</option></select>'", {})[0], /slider \/ number-input \/ <select>/);
+  assert.match(w[0], /range slider/);
+  // a <select> (e.g. a 3D viewer's representation picker) is LEGITIMATE internal layout — must NOT be flagged anymore
+  assert.deepEqual(widgetLint("body.innerHTML='<select><option>a</option></select>'", {}), []);
+  // nor a plain text/number input that's part of the widget's own UI
+  assert.deepEqual(widgetLint("const i=document.createElement('input'); i.type='number';", {}), []);
 });
 
 test("widgetLint: a well-formed param widget is clean", () => {

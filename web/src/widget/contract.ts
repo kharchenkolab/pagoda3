@@ -21,7 +21,8 @@ export type HintInfo = null | { kind: "cells"; ids: number[] } | { kind: "catego
 // A typed PARAMETER a widget declares — a VALUE knob (vs a control, which is an action button). The host renders it as
 // a header input AND exposes it to describe_panel/update_view, so the agent + user drive it uniformly with built-in
 // style knobs (the strong-C completion). A change arrives as a {t:"param"} message; the widget reacts via on('param').
-export interface WidgetParam { id: string; label: string; type: "number" | "select" | "bool" | "color" | "text"; value: any; min?: number; max?: number; step?: number; options?: string[]; }
+export type WidgetOption = string | { value: string; label: string };   // a select option: a plain string, or {value,label} for a labelled menu
+export interface WidgetParam { id: string; label: string; type: "number" | "select" | "bool" | "color" | "text"; value: any; min?: number; max?: number; step?: number; options?: WidgetOption[]; }
 
 // A module's declared PERMISSIONS — the capabilities it intends to use, declared up front so an IMPORTED widget can be
 // trusted by INSPECTION (the consent gate shows them) and (future) ENFORCED (the host narrows fetchExternal to the
@@ -73,7 +74,7 @@ export function validateManifest(m: any): WidgetManifest {
     if (Array.isArray(m.params)) out.params = m.params.filter((p: any) => p && typeof p.id === "string" && typeof p.label === "string" && ["number", "select", "bool", "color", "text"].includes(p.type)).map((p: any) => {
       const o: WidgetParam = { id: p.id, label: p.label, type: p.type, value: p.value };
       if (typeof p.min === "number") o.min = p.min; if (typeof p.max === "number") o.max = p.max; if (typeof p.step === "number") o.step = p.step;
-      if (Array.isArray(p.options)) o.options = p.options.map((x: any) => String(x));
+      if (Array.isArray(p.options)) o.options = p.options.map((x: any) => (x && typeof x === "object") ? { value: String(x.value ?? x.label ?? ""), label: String(x.label ?? x.value ?? "") } : String(x));   // a select option is a plain string OR {value,label} — keep the object so a labelled menu doesn't stringify to "[object Object]"
       return o;
     });
     if (typeof m.version === "string") out.version = m.version.slice(0, 40);
@@ -96,9 +97,11 @@ export function widgetLint(source: string, manifest: WidgetManifest | null): str
   const s = String(source || ""), m = manifest || {};
   const params = m.params || [], controls = m.controls || [];
   const w: string[] = [];
-  // 1) a tunable knob (slider / number input / dropdown) built in the widget's OWN DOM rather than declared as a param.
-  const buildsKnob = /type\s*=\s*['"]?(range|number)\b/i.test(s) || /setAttribute\(\s*['"]type['"]\s*,\s*['"](range|number)/i.test(s) || /<select\b/i.test(s) || /createElement\(\s*['"]select['"]/i.test(s);
-  if (buildsKnob && !params.length) w.push("builds a slider / number-input / <select> in its own DOM but declares NO params — an internal control can't be set by the agent or by voice and isn't persisted across reload. Declare each tunable VALUE as a param (ready({params:[{id,type:'number'|'select',…}]})) and react via on('param'); seed the first render from the param's value.");
+  // 1) a NUMERIC slider built in the widget's own DOM — ADVISORY: if it's a value the user tunes by voice it's better as a
+  //    param, but an internal control is perfectly fine for bespoke layout (don't flag <select>/<input> generally — a
+  //    representation picker over a viewer SHOULD be internal; that over-flagging once pushed agents to wreck good recipes).
+  const buildsSlider = /type\s*=\s*['"]?range\b/i.test(s) || /setAttribute\(\s*['"]type['"]\s*,\s*['"]range/i.test(s);
+  if (buildsSlider && !params.length) w.push("has a range slider in its own DOM and declares no params — IF this is a value the user should tune by voice / the agent should set / that should persist, a number param is better (ready({params:[{id,type:'number',…}]}) + on('param')). If it's bespoke in-widget UI, an internal control is fine — just theme it.");
   // 2) declared params/controls that are never wired up → a dead knob/button.
   if (params.length && !/on\(\s*['"]param['"]/.test(s)) w.push("declares params but never calls on('param', …) — setting one will do nothing. Subscribe and re-render on change.");
   if (controls.length && !/on\(\s*['"]control['"]/.test(s)) w.push("declares controls but never calls on('control', …) — clicking the header button will do nothing.");
@@ -163,16 +166,20 @@ export const WIDGET_API_DOC =
   "Example: pagoda.runCompute(\"const gs=api.genesAvailable, M=gs.map(g=>api.expr(g)); /*…correlate…*/ return {genes:gs, corr};\", {genes:['CD3D','CD8A','NKG7','MS4A1']}). " +
   "Errors/console are forwarded to the host for debugging; an uncaught " +
   "throw shows an error state. Header `controls` you declare are rendered by the host in the standard panel chrome; " +
-  "a click arrives as pagoda.on('control', id => …). Declare typed PARAMS (value knobs) in ready({params:[{id, label, " +
-  "type:'number'|'select'|'bool'|'color'|'text', value, min?, max?, step?, options?}]}) — the host renders them as header " +
-  "inputs AND exposes them to the agent (describe_panel shows each param's current value/range; update_view sets them); " +
-  "react to a change via pagoda.on('param', (id, value) => …), and SEED the first render from the param's initial value " +
-  "(don't hardcode a separate default). Use controls for ACTIONS, params for VALUES. CRITICAL: ANY value a user might " +
-  "tune — a top-N, a threshold, a cutoff, a mode — MUST be a declared PARAM. Do NOT build an internal <input>/<select>/" +
-  "range slider in your widget DOM for it: an internal control is invisible outside the iframe — the agent can't read or " +
-  "set it (describe_panel/update_view only know DECLARED params), the user can't drive it by voice, and it isn't " +
-  "persisted across reload. Declaring it as a param makes the SAME knob settable by the header input, by you (the agent), " +
-  "and saved with the session. (e.g. a 'top N markers' widget: declare params:[{id:'n',type:'number',value:10,min:1,max:50}], NOT an <input type=range>.) " +
+  "a click arrives as pagoda.on('control', id => …). TWO ways to expose a knob, for DIFFERENT jobs — choose by whether the " +
+  "value must be driven from OUTSIDE the widget vs placed at a SPECIFIC spot inside it. (1) Declare a PARAM — ready({params:" +
+  "[{id, label, type:'number'|'select'|'bool'|'color'|'text', value, min?, max?, step?, options?}]}) — when you want it " +
+  "settable by VOICE / the agent (describe_panel shows it, update_view sets it) and PERSISTED across reload (a top-N, a " +
+  "threshold, a global mode the user tunes by talking). The host renders a param in the panel HEADER; react via " +
+  "pagoda.on('param', (id,value) => …) and SEED the first render from the param's value. For a 'select' param, options is an " +
+  "array of plain strings OR {value,label} objects (use {value,label} when the label differs from the value). (2) Build an " +
+  "INTERNAL control (an <input>/<select>/<button> in your OWN DOM) when WHERE it sits matters — a representation picker over " +
+  "a 3D viewer, a tab strip, an in-canvas toggle. You place an internal control exactly where you want it; it just isn't " +
+  "agent/voice-driveable or persisted, which is fine for bespoke widget UI. THEME internal controls with the CSS vars so " +
+  "they look native (background:var(--inset);color:var(--text);border:1px solid var(--line);border-radius:4px) — see the " +
+  "structure-viewer recipe's <select> for the pattern. Rule of thumb: a value the user tunes by VOICE → param; a control " +
+  "that belongs at a SPECIFIC place in the widget → internal themed control. Do NOT force a layout-specific control into a " +
+  "header param. Use controls for ACTIONS, params for VALUES. " +
   "Declare in ready(): version, description, and permissions:{external:['uniprot.org', …] (EVERY biodata host you " +
   "fetchExternal from — list a host BEFORE you fetch it, and when you add a fetch, add its host), compute:true (if you " +
   "use runCompute)}. Permissions are DOCUMENTATION of what the widget touches — shown in the ⓘ inspector and at the " +

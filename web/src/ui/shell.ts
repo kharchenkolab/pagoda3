@@ -581,11 +581,13 @@ export class App {
       const wrap = mk("span", "mini wparam"); wrap.style.cssText = "display:inline-flex;align-items:center;gap:4px;padding:1px 5px";
       const lab = mk("span", undefined, pr.label); lab.style.cssText = "color:var(--faint);font-size:10px";
       let input: HTMLInputElement | HTMLSelectElement;
-      if (pr.type === "select") { const s = document.createElement("select"); (pr.options || []).forEach((o: string) => { const op = document.createElement("option"); op.value = o; op.textContent = o; s.appendChild(op); }); s.value = String(pr.value); input = s; }
+      if (pr.type === "select") { const s = document.createElement("select"); (pr.options || []).forEach((o: any) => { const op = document.createElement("option"); const obj = o && typeof o === "object"; op.value = String(obj ? o.value : o); op.textContent = String(obj ? (o.label ?? o.value) : o); s.appendChild(op); }); s.value = String(pr.value); input = s; }   // option is a string OR {value,label}
       else if (pr.type === "bool") { const i = document.createElement("input"); i.type = "checkbox"; i.checked = !!pr.value; input = i; }
       else if (pr.type === "color") { const i = document.createElement("input"); i.type = "color"; i.value = String(pr.value); input = i; }
       else if (pr.type === "number") { const i = document.createElement("input"); i.type = "number"; if (pr.min != null) i.min = String(pr.min); if (pr.max != null) i.max = String(pr.max); if (pr.step != null) i.step = String(pr.step); i.value = String(pr.value); i.style.width = "58px"; input = i; }
       else { const i = document.createElement("input"); i.type = "text"; i.value = String(pr.value ?? ""); i.style.width = "84px"; input = i; }
+      // THEME the text-like inputs so a header param select/number/text matches the app's dark chrome (native controls render white otherwise — the bug behind "ugly white box").
+      if (pr.type !== "bool" && pr.type !== "color") (input as HTMLElement).style.cssText += "background:var(--inset);color:var(--text);border:1px solid var(--line);border-radius:4px;padding:1px 4px;font:inherit;font-size:11px;";
       (input as HTMLElement).dataset.wpid = pr.id;
       input.onchange = () => { const v = pr.type === "bool" ? (input as HTMLInputElement).checked : pr.type === "number" ? Number((input as HTMLInputElement).value) : (input as any).value; this.setWidgetParam(p.id, pr.id, v); };
       wrap.appendChild(lab); wrap.appendChild(input);
