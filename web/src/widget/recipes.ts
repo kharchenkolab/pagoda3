@@ -377,9 +377,13 @@ async function load() {
 }
 $('#go').addEventListener('click', load);
 $('#pdb').addEventListener('keydown', function (e) { if (e.key === 'Enter') load(); });
-$('#rep').addEventListener('change', draw);
+$('#rep').addEventListener('change', function () { draw(); pagoda.setParam('rep', $('#rep').value); });   // report the in-widget control's change so the DECLARED value stays in sync (persist / describe_panel / agent)
 $('#chain').addEventListener('change', draw);
-pagoda.ready({ title: 'Protein Structure', height: 420 });
+// 'rep' is a DECLARED param (the agent/voice can set the representation + it persists) that the widget draws ITSELF —
+// render:'self' → NO header chip; the <select id="rep"> in the toolbar above IS its control, placed where it belongs.
+pagoda.ready({ title: 'Protein Structure', height: 420, params: [{ id: 'rep', label: 'View', type: 'select', value: 'cartoon', render: 'self',
+  options: [{ value: 'cartoon', label: 'Cartoon' }, { value: 'stick', label: 'Stick' }, { value: 'sphere', label: 'Sphere' }, { value: 'line', label: 'Line' }] }] });
+pagoda.on('param', function (id, v) { if (id === 'rep') { $('#rep').value = v; draw(); } });   // external (agent/voice) set → sync the control + redraw
 load();
 `;
 

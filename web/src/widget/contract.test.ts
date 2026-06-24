@@ -22,9 +22,11 @@ test("validateManifest: title/height/controls + typed PARAMS; junk filtered", ()
   assert.deepEqual(m.params![0], { id: "thr", label: "Threshold", type: "number", value: 5, min: 0, max: 100, step: 1 });
   assert.deepEqual(m.params![1], { id: "mode", label: "Mode", type: "select", value: "a", options: ["a", "b"] });
   assert.equal(m.params![2].type, "bool");
-  // select options accept {value,label} objects (a labelled menu) AND plain strings — must NOT stringify to "[object Object]"
-  const lm = validateManifest({ params: [{ id: "rep", label: "View", type: "select", value: "cartoon", options: [{ value: "cartoon", label: "Cartoon" }, "stick"] }] });
+  // select options accept {value,label} objects (a labelled menu) AND plain strings — must NOT stringify to "[object Object]"; render:'self' parsed
+  const lm = validateManifest({ params: [{ id: "rep", label: "View", type: "select", value: "cartoon", render: "self", options: [{ value: "cartoon", label: "Cartoon" }, "stick"] }] });
   assert.deepEqual(lm.params![0].options, [{ value: "cartoon", label: "Cartoon" }, "stick"]);
+  assert.equal(lm.params![0].render, "self");   // the widget draws this one itself (host adds no header chip)
+  assert.equal(validateManifest({ params: [{ id: "n", label: "N", type: "number", value: 1 }] }).params![0].render, undefined);   // default: omitted → header
 });
 
 test("validateManifest: module metadata — version/description/permissions (P4)", () => {
@@ -56,6 +58,16 @@ test("widgetLint: advises a param for an internal RANGE slider, but never flags 
 test("widgetLint: a well-formed param widget is clean", () => {
   const src = "pagoda.on('param',(id,v)=>{N=v;render();}); pagoda.ready({params:[{id:'n',type:'number',value:7}]});";
   assert.deepEqual(widgetLint(src, { params: [{ id: "n", label: "N", type: "number", value: 7 }] }), []);   // declares param + wires on('param') + no internal knob
+});
+
+test("widgetLint: a render:'self' param must call pagoda.setParam (else the declared value drifts)", () => {
+  const self = { params: [{ id: "rep", label: "View", type: "select", value: "cartoon", render: "self" }] } as any;
+  // draws its own control + reacts, but never reports back → flagged
+  const noReport = "pagoda.on('param',(id,v)=>redraw(v)); sel.onchange=()=>redraw(sel.value); pagoda.ready({});";
+  assert.ok(widgetLint(noReport, self).some((m) => /setParam/.test(m)), "should flag missing setParam");
+  // reports back via setParam → clean on that axis
+  const reports = "pagoda.on('param',(id,v)=>{sel.value=v;redraw(v);}); sel.onchange=()=>{redraw(sel.value); pagoda.setParam('rep', sel.value);}; pagoda.ready({});";
+  assert.ok(!widgetLint(reports, self).some((m) => /setParam/.test(m)), "should NOT flag when setParam is called");
 });
 
 test("widgetLint: declared-but-unwired params/controls, and undeclared fetch/compute", () => {

@@ -412,6 +412,7 @@ export class App {
       widgetHost: () => this.widgetHost(),
       onTeardown: (fn) => { this.teardowns.push(fn); },   // run + cleared each fullRender (like coordSubs) — no iframe leak
       registerWidget: (id, handle) => { this.widgetHandles.set(id, handle); },   // so inspect_widget can read a live widget's state
+      onWidgetParam: (panelId, pid, value) => { this.setWidgetParam(panelId, pid, value, true); },   // a render:'self' control reported a change → persist/sync (fromWidget: no echo)
       widgetNeedsConsent: (p) => this.widgetNeedsConsent(p),                      // Item 2/C: gate untrusted (imported) widget code
       widgetIsImported: (p) => this.widgetIsImported(p),                          // P4: bind declared permissions for imported widgets only
       renderWidgetGate: (p, wrap) => this.renderWidgetGate(p, wrap),
@@ -578,6 +579,7 @@ export class App {
     // a typed PARAM renders as a header INPUT; a change routes through setWidgetParam (coerce/clamp + persist + → widget)
     const addParam = (pr: any, late: boolean) => {
       if (!pr || !pr.id || rendered.has("p:" + pr.id)) return; rendered.add("p:" + pr.id);
+      if (pr.render === "self") return;   // the widget draws this control itself (placement is its call) — host adds NO header chip; the value still rides update_view/describe_panel/persistence
       const wrap = mk("span", "mini wparam"); wrap.style.cssText = "display:inline-flex;align-items:center;gap:4px;padding:1px 5px";
       const lab = mk("span", undefined, pr.label); lab.style.cssText = "color:var(--faint);font-size:10px";
       let input: HTMLInputElement | HTMLSelectElement;
@@ -782,7 +784,7 @@ export class App {
 
   // Set a widget's declared PARAM (a typed value knob) — coerce + clamp by type, store the value (for describe_panel +
   // persistence), send it to the widget, and reflect it in the header input. The agent's analog of editing the input.
-  setWidgetParam(id: number, param: string, value: any): { ok?: string; error?: string } {
+  setWidgetParam(id: number, param: string, value: any, fromWidget = false): { ok?: string; error?: string } {
     const panel = this.canvas.find((p) => p.id === id);
     if (!panel) return { error: `no panel #${id}` };
     if (panel.type !== "Widget") return { error: `panel #${id} (${panel.type}) is not a widget — params are a widget affordance` };
@@ -793,11 +795,14 @@ export class App {
     let v = value;
     if (pr.type === "number") { v = Number(value); if (Number.isNaN(v)) return { error: `param "${param}" expects a number` }; if (pr.min != null) v = Math.max(pr.min, v); if (pr.max != null) v = Math.min(pr.max, v); }
     else if (pr.type === "bool") v = !!value;
-    else if (pr.type === "select" && pr.options && !pr.options.includes(String(value))) return { error: `param "${param}" must be one of: ${pr.options.join(", ")}` };
+    else if (pr.type === "select" && pr.options && !pr.options.some((o: any) => String(typeof o === "object" ? o.value : o) === String(value))) return { error: `param "${param}" must be one of: ${pr.options.map((o: any) => typeof o === "object" ? o.value : o).join(", ")}` };
+    if (JSON.stringify(pr.value) === JSON.stringify(v)) return { ok: `"${param}" already ${JSON.stringify(v)}` };   // no-op (also breaks any echo loop)
     pr.value = v;   // persisted + reflected by describe_panel
-    handle.sendParam(param, v);
-    const inp = document.querySelector(`.panel[data-pid="${id}"] [data-wpid="${param}"]`) as HTMLInputElement | null;   // reflect an agent-driven change in the header input
-    if (inp) { if (pr.type === "bool") inp.checked = !!v; else inp.value = String(v); }
+    if (!fromWidget) {   // agent/user → push to the widget + reflect a header input. A WIDGET-initiated change already has the value, so DON'T echo it back (that would loop, and a render:'self' control has no header input to reflect).
+      handle.sendParam(param, v);
+      const inp = document.querySelector(`.panel[data-pid="${id}"] [data-wpid="${param}"]`) as HTMLInputElement | null;
+      if (inp) { if (pr.type === "bool") inp.checked = !!v; else inp.value = String(v); }
+    }
     this.scheduleSave();
     return { ok: `set "${param}" = ${JSON.stringify(v)} on widget #${id}` };
   }

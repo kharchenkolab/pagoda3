@@ -14,6 +14,7 @@ export interface WidgetHost {
   fetchExternal?(url: string, opts?: { as?: string }): Promise<any>;   // host-mediated allowlisted external fetch (optional)
   loadLib?(name: string): Promise<string>;                       // returns an allowlisted, host-pinned library's JS source (optional)
   runCompute?(code: string, opts?: any): Promise<any>;           // run author compute code in a host-spawned terminable worker (render/compute split, optional)
+  onParamChanged?(id: string, value: any): void;                 // a render:'self' param's own control reported a change → host persists/syncs the declared value (no echo back)
 }
 
 export interface WidgetHandle {
@@ -104,6 +105,7 @@ export function mountWidget(container: HTMLElement, source: string, host: Widget
           (err) => post({ t: "computeResult", reqId: m.reqId, ok: false, error: String(err?.message || err) }));
         break;
       }
+      case "setParam": host.onParamChanged?.(m.id, m.value); break;   // widget's own control (render:'self') → host persists the declared value
       case "setSelection": case "setColor": case "setHint": case "updateView": host.apply(m); break;
     }
   };

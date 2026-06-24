@@ -180,7 +180,7 @@ async function execTool(app: App, name: string, input: any): Promise<string> {
       const head = `${d.type}${d.id != null ? ` #${d.id}` : d.type === "Embedding" ? " (main embedding)" : ""}`;
       if (d.type === "Widget") {   // a WIDGET — its instance-declared PARAMS (typed value knobs) + CONTROLS (actions)
         const lines: string[] = [];
-        for (const pr of (d as any).params || []) { const rng = pr.options ? `: ${pr.options.join(" | ")}` : (pr.min != null || pr.max != null) ? `, ${pr.min ?? ""}–${pr.max ?? ""}` : ""; lines.push(`- param ${pr.id} = ${JSON.stringify(pr.value)} (${pr.type}${rng})`); }
+        for (const pr of (d as any).params || []) { const rng = pr.options ? `: ${(pr.options as any[]).map((o) => typeof o === "object" ? o.value : o).join(" | ")}` : (pr.min != null || pr.max != null) ? `, ${pr.min ?? ""}–${pr.max ?? ""}` : ""; const where = pr.render === "self" ? ", drawn by the widget" : ""; lines.push(`- param ${pr.id} = ${JSON.stringify(pr.value)} (${pr.type}${rng}${where})`); }
         for (const c of d.controls || []) lines.push(`- control ${c.id} ("${c.label}")`);
         return lines.length ? `${head}:\n${lines.join("\n")}\n${d.note}` : `${head}: ${d.note}`;
       }
