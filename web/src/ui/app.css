@@ -382,3 +382,7 @@ select.inline{background:var(--inset);color:var(--text);border:1px solid var(--l
 .emblegend:empty{display:none}
 .emblegend .lt{font-family:var(--mono);color:var(--text)}
 .emblegend .lbadge{font-family:var(--mono);font-size:9.5px;color:var(--amber,#e0a458);border:1px solid var(--amber,#e0a458);border-radius:4px;padding:0 4px;opacity:.85;cursor:help}   /* unvalidated custom-code colouring */
+/* in-panel SUBSET pill (top-left) — surfaces "you're viewing a subset" inside the embedding when a continuous colouring
+   leaves no on-plot labels to orient by. Mirrors the global focuschip's amber. pointer-events:none so it never eats clicks. */
+.embsubset{position:absolute;top:10px;left:10px;display:none;align-items:center;gap:6px;font-size:11px;color:var(--amber,#e0a458);background:rgba(224,164,88,.12);border:1px solid var(--amber,#e0a458);border-radius:7px;padding:3px 9px;backdrop-filter:blur(3px);pointer-events:none;z-index:5;max-width:88%}
+.embsubset b{color:var(--text);font-weight:600}

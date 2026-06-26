@@ -116,7 +116,8 @@ function widgetBody(p: Panel, ctx: Ctx, hooks: PanelHooks): BuiltBody {
 function embeddingBody(p: Panel, ctx: Ctx, hooks: PanelHooks): BuiltBody {
   const host = mk("div", "embhost");
   const legend = mk("div", "emblegend");
-  const wrap = mk("div"); wrap.style.cssText = "position:absolute;inset:0"; wrap.appendChild(host); wrap.appendChild(legend);
+  const subset = mk("div", "embsubset");   // in-panel "you're in a subset" pill (toggled by paintEmbedding)
+  const wrap = mk("div"); wrap.style.cssText = "position:absolute;inset:0"; wrap.appendChild(host); wrap.appendChild(legend); wrap.appendChild(subset);
   const afterAttach = () => {
     const emb = ctx.embeddingOf(p.view?.embedding);          // the panel's chosen embedding (else the default)
     const ev = new EmbeddingView(host, emb.data, emb.n);
@@ -124,6 +125,7 @@ function embeddingBody(p: Panel, ctx: Ctx, hooks: PanelHooks): BuiltBody {
     ev.onHover = (idx) => hooks.onCellHover(idx);
     ev.onPick = (idx, x, y) => { const r = host.getBoundingClientRect(); hooks.onCellClick(idx, x != null && y != null ? { left: r.left + x, top: r.top + y } : undefined); };
     (ev as any)._legend = legend;
+    (ev as any)._subsetPill = subset;
     (ev as any)._panel = p;            // carry the panel so paintEmbedding can read its per-panel view spec
     hooks.registerEmbedding(ev);
   };
@@ -176,6 +178,15 @@ export async function paintEmbedding(ev: EmbeddingView, ctx: Ctx) {
   if (lg) lg.innerHTML = showLegend
     ? `<span class="lt">${legend.title}</span>` + (legend.unvalidated ? `<span class="lbadge" title="custom agent code — unvalidated; sanity-check before trusting">~ custom</span>` : "") + legend.items.map((it) => `<span><span class="sw" style="background:rgb(${it.rgb.join(",")})"></span>${it.label}</span>`).join("")
     : "";
+  // In-panel SUBSET cue: a CONTINUOUS colouring under a subset leaves no on-plot cluster labels to orient by, so the
+  // sparse scatter can read as the whole dataset. Surface a compact pill (mirrors the global banner) only in that case —
+  // a categorical colouring already labels + legends the subset, so it doesn't need one.
+  const pill = (ev as any)._subsetPill as HTMLElement | undefined;
+  if (pill) {
+    const showSubset = !!c.focus && !isCat;
+    pill.style.display = showSubset ? "flex" : "none";
+    if (showSubset) pill.innerHTML = `⊙ subset · <b>${esc(c.focus!.label)}</b> · ${c.focus!.ids.length.toLocaleString()} cells`;
+  }
 }
 
 // On-plot label per category, for categorical colourings only (returns [] for gene/qc so the
