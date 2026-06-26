@@ -178,14 +178,24 @@ export async function paintEmbedding(ev: EmbeddingView, ctx: Ctx) {
   if (lg) lg.innerHTML = showLegend
     ? `<span class="lt">${legend.title}</span>` + (legend.unvalidated ? `<span class="lbadge" title="custom agent code — unvalidated; sanity-check before trusting">~ custom</span>` : "") + legend.items.map((it) => `<span><span class="sw" style="background:rgb(${it.rgb.join(",")})"></span>${it.label}</span>`).join("")
     : "";
-  // In-panel SUBSET cue: a CONTINUOUS colouring under a subset leaves no on-plot cluster labels to orient by, so the
-  // sparse scatter can read as the whole dataset. Surface a compact pill (mirrors the global banner) only in that case —
-  // a categorical colouring already labels + legends the subset, so it doesn't need one.
+  // In-panel emphasis cue: a CONTINUOUS colouring draws no on-plot cluster labels, so a subset OR a sticky selection
+  // isn't obvious — the sparse/spotlit scatter can read as the whole dataset. Surface a compact pill naming what's
+  // emphasised (subset takes precedence over selection, matching the dim precedence; amber for subset / cyan for
+  // selection, mirroring the global chips). Categorical colourings already label + legend, so no pill there.
   const pill = (ev as any)._subsetPill as HTMLElement | undefined;
   if (pill) {
-    const showSubset = !!c.focus && !isCat;
-    pill.style.display = showSubset ? "flex" : "none";
-    if (showSubset) pill.innerHTML = `⊙ subset · <b>${esc(c.focus!.label)}</b> · ${c.focus!.ids.length.toLocaleString()} cells`;
+    let html = "", cls = "embsubset";
+    if (!isCat) {
+      if (c.focus) html = `⊙ subset · <b>${esc(c.focus.label)}</b> · ${c.focus.ids.length.toLocaleString()} cells`;
+      else if (c.selection && selCells.length) {
+        cls = "embsubset sel";
+        const v = c.selection.kind === "category" ? esc(String((c.selection as any).value)) : null;
+        html = `◉ selected · ${v ? `<b>${v}</b> · ` : ""}${selCells.length.toLocaleString()} cells`;
+      }
+    }
+    pill.className = cls;
+    pill.style.display = html ? "flex" : "none";
+    if (html) pill.innerHTML = html;
   }
 }
 
