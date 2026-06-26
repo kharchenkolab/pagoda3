@@ -158,14 +158,15 @@ export async function paintEmbedding(ev: EmbeddingView, ctx: Ctx) {
   const style = resolvePanelStyleFor(ctx, "Embedding", view) as EmbeddingStyle;
   const selCells = ctx.refToCells(c.selection);   // this panel is cell-space — read the selection as cells
   const bigSel = selCells.length > (style.selection.ringThreshold ?? 250);   // a cluster-sized selection → dim; a handful → ring
-  let mask: Uint8Array | undefined;
+  let mask: Uint8Array | undefined, hideRest = false;
   if (scopeCells && scopeCells.length) { mask = new Uint8Array(ctx.n); for (let j = 0; j < scopeCells.length; j++) mask[scopeCells[j]] = 1; }
-  else if (c.focus) mask = focusMaskFor(c.focus, ctx.n);
+  else if (c.focus) { mask = focusMaskFor(c.focus, ctx.n); hideRest = true; }   // L3 SUBSET: the rest is REMOVED from the view (not just dimmed)
   else if (bigSel) { mask = new Uint8Array(ctx.n); for (let j = 0; j < selCells.length; j++) mask[selCells[j]] = 1; }   // L2 select: a big selection dims the rest
   const { rgba, legend } = await colorsFor(ctx.view, colorBy, mask, view?.colormap, style.color.winsor ?? 0);   // winsor clips outliers off the numeric scale
+  if (hideRest && mask) { for (let i = 0; i < ctx.n; i++) if (!mask[i]) rgba[i * 4 + 3] = 0; }   // SUBSET = remove: make non-subset cells transparent (layout unchanged — no auto-zoom, user can pan/zoom)
   ev.setStyle(style);
   ev.setColors(rgba);
-  ev.setSelection(bigSel ? null : (selCells.length ? selCells : null));   // small → precise ring; big → dimmed (no fill lift → no occlusion of the colour-by)
+  ev.setSelection(bigSel || hideRest ? null : (selCells.length ? selCells : null));   // small → precise ring; big/subset → no fill lift
   const isCat = legend.kind === "categorical";
   ev.setLabels(style.label.show && isCat ? await categoryLabels(ctx, colorBy, ctx.embeddingOf(view?.embedding).data) : []);
   const showLegend = style.legend.show ?? !isCat;   // auto: key for numeric colourings; hidden when on-plot labels carry identity
@@ -239,11 +240,13 @@ function variableGenesBody(p: Panel, ctx: Ctx, hooks: PanelHooks): BuiltBody {
   const recompute = async () => {
     if (busy) { again = true; return; } busy = true;
     try {
-      const sc = p.view?.scope ? ctx.refToCells(p.view.scope) : null;   // a pinned panel scope wins; else the live selection; else all cells
+      const sc = p.view?.scope ? ctx.refToCells(p.view.scope) : null;   // pinned panel scope > selection > global SUBSET > all
       const sel = ctx.coord.state.selection;
+      const subset = ctx.subsetCells();
       let ids: number[], label: string;
       if (sc && sc.length) { ids = Array.from(sc); label = (p.view!.scope as any).value || "scope"; }
       else if (sel) { ids = Array.from(ctx.refToCells(sel)); label = sel.kind === "category" ? (sel as any).value : "selection"; }
+      else if (subset) { ids = Array.from(subset); label = String(ctx.coord.state.focus?.label || "subset"); }   // L3: a global subset scopes this live panel
       else { ids = Array.from({ length: ctx.n }, (_, i) => i); label = "all cells"; }
       scope.textContent = `${label} · ${ids.length.toLocaleString()} cells · top overdispersed genes`;
       const hv = await ctx.view.overdispersedGenes(ids, 1e9);
@@ -1125,11 +1128,18 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
   // FACETING: if the panel is scoped (e.g. condition=day0), compute the dots WITHIN that population. Columns stay in
   // the grouping's full order, so two scoped panels (day0 / day7) share identical rows AND columns — directly comparable.
   const scope = p.view?.scope as any;
-  const scopeCells = scope ? ctx.refToCells(scope) : null;
+  let scopeCells = scope ? ctx.refToCells(scope) : null;
+  let scopeLabel = scope ? (scope.kind === "category" ? scope.value : `${scopeCells!.length} cells`) : "";
+  let statsKey = scope && scope.kind === "category" ? `${scope.grouping}=${scope.value}` : (scope ? `cells:${scopeCells!.length}` : undefined);
+  const subset = ctx.subsetCells();   // L3 global subset — compute the dots WITHIN it (∩ any per-panel facet scope)
+  if (subset) {
+    const sub = new Set(subset); scopeCells = scopeCells ? scopeCells.filter((c) => sub.has(c)) : subset;
+    scopeLabel = scopeLabel ? `${scopeLabel} ∩ subset` : String(ctx.coord.state.focus?.label || "subset");
+    statsKey = `subset${ctx.coord.state.focus?.ids.length}${statsKey ? "+" + statsKey : ""}`;
+  }
   const scoped = !!(scopeCells && scopeCells.length);
-  const scopeLabel = scoped ? (scope.kind === "category" ? scope.value : `${scopeCells!.length} cells`) : "";
   const gs = scoped
-    ? await ctx.groupStatsForCells(grouping, scopeCells!, scope.kind === "category" ? `${scope.grouping}=${scope.value}` : undefined)
+    ? await ctx.groupStatsForCells(grouping, scopeCells!, statsKey)
     : await ctx.groupStatsCached(grouping);
   // top 3 genes per group, unique
   const seen = new Set<number>(); const markerRows: { gene: number; symbol: string; pinned?: boolean }[] = [];

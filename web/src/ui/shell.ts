@@ -1842,7 +1842,10 @@ export class App {
     const el = this.$("focuschip"); const f = this.coord.state.focus;
     if (!f) { el.style.display = "none"; return; }
     const lbl = String(f.label).replace(/[<&]/g, (c) => c === "<" ? "&lt;" : "&amp;");
-    el.style.display = ""; el.innerHTML = `<span class="fdot"></span>focused: <b>${lbl}</b> <span class="fn">${f.ids.length.toLocaleString()} cells</span> <span class="x" id="focusX" title="release the focus — show all cells">show all ✕</span>`;
+    // L3 SUBSET is a PROMINENT banner (vs the mild select chip) — the rest of the data is removed from every view, so it
+    // must be unmistakable + offer the way back. Inline-styled with the accent so it stands out in the top bar.
+    el.style.cssText = "display:inline-flex;align-items:center;gap:9px;font-size:12px;font-weight:600;color:var(--panel);background:var(--cyan);border-radius:12px;padding:3px 12px;box-shadow:0 1px 5px rgba(0,0,0,.35)";
+    el.innerHTML = `<span>⊙ subset: <b>${lbl}</b> · ${f.ids.length.toLocaleString()} cells — other cells hidden from all views</span> <span class="x" id="focusX" title="exit the subset — show all cells" style="cursor:pointer;text-decoration:underline">Back to full</span>`;
     (this.$("focusX")).onclick = () => this.releaseFocus();
   }
   // Level-2 SELECT notice — a MILD status chip (lighter than the focus pill) so the user knows the views are reacting to
