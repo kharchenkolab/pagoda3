@@ -166,7 +166,9 @@ export async function paintEmbedding(ev: EmbeddingView, ctx: Ctx) {
   if (hideRest && mask) { for (let i = 0; i < ctx.n; i++) if (!mask[i]) rgba[i * 4 + 3] = 0; }   // SUBSET = remove: make non-subset cells transparent (layout unchanged — no auto-zoom, user can pan/zoom)
   ev.setStyle(style);
   ev.setColors(rgba);
-  ev.setSelection(null);   // a SELECTION is shown by DIMMING the rest (above), never a ring/fill lift on the cells
+  // a SELECTION recedes the rest (above) AND is re-drawn crisp on TOP (its own colours, full alpha) so it can't be
+  // occluded by the now-opaque receded mass. Only in dim mode — scope greys / subset removes, neither needs a top layer.
+  ev.setSelection(dimKeepColor && selCells.length ? selCells : null);
   const isCat = legend.kind === "categorical";
   ev.setLabels(style.label.show && isCat ? await categoryLabels(ctx, colorBy, ctx.embeddingOf(view?.embedding).data) : []);
   const showLegend = style.legend.show ?? !isCat;   // auto: key for numeric colourings; hidden when on-plot labels carry identity

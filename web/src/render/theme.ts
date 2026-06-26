@@ -5,16 +5,27 @@
 // import the names (not destructure-and-cache), so flipping the theme updates everyone on the next repaint.
 export let DIM_RGB: [number, number, number] = [62, 68, 80];
 export let DIM_A = 150;
-// SEL_DIM_A = alpha for a SELECTION (level 2) dim, which KEEPS each cell's own colour (just recedes it) rather than
-// greying it — so the colour-by still reads in the de-emphasised cells. Lower than DIM_A so the selected cells (full
-// alpha) clearly pop against the faint-but-hued rest. (Greying is reserved for SCOPE's evidence-board desaturation.)
-export let SEL_DIM_A = 5;
+// SELECTION (level 2) dim. Lowering ALPHA fails on a dense map: overlapping cells composite back up (1-(1-a)^n), so
+// zoomed out the "dimmed" mass re-brightens. Instead we RECEDE BY COLOUR toward the canvas background at FULL alpha —
+// near-background opaque points don't accumulate (the topmost just paints ≈background), so it's density-robust at any
+// zoom AND any colour mode. BG_RECEDE = the panel surface the deck.gl canvas sits on; SEL_DIM_KEEP = the fraction of a
+// cell's OWN colour kept (the rest blended into the background) — small, so a whisper of hue survives but it reads as bg.
+export let BG_RECEDE: [number, number, number] = [22, 27, 34];   // ≈ --panel #161b22 (dark)
+export const SEL_DIM_KEEP = 0.16;
+// Write cell (r,g,b) RECEDED toward the background into out[i*4..+3] at full alpha — the SELECTION-dim treatment,
+// shared by the numeric and categorical colourers so they recede identically.
+export function recedeInto(out: Uint8Array, i: number, r: number, g: number, b: number): void {
+  out[i * 4]     = BG_RECEDE[0] + (r - BG_RECEDE[0]) * SEL_DIM_KEEP;
+  out[i * 4 + 1] = BG_RECEDE[1] + (g - BG_RECEDE[1]) * SEL_DIM_KEEP;
+  out[i * 4 + 2] = BG_RECEDE[2] + (b - BG_RECEDE[2]) * SEL_DIM_KEEP;
+  out[i * 4 + 3] = 255;
+}
 let isDark = true;
 export function setThemeColors(dark: boolean): void {
   isDark = dark;
   DIM_RGB = dark ? [62, 68, 80] : [201, 194, 174];
   DIM_A = dark ? 150 : 200;
-  SEL_DIM_A = dark ? 5 : 10;
+  BG_RECEDE = dark ? [22, 27, 34] : [251, 250, 247];   // --panel: #161b22 / #fbfaf7
 }
 // Default sequential palette for NUMERIC colourings (gene/qc/score) when none is chosen: the dark ramp fades
 // low values into the dark canvas; on the light theme that inverts (low would be darkest), so default to a

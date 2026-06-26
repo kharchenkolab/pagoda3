@@ -119,27 +119,19 @@ export class EmbeddingView {
         opacity: s.point.opacity,                 // <1 lets overlapping cells convey density
         updateTriggers: { all: this.colorVersion },
       }) as any,
-      // SELECTION lift (currently INERT — paintEmbedding always passes setSelection(null); a level-2 selection is shown
-      // by DIMMING the rest while the selected cells keep full colour, not by a lift on top). Retained behind selCount()
-      // so a future opt-in "precise ring for a tiny freeform pick" can re-enable it without re-plumbing the layer.
-      this.selCount() > 0 && this.selCount() <= s.selection.ringThreshold
+      // SELECTION on TOP — the rest is receded toward the background (in the per-cell colours), so re-draw the selected
+      // cells last, in their OWN colours at FULL alpha and opacity 1 (a touch larger), so they sit crisp above the
+      // de-emphasised mass and can never be occluded by it. Identity is carried by colour+luminance contrast, not a ring.
+      this.selCount() > 0
         ? new ScatterplotLayer({
-            id: "sel",
-            data: { length: this.n },
-            getPosition: (_: any, { index }: any) => (this.selected[index] ? [this.positions[index * 2], this.positions[index * 2 + 1]] : [1e9, 1e9]),
-            radiusUnits: "pixels", getRadius: s.point.radius + s.selection.ringGrow,
-            stroked: true, filled: false, getLineColor: [...accentRGB(), s.selection.ringOpacity], lineWidthUnits: "pixels", getLineWidth: s.selection.ringWidth,
-            updateTriggers: { getPosition: this.selVersion },
+            id: "seltop",
+            data: { length: this.selectedIds.length },
+            getPosition: (_: any, { index }: any) => { const c = this.selectedIds[index]; return [this.positions[c * 2], this.positions[c * 2 + 1]]; },
+            getFillColor: (_: any, { index }: any) => { const c = this.selectedIds[index]; return [this.colors[c * 4], this.colors[c * 4 + 1], this.colors[c * 4 + 2], 255]; },
+            radiusUnits: "pixels", getRadius: s.point.radius + s.selection.fillGrow, stroked: false, opacity: 1,
+            updateTriggers: { getPosition: this.selVersion, getFillColor: [this.selVersion, this.colorVersion] },
           }) as any
-        : this.selCount() > s.selection.ringThreshold
-          ? new ScatterplotLayer({
-              id: "sel",
-              data: { length: this.selectedIds.length },
-              getPosition: (_: any, { index }: any) => { const c = this.selectedIds[index]; return [this.positions[c * 2], this.positions[c * 2 + 1]]; },
-              radiusUnits: "pixels", getRadius: s.point.radius + s.selection.fillGrow, stroked: false, getFillColor: [...accentRGB(), s.selection.fillOpacity],
-              updateTriggers: { getPosition: this.selVersion },
-            }) as any
-          : null,
+        : null,
       // CATEGORY hint → a light overlay lifting that category's cells (honest even when they're not compact)
       this.highlightIds && this.highlightIds.length
         ? new ScatterplotLayer({

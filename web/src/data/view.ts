@@ -2,7 +2,7 @@
 // the real libstar WASM kernels when available (numbers match R/Python), with a pure-TS fallback.
 import type { LstarDataset } from "./store.ts";
 import { kernels } from "./kernels.ts";
-import { DIM_RGB, DIM_A, SEL_DIM_A, themeIsDark } from "../render/theme.ts";   // theme-aware non-focus dot colour (live binding)
+import { DIM_RGB, DIM_A, recedeInto, themeIsDark } from "../render/theme.ts";   // theme-aware non-focus dot colour (live binding)
 import { sample, overdispersedCore, deCore, groupStatsForCellsCore } from "../compute/odcore.ts";   // pure kernel cores (shared by the fallback, the worker, and node tests)
 import type { ComputePool } from "../compute/pool.ts";
 import { isolationAvailable } from "../compute/pool.ts";
@@ -476,7 +476,8 @@ export function codesToRGBA(codes: Int32Array, focusMask?: Uint8Array, colorMap?
     // just-added category), fall back to the raw code so catColor still yields a real hue — never NaN→black.
     const c = code < 0 ? (unassignedRGB || catColor(code))
                        : ((rgbOverride && rgbOverride[code]) || catColor(colorMap && code >= 0 ? (colorMap[code] ?? code) : code));
-    out[i * 4] = c[0]; out[i * 4 + 1] = c[1]; out[i * 4 + 2] = c[2]; out[i * 4 + 3] = dim ? SEL_DIM_A : 230;   // dimKeepColor: a SELECTION keeps each cell's own hue, just faint
+    if (dim) { recedeInto(out, i, c[0], c[1], c[2]); continue; }   // SELECTION: blend toward bg, full alpha (density-robust)
+    out[i * 4] = c[0]; out[i * 4 + 1] = c[1]; out[i * 4 + 2] = c[2]; out[i * 4 + 3] = 230;
   }
   return out;
 }
