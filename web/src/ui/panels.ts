@@ -149,22 +149,23 @@ export async function paintEmbedding(ev: EmbeddingView, ctx: Ctx) {
   const scopeKey = view?.scope ? (view.scope.kind === "category" ? `c:${view.scope.grouping}=${view.scope.value}` : `n:${scopeCells!.length}`) : "";
   if ((ev as any)._scopeKey !== scopeKey) { (ev as any)._scopeKey = scopeKey; ev.fitTo(scopeCells && scopeCells.length ? scopeCells : undefined); }
 
-  // dim mask = "restrict my view": only SCOPE (frames this panel) and FOCUS (the ⊙ act, with a notice+clear pill)
-  // grey the map. A plain SELECTION must NOT — it's a transient highlight, not a restriction; greying it out reads
-  // as a subset (the user can't tell it from a focus, yet there's no pill). The selection instead LIFTS its cells in
-  // place (ev.setSelection → an accent overlay/halo in embedding.ts), leaving the rest of the map fully intact.
-  const selCells = ctx.refToCells(c.selection);   // this panel is cell-space — read the selection as cells (for the lift)
+  // RECESSION LADDER (cell-set interaction levels). SCOPE (frames this panel) and the global FOCUS/SUBSET restrict the
+  // view; a SELECTION (level 2) now also DIMS the rest — a sticky select RECEDES the other cells so the colour-by (e.g.
+  // gene expression) stays readable IN the selected population (the old lift/paint occluded exactly there). A SMALL
+  // freeform selection keeps a precise RING instead (greying the whole map for a few cells would be jarring); precedence
+  // scope > focus > selection. Display is PER-PANEL (a panel's overrides beat the coord default). STYLE via the shared
+  // helper so describe_panel reads the same surface the renderer paints.
+  const style = resolvePanelStyleFor(ctx, "Embedding", view) as EmbeddingStyle;
+  const selCells = ctx.refToCells(c.selection);   // this panel is cell-space — read the selection as cells
+  const bigSel = selCells.length > (style.selection.ringThreshold ?? 250);   // a cluster-sized selection → dim; a handful → ring
   let mask: Uint8Array | undefined;
   if (scopeCells && scopeCells.length) { mask = new Uint8Array(ctx.n); for (let j = 0; j < scopeCells.length; j++) mask[scopeCells[j]] = 1; }
-  else mask = focusMaskFor(c.focus, ctx.n);
-  // display is PER-PANEL: a panel's own overrides win over the coord default, so panels are independent
-  // (toggle labels on one embedding without touching another). coord.display is just the starting default.
-  // STYLE resolved through the SHARED generic helper (so describe_panel reads the same surface the renderer paints from).
-  const style = resolvePanelStyleFor(ctx, "Embedding", view) as EmbeddingStyle;
+  else if (c.focus) mask = focusMaskFor(c.focus, ctx.n);
+  else if (bigSel) { mask = new Uint8Array(ctx.n); for (let j = 0; j < selCells.length; j++) mask[selCells[j]] = 1; }   // L2 select: a big selection dims the rest
   const { rgba, legend } = await colorsFor(ctx.view, colorBy, mask, view?.colormap, style.color.winsor ?? 0);   // winsor clips outliers off the numeric scale
   ev.setStyle(style);
   ev.setColors(rgba);
-  ev.setSelection(selCells.length ? selCells : null);
+  ev.setSelection(bigSel ? null : (selCells.length ? selCells : null));   // small → precise ring; big → dimmed (no fill lift → no occlusion of the colour-by)
   const isCat = legend.kind === "categorical";
   ev.setLabels(style.label.show && isCat ? await categoryLabels(ctx, colorBy, ctx.embeddingOf(view?.embedding).data) : []);
   const showLegend = style.legend.show ?? !isCat;   // auto: key for numeric colourings; hidden when on-plot labels carry identity

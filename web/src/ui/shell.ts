@@ -126,6 +126,7 @@ export class App {
       <div class="top">
         <div class="logo">pagoda<span>3</span></div>
         <div class="wstabs" id="wstabs"></div>
+        <div class="selchip" id="selchip" style="display:none"></div>
         <div class="focuschip" id="focuschip" style="display:none"></div>
         <div class="spacer"></div>
         <div class="tb pip" id="askBtn"><span class="dot"></span>Ask<span class="kbd">⌘K</span></div>
@@ -659,6 +660,7 @@ export class App {
     }
     this.$("railBtn").innerHTML = "Answers" + (this.rail.length ? ` <span class="badge">${this.rail.length}</span>` : "");
     this.renderFocus();   // keep the global focus chip (the release control) in sync
+    this.renderSelChip();   // L2 select: the mild "what's selected" status chip
     // embeddings AFTER — the recolour/highlight catches up a frame later (imperceptible for categorical; for a
     // gene colouring the expression is cached so a selection-only change is just a focus-mask recompute).
     for (const ev of this.embeddings) await paintEmbedding(ev, this.ctx);
@@ -1842,6 +1844,18 @@ export class App {
     const lbl = String(f.label).replace(/[<&]/g, (c) => c === "<" ? "&lt;" : "&amp;");
     el.style.display = ""; el.innerHTML = `<span class="fdot"></span>focused: <b>${lbl}</b> <span class="fn">${f.ids.length.toLocaleString()} cells</span> <span class="x" id="focusX" title="release the focus — show all cells">show all ✕</span>`;
     (this.$("focusX")).onclick = () => this.releaseFocus();
+  }
+  // Level-2 SELECT notice — a MILD status chip (lighter than the focus pill) so the user knows the views are reacting to
+  // a sticky selection + can clear it. The embedding now dims the rest for a selection, so this is the "what's selected".
+  renderSelChip() {
+    const el = this.$("selchip"); const sel = this.coord.state.selection as any;
+    const n = sel ? this.ctx.refToCells(sel).length : 0;
+    if (!sel || !n) { el.style.display = "none"; return; }
+    const esc = (s: string) => String(s).replace(/[<&]/g, (c) => c === "<" ? "&lt;" : "&amp;");
+    el.style.cssText = "display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--dim);background:var(--inset);border:1px solid var(--line);border-radius:11px;padding:2px 9px";
+    const head = sel.kind === "category" ? `selected <b style="color:var(--text)">${esc(sel.value)}</b> · ${n.toLocaleString()} cells` : `<b style="color:var(--text)">${n.toLocaleString()} cells</b> selected`;
+    el.innerHTML = `<span style="width:7px;height:7px;border-radius:50%;background:var(--cyan);opacity:.8"></span>${head} <span class="x" id="selX" title="clear the selection" style="cursor:pointer;opacity:.7">clear ✕</span>`;
+    (this.$("selX")).onclick = () => { this.coord.setSelection(null); this.repaint(); this.renderSelChip(); };
   }
   renderScope() { const s = this.$("scope"); if (this.scope) { s.style.display = ""; s.innerHTML = `<span>↳ about ${this.scope.summary}</span><span class="x" id="scx">clear</span>`; this.$("scx").onclick = () => { this.scope = null; this.renderScope(); this.filter((this.$("pin") as HTMLInputElement).value); }; } else s.style.display = "none"; }
   scopedSugs() { return this.scope ? [{ t: "Run differential expression on this selection", q: "run de", ic: "≢" }, { t: "What cell types are these?", q: "what are these", ic: "?" }, { t: "Colour by condition", q: "colour by condition", ic: "◐" }] : this.SUGS; }
