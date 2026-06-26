@@ -1588,7 +1588,11 @@ export class App {
     // Auto-save the OUTGOING workspace's live layout (full state — panels, per-panel view, pinned genes, …) so
     // switching away and back restores it exactly, not the original template.
     if (this.currentWS && this.WS[this.currentWS]) this.WS[this.currentWS] = { colorBy: this.coord.state.colorBy, panels: JSON.parse(JSON.stringify(this.canvas)) };
-    this.currentWS = name; this.coord.set({ colorBy: ws.colorBy, selection: null });
+    // A workspace is just a LAYOUT; the coordination space (selection, focus/subset) is global and travels across it —
+    // so you can select a population here and keep interrogating it after rearranging panels. Only colourBy is per-WS
+    // (each workspace remembers its own colouring). fullRender rebuilds the new panels' reactors and re-dispatches the
+    // carried selection to them, so the new layout lights up the same cells.
+    this.currentWS = name; this.coord.set({ colorBy: ws.colorBy });
     this.canvas = ws.panels.map((p) => this.newPanel(p));
     this.fullRender();
     if (name === "Annotate") this.ensureAnnotation();   // async: seed the working draft + an scType source, then re-render
