@@ -116,7 +116,12 @@ function widgetBody(p: Panel, ctx: Ctx, hooks: PanelHooks): BuiltBody {
 function embeddingBody(p: Panel, ctx: Ctx, hooks: PanelHooks): BuiltBody {
   const host = mk("div", "embhost");
   const legend = mk("div", "emblegend");
-  const subset = mk("div", "embsubset");   // in-panel "you're in a subset" pill (toggled by paintEmbedding)
+  // in-panel emphasis pill: a text span (updated each paint) + a "clear ✕" wired ONCE. The ✕ only SHOWS for a selection
+  // (paintEmbedding toggles it); clearing the selection repaints via the coord subscription, which hides the pill.
+  const subset = mk("div", "embsubset");
+  const subsetTxt = mk("span", "t"); const subsetX = mk("span", "x"); subsetX.textContent = "clear ✕"; subsetX.title = "clear the selection";
+  subsetX.onclick = () => ctx.coord.setSelection(null);
+  subset.appendChild(subsetTxt); subset.appendChild(subsetX);
   const wrap = mk("div"); wrap.style.cssText = "position:absolute;inset:0"; wrap.appendChild(host); wrap.appendChild(legend); wrap.appendChild(subset);
   const afterAttach = () => {
     const emb = ctx.embeddingOf(p.view?.embedding);          // the panel's chosen embedding (else the default)
@@ -125,7 +130,7 @@ function embeddingBody(p: Panel, ctx: Ctx, hooks: PanelHooks): BuiltBody {
     ev.onHover = (idx) => hooks.onCellHover(idx);
     ev.onPick = (idx, x, y) => { const r = host.getBoundingClientRect(); hooks.onCellClick(idx, x != null && y != null ? { left: r.left + x, top: r.top + y } : undefined); };
     (ev as any)._legend = legend;
-    (ev as any)._subsetPill = subset;
+    (ev as any)._subsetPill = subset; (ev as any)._subsetTxt = subsetTxt; (ev as any)._subsetX = subsetX;
     (ev as any)._panel = p;            // carry the panel so paintEmbedding can read its per-panel view spec
     hooks.registerEmbedding(ev);
   };
@@ -183,19 +188,23 @@ export async function paintEmbedding(ev: EmbeddingView, ctx: Ctx) {
   // emphasised (subset takes precedence over selection, matching the dim precedence; amber for subset / cyan for
   // selection, mirroring the global chips). Categorical colourings already label + legend, so no pill there.
   const pill = (ev as any)._subsetPill as HTMLElement | undefined;
-  if (pill) {
-    let html = "", cls = "embsubset";
+  const pillTxt = (ev as any)._subsetTxt as HTMLElement | undefined;
+  const pillX = (ev as any)._subsetX as HTMLElement | undefined;
+  if (pill && pillTxt) {
+    let html = "", cls = "embsubset", showX = false;
     if (!isCat) {
       if (c.focus) html = `⊙ subset · <b>${esc(c.focus.label)}</b> · ${c.focus.ids.length.toLocaleString()} cells`;
       else if (c.selection && selCells.length) {
         cls = "embsubset sel";
         const v = c.selection.kind === "category" ? esc(String((c.selection as any).value)) : null;
         html = `◉ selected · ${v ? `<b>${v}</b> · ` : ""}${selCells.length.toLocaleString()} cells`;
+        showX = true;   // a selection is clearable in place; a subset exits via the global "Back to full"
       }
     }
     pill.className = cls;
     pill.style.display = html ? "flex" : "none";
-    if (html) pill.innerHTML = html;
+    if (html) pillTxt.innerHTML = html;
+    if (pillX) pillX.style.display = showX ? "inline" : "none";
   }
 }
 

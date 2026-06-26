@@ -387,3 +387,5 @@ select.inline{background:var(--inset);color:var(--text);border:1px solid var(--l
 .embsubset{position:absolute;top:10px;left:10px;display:none;align-items:center;gap:6px;font-size:11px;color:var(--amber,#e0a458);background:rgba(224,164,88,.12);border:1px solid var(--amber,#e0a458);border-radius:7px;padding:3px 9px;backdrop-filter:blur(3px);pointer-events:none;z-index:5;max-width:88%}
 .embsubset b{color:var(--text);font-weight:600}
 .embsubset.sel{color:var(--cyan,#78e0ff);background:rgba(120,224,255,.12);border-color:var(--cyan,#78e0ff)}   /* SELECTION variant — mirrors the global selchip's cyan (subset stays amber) */
+.embsubset .x{pointer-events:auto;cursor:pointer;opacity:.72;text-decoration:underline;margin-left:1px}   /* the pill is pointer-events:none; the clear control opts back in */
+.embsubset .x:hover{opacity:1}
