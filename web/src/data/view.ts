@@ -2,7 +2,7 @@
 // the real libstar WASM kernels when available (numbers match R/Python), with a pure-TS fallback.
 import type { LstarDataset } from "./store.ts";
 import { kernels } from "./kernels.ts";
-import { DIM_RGB, DIM_A, themeIsDark } from "../render/theme.ts";   // theme-aware non-focus dot colour (live binding)
+import { DIM_RGB, DIM_A, SEL_DIM_A, themeIsDark } from "../render/theme.ts";   // theme-aware non-focus dot colour (live binding)
 import { sample, overdispersedCore, deCore, groupStatsForCellsCore } from "../compute/odcore.ts";   // pure kernel cores (shared by the fallback, the worker, and node tests)
 import type { ComputePool } from "../compute/pool.ts";
 import { isolationAvailable } from "../compute/pool.ts";
@@ -465,17 +465,18 @@ function hslToRgb(h: number, s: number, l: number): [number, number, number] {
   const f = (t: number) => { if (t < 0) t += 1; if (t > 1) t -= 1; if (t < 1 / 6) return p + (q - p) * 6 * t; if (t < 1 / 2) return q; if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6; return p; };
   return [Math.round(f(h + 1 / 3) * 255), Math.round(f(h) * 255), Math.round(f(h - 1 / 3) * 255)];
 }
-export function codesToRGBA(codes: Int32Array, focusMask?: Uint8Array, colorMap?: ArrayLike<number>, rgbOverride?: ([number, number, number] | null)[] | null, unassignedRGB?: [number, number, number] | null): Uint8Array {
+export function codesToRGBA(codes: Int32Array, focusMask?: Uint8Array, colorMap?: ArrayLike<number>, rgbOverride?: ([number, number, number] | null)[] | null, unassignedRGB?: [number, number, number] | null, dimKeepColor = false): Uint8Array {
   const n = codes.length, out = new Uint8Array(n * 4);
   for (let i = 0; i < n; i++) {
-    if (focusMask && !focusMask[i]) { out[i * 4] = DIM_RGB[0]; out[i * 4 + 1] = DIM_RGB[1]; out[i * 4 + 2] = DIM_RGB[2]; out[i * 4 + 3] = DIM_A; continue; }
+    const dim = !!(focusMask && !focusMask[i]);
+    if (dim && !dimKeepColor) { out[i * 4] = DIM_RGB[0]; out[i * 4 + 1] = DIM_RGB[1]; out[i * 4 + 2] = DIM_RGB[2]; out[i * 4 + 3] = DIM_A; continue; }   // grey (scope desaturate)
     const code = codes[i];
     // a per-value colour OVERRIDE (user/agent recoloured this value) wins; the unassigned (-1) cells take their own
     // override. Else colorMap[code] ?? code: if a per-category palette index is missing (e.g. a stale/short map after a
     // just-added category), fall back to the raw code so catColor still yields a real hue — never NaN→black.
     const c = code < 0 ? (unassignedRGB || catColor(code))
                        : ((rgbOverride && rgbOverride[code]) || catColor(colorMap && code >= 0 ? (colorMap[code] ?? code) : code));
-    out[i * 4] = c[0]; out[i * 4 + 1] = c[1]; out[i * 4 + 2] = c[2]; out[i * 4 + 3] = 230;
+    out[i * 4] = c[0]; out[i * 4 + 1] = c[1]; out[i * 4 + 2] = c[2]; out[i * 4 + 3] = dim ? SEL_DIM_A : 230;   // dimKeepColor: a SELECTION keeps each cell's own hue, just faint
   }
   return out;
 }

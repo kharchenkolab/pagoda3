@@ -5,16 +5,17 @@ import { PALETTES, normalizePalette, Palette } from "./palettes.ts";
 
 export interface Legend { kind: "categorical" | "numeric"; items: { label: string; rgb: [number, number, number] }[]; title: string; unvalidated?: boolean; }
 
-import { DIM_RGB, DIM_A, defaultNumericPalette } from "./theme.ts";   // non-focus cells under a focus — theme-aware (live binding)
+import { DIM_RGB, DIM_A, SEL_DIM_A, defaultNumericPalette } from "./theme.ts";   // non-focus cells under a focus — theme-aware (live binding)
 // Per-cell RGBA for a NUMERIC field through a chosen palette. Maps the value range [lo,hi] → palette [0,1] (lo/hi
 // come from winsorBounds, so a few outlier cells don't compress everyone else into the pale end). Replaces the old
 // fixed-ramp scalarToRGBA so the colormap is a drivable property, not baked into paint.
-function numericRGBA(values: ArrayLike<number>, lo: number, hi: number, pal: Palette, focusMask?: Uint8Array): Uint8Array {
+function numericRGBA(values: ArrayLike<number>, lo: number, hi: number, pal: Palette, focusMask?: Uint8Array, dimKeepColor = false): Uint8Array {
   const n = values.length, out = new Uint8Array(n * 4), span = (hi - lo) || 1;
   for (let i = 0; i < n; i++) {
-    if (focusMask && !focusMask[i]) { out[i * 4] = DIM_RGB[0]; out[i * 4 + 1] = DIM_RGB[1]; out[i * 4 + 2] = DIM_RGB[2]; out[i * 4 + 3] = DIM_A; continue; }
+    const dim = !!(focusMask && !focusMask[i]);
+    if (dim && !dimKeepColor) { out[i * 4] = DIM_RGB[0]; out[i * 4 + 1] = DIM_RGB[1]; out[i * 4 + 2] = DIM_RGB[2]; out[i * 4 + 3] = DIM_A; continue; }   // grey (scope desaturate)
     const [r, g, b] = pal(Math.max(0, Math.min(1, (values[i] - lo) / span)));
-    out[i * 4] = r; out[i * 4 + 1] = g; out[i * 4 + 2] = b; out[i * 4 + 3] = 230;
+    out[i * 4] = r; out[i * 4 + 1] = g; out[i * 4 + 2] = b; out[i * 4 + 3] = dim ? SEL_DIM_A : 230;   // dimKeepColor: same hue, just faint
   }
   return out;
 }
@@ -95,17 +96,19 @@ export function categoryColorOf(field: string, value: string): RGB | null { retu
 export function serializeCategoryColors(): Record<string, RGB> { const o: Record<string, RGB> = {}; for (const [k, v] of catColorStore) o[k] = v; return o; }
 export function restoreCategoryColors(o?: Record<string, RGB> | null): void { catColorStore.clear(); if (o) for (const k of Object.keys(o)) { const v = (o as any)[k]; if (Array.isArray(v) && v.length === 3) catColorStore.set(k, [v[0] | 0, v[1] | 0, v[2] | 0]); } }
 
-export async function colorsFor(view: LstarView, colorBy: string, focusMask?: Uint8Array, colormap?: string, winsor: number = 0): Promise<{ rgba: Uint8Array; legend: Legend }> {
+export async function colorsFor(view: LstarView, colorBy: string, focusMask?: Uint8Array, colormap?: string, winsor: number = 0, dimKeepColor = false): Promise<{ rgba: Uint8Array; legend: Legend }> {
+  // dimKeepColor: masked-out cells keep their OWN colour (faint) instead of going grey — used for a SELECTION dim so
+  // the colour-by stays readable in the rest; left false for SCOPE, which desaturates outside (evidence-board framing).
   const pal = PALETTES[normalizePalette(colormap || "") || defaultNumericPalette()];   // chosen palette for numeric colourings; default is theme-aware (amber on dark, amberLight on white)
   // every numeric branch maps through this — winsorBounds clips outliers (keyed by colorBy so the sort is cached)
-  const numRGBA = (vals: ArrayLike<number>, max: number) => numericRGBA(vals, ...winsorBounds(vals, max, winsor, colorBy), pal, focusMask);
+  const numRGBA = (vals: ArrayLike<number>, max: number) => numericRGBA(vals, ...winsorBounds(vals, max, winsor, colorBy), pal, focusMask, dimKeepColor);
   const [kind, rest] = colorBy.split(/:(.+)/);
   if (kind === "meta") {
     const m = await md(view, rest);
     if (m.kind === "categorical") {
       const ov = categoryColorOverrides(rest, m.categories);   // per-value colour overrides (+ unassigned)
       return {
-        rgba: codesToRGBA(m.codes, focusMask, m.colors, ov.perCat, ov.unassigned),
+        rgba: codesToRGBA(m.codes, focusMask, m.colors, ov.perCat, ov.unassigned, dimKeepColor),
         legend: { kind: "categorical", title: rest, items: m.categories.map((c, i) => ({ label: c, rgb: ov.perCat[i] || catColor(m.colors?.[i] ?? i) })) },
       };
     }

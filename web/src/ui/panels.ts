@@ -149,24 +149,24 @@ export async function paintEmbedding(ev: EmbeddingView, ctx: Ctx) {
   const scopeKey = view?.scope ? (view.scope.kind === "category" ? `c:${view.scope.grouping}=${view.scope.value}` : `n:${scopeCells!.length}`) : "";
   if ((ev as any)._scopeKey !== scopeKey) { (ev as any)._scopeKey = scopeKey; ev.fitTo(scopeCells && scopeCells.length ? scopeCells : undefined); }
 
-  // RECESSION LADDER (cell-set interaction levels). SCOPE (frames this panel) and the global FOCUS/SUBSET restrict the
-  // view; a SELECTION (level 2) now also DIMS the rest — a sticky select RECEDES the other cells so the colour-by (e.g.
-  // gene expression) stays readable IN the selected population (the old lift/paint occluded exactly there). A SMALL
-  // freeform selection keeps a precise RING instead (greying the whole map for a few cells would be jarring); precedence
-  // scope > focus > selection. Display is PER-PANEL (a panel's overrides beat the coord default). STYLE via the shared
-  // helper so describe_panel reads the same surface the renderer paints.
+  // RECESSION LADDER (cell-set interaction levels), all expressed as one per-cell mask — precedence scope > focus > selection:
+  //  • SCOPE (frames this panel) → desaturate everything outside to GREY (evidence-board framing).
+  //  • FOCUS / SUBSET (level 3, global) → REMOVE the rest (made transparent below).
+  //  • SELECTION (level 2) → DIM the rest but KEEP each cell's own colour (dimKeepColor) so the colour-by (gene/qc) still
+  //    reads in the de-emphasised cells. This DIMS uniformly regardless of selection size — no size-gated ring, and NO
+  //    paint/lift on the selected cells (the old cyan fill occluded exactly the cells you cared about). Display is
+  //    PER-PANEL; STYLE via the shared helper so describe_panel reads the same surface the renderer paints.
   const style = resolvePanelStyleFor(ctx, "Embedding", view) as EmbeddingStyle;
   const selCells = ctx.refToCells(c.selection);   // this panel is cell-space — read the selection as cells
-  const bigSel = selCells.length > (style.selection.ringThreshold ?? 250);   // a cluster-sized selection → dim; a handful → ring
-  let mask: Uint8Array | undefined, hideRest = false;
+  let mask: Uint8Array | undefined, hideRest = false, dimKeepColor = false;
   if (scopeCells && scopeCells.length) { mask = new Uint8Array(ctx.n); for (let j = 0; j < scopeCells.length; j++) mask[scopeCells[j]] = 1; }
   else if (c.focus) { mask = focusMaskFor(c.focus, ctx.n); hideRest = true; }   // L3 SUBSET: the rest is REMOVED from the view (not just dimmed)
-  else if (bigSel) { mask = new Uint8Array(ctx.n); for (let j = 0; j < selCells.length; j++) mask[selCells[j]] = 1; }   // L2 select: a big selection dims the rest
-  const { rgba, legend } = await colorsFor(ctx.view, colorBy, mask, view?.colormap, style.color.winsor ?? 0);   // winsor clips outliers off the numeric scale
+  else if (selCells.length) { mask = new Uint8Array(ctx.n); for (let j = 0; j < selCells.length; j++) mask[selCells[j]] = 1; dimKeepColor = true; }   // L2 select: dim the rest, keep colour
+  const { rgba, legend } = await colorsFor(ctx.view, colorBy, mask, view?.colormap, style.color.winsor ?? 0, dimKeepColor);   // winsor clips outliers off the numeric scale
   if (hideRest && mask) { for (let i = 0; i < ctx.n; i++) if (!mask[i]) rgba[i * 4 + 3] = 0; }   // SUBSET = remove: make non-subset cells transparent (layout unchanged — no auto-zoom, user can pan/zoom)
   ev.setStyle(style);
   ev.setColors(rgba);
-  ev.setSelection(bigSel || hideRest ? null : (selCells.length ? selCells : null));   // small → precise ring; big/subset → no fill lift
+  ev.setSelection(null);   // a SELECTION is shown by DIMMING the rest (above), never a ring/fill lift on the cells
   const isCat = legend.kind === "categorical";
   ev.setLabels(style.label.show && isCat ? await categoryLabels(ctx, colorBy, ctx.embeddingOf(view?.embedding).data) : []);
   const showLegend = style.legend.show ?? !isCat;   // auto: key for numeric colourings; hidden when on-plot labels carry identity

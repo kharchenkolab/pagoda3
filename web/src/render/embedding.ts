@@ -119,9 +119,9 @@ export class EmbeddingView {
         opacity: s.point.opacity,                 // <1 lets overlapping cells convey density
         updateTriggers: { all: this.colorVersion },
       }) as any,
-      // SELECTION lift — a selection highlights its cells IN PLACE (it never greys the rest; that's focus/scope only).
-      // Small/freeform: a precise cyan RING per cell (pinpoints them). Large cluster: rings would speckle, so instead
-      // lift the cells with a translucent accent FILL on top (reads over any cluster colour, leaves the map whole).
+      // SELECTION lift (currently INERT — paintEmbedding always passes setSelection(null); a level-2 selection is shown
+      // by DIMMING the rest while the selected cells keep full colour, not by a lift on top). Retained behind selCount()
+      // so a future opt-in "precise ring for a tiny freeform pick" can re-enable it without re-plumbing the layer.
       this.selCount() > 0 && this.selCount() <= s.selection.ringThreshold
         ? new ScatterplotLayer({
             id: "sel",
