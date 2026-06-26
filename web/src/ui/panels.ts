@@ -294,7 +294,7 @@ function geneListBody(p: Panel, hooks: PanelHooks): BuiltBody {
 async function compositionBody(panel: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltBody> {
   const s = resolvePanelStyleFor(ctx, "CompositionBars", panel.view);   // panel style (bar width/gap, ribbon opacities, axis font)
   const grouping = panel.view?.colorBy?.startsWith("meta:") ? panel.view.colorBy.slice(5) : ctx.defaultGrouping();   // per-panel stack grouping
-  const { samples, conds, groups, props } = await ctx.composition(grouping);
+  const { samples, conds, groups, props } = await ctx.composition(grouping, ctx.subsetCells());   // L3: proportions within the subset
   // remember each category's segment box per sample — geometry for the hover ribbons; recomputed each draw()
   const seg: ({ x: number; yTop: number; yBot: number } | null)[][] = groups.map(() => samples.map(() => null));
   let bw = 40;   // live bar width, set by draw() — ribbonOf reads it
@@ -432,10 +432,10 @@ async function facetsBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltB
     if (sortMode === "name") order = [...order].sort((a: any, b: any) => a.value.localeCompare(b.value, undefined, { numeric: true }));
     const act = activeField();
     const F = (act && act !== f.name && meta.has(act)) ? meta.get(act) : null;   // crosstab vs the active colour-by (categorical only)
-    // A SELECTION does NOT cross-filter the facet counts — that zeroed every non-matching row (they read as disabled),
-    // too drastic for a lightweight highlight. Counts/bars stay over ALL cells; the selected value just gets a subtle
-    // row shade (.facetv.on). (The banner above announces the selection + its actions.)
-    const t = tally(G, F, null);                                // counts (+ segments) over all cells, always
+    // A SELECTION (L2) does NOT cross-filter the facet counts — that zeroed every non-matching row (read as disabled),
+    // too drastic for a lightweight highlight; the selected value just gets a subtle row shade (.facetv.on). But the L3
+    // SUBSET DOES restrict — the rest of the data is removed from every view, so counts/bars/segments reflect only it.
+    const t = tally(G, F, ctx.subsetCells());                   // counts within the global subset (all cells when not subsetting)
     const Fcol = F ? F.categories.map((c: string, i: number) => `rgb(${(categoryColorOf(act, c) || catColor(F.colors?.[i] ?? i)).join(",")})`) : null;   // colour-by segments honour per-value overrides
     const idx = new Map<string, number>(G.categories.map((c: string, i: number) => [c, i]));
     const maxC = order.reduce((mx: number, r: any) => Math.max(mx, t.counts[idx.get(r.value)!]), 1);
@@ -479,7 +479,10 @@ async function facetsBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltB
     const nm = numMeta.get(f.name); if (!nm) return mk("div", "facetvals");
     const vals: Float32Array = nm.values, lo = nm.min, hi = nm.max, BINS = Math.round(s.hist.bins), wbin = (hi - lo) / BINS || 1;
     const binOf = (v: number) => { let bi = Math.floor((v - lo) / wbin); return bi < 0 ? 0 : bi >= BINS ? BINS - 1 : bi; };
-    const full = new Int32Array(BINS); for (let i = 0; i < vals.length; i++) full[binOf(vals[i])]++;
+    const subset = ctx.subsetCells();   // L3: the histogram body counts only subset cells (axis range stays full so it doesn't jump)
+    const full = new Int32Array(BINS);
+    if (subset) { for (let k = 0; k < subset.length; k++) full[binOf(vals[subset[k]])]++; }
+    else { for (let i = 0; i < vals.length; i++) full[binOf(vals[i])]++; }
     const sub = selCells ? new Int32Array(BINS) : null; if (sub) for (let k = 0; k < selCells!.length; k++) sub[binOf(vals[selCells![k]])]++;
     const maxH = full.reduce((m, x) => Math.max(m, x), 1);
     const mine = brush.field === f.name && ctx.coord.state.selection?.kind === "cells";   // the selection is THIS field's brush → show its range readout

@@ -1772,6 +1772,7 @@ export class App {
       sp.innerHTML = `<div class="head">${ids.length} cells · mostly ${top?.[0] || "?"}</div>` +
         `<div class="it" data-a="ask"><span class="ic">⌘K</span>Ask about these…</div>` +
         `<div class="it" data-a="de"><span class="ic">≢</span>Run DE on selection</div>` +
+        `<div class="it" data-a="subset"><span class="ic">⊙</span>Subset to these <span style="opacity:.5;margin-left:auto;font-size:10px">hide the rest</span></div>` +
         `<div class="it" data-a="label"><span class="ic">✎</span>Label as…</div>` +
         `<div class="it" data-a="clear"><span class="ic">✕</span>Clear selection</div>`;
       sp.classList.add("show");
@@ -1784,7 +1785,16 @@ export class App {
       sp.querySelectorAll<HTMLElement>(".it").forEach((it) => it.onclick = () => { const a = it.dataset.a;
         if (a === "label") { this.selpopLabelInput(Array.from(ids)); return; }   // sub-state — keep the popover open
         this.hideSelpop();
-        if (a === "ask") this.openPalette(this.scope!); else if (a === "de") this.agent.ask("run de", this.scope); else { this.coord.setSelection(null); this.scope = null; } });
+        if (a === "ask") this.openPalette(this.scope!);
+        else if (a === "de") this.agent.ask("run de", this.scope);
+        else if (a === "subset") {   // L3: promote the selection to the working subset — the rest is hidden from every view
+          const sel = this.coord.state.selection as any;
+          const op = sel?.kind === "category" ? { dim: sel.grouping, value: sel.value } : { set: Array.from(ids), label: `${ids.length.toLocaleString()} cells` };
+          this.coord.setSelection(null);   // the subset becomes the frame — nothing is sub-selected within it
+          const r = this.focusFromOp(op);
+          if (r.error) this.toast(r.error, null); else { this.fullRender(); this.checkpoint(`subset · ${r.label}`, "Restricted the workspace to this subset — the rest is hidden from every view. “Back to full” restores."); }
+        }
+        else { this.coord.setSelection(null); this.scope = null; } });
     });
   }
   // brush → "Label as…": type a label, applied to the selected cells in the working annotation draft
