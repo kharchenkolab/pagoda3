@@ -8,13 +8,13 @@ export let DIM_A = 150;
 // SEL_DIM_A = alpha for a SELECTION (level 2) dim, which KEEPS each cell's own colour (just recedes it) rather than
 // greying it — so the colour-by still reads in the de-emphasised cells. Lower than DIM_A so the selected cells (full
 // alpha) clearly pop against the faint-but-hued rest. (Greying is reserved for SCOPE's evidence-board desaturation.)
-export let SEL_DIM_A = 38;
+export let SEL_DIM_A = 19;
 let isDark = true;
 export function setThemeColors(dark: boolean): void {
   isDark = dark;
   DIM_RGB = dark ? [62, 68, 80] : [201, 194, 174];
   DIM_A = dark ? 150 : 200;
-  SEL_DIM_A = dark ? 38 : 60;
+  SEL_DIM_A = dark ? 19 : 30;
 }
 // Default sequential palette for NUMERIC colourings (gene/qc/score) when none is chosen: the dark ramp fades
 // low values into the dark canvas; on the light theme that inverts (low would be darkest), so default to a
