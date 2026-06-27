@@ -13,9 +13,7 @@ import { listRecipes, findRecipes, getRecipe, recipeSource } from "../widget/rec
 import { applyEdits } from "../widget/edits.ts";
 import { getProvider, providerModel, adapterFor } from "./providers.ts";
 import { newLoopState, isStuck } from "./loopguard.ts";
-import { loadCred, buildDirectAnthropic, markCredExpired, localCfg, agentOff } from "./credentials.ts";
-
-const PROXY = "/api/agent/stream";
+import { loadCred, buildDirectAnthropic, markCredExpired, localCfg, agentOff, proxyBase } from "./credentials.ts";
 
 // The agent's network hop. With a pasted Anthropic credential (API key OR subscription OAuth token), call
 // api.anthropic.com DIRECTLY from the browser — the zero-process path, no proxy. Otherwise hit the proxy (which holds
@@ -28,7 +26,7 @@ function agentStream(built: any, meta: { provider: string; model: string; store:
     const cred = loadCred();
     if (cred) { const { url, headers, body } = buildDirectAnthropic({ ...built, model: meta.model }, cred); return fetch(url, { method: "POST", headers, body: JSON.stringify(body), signal: abort }); }   // browser-direct to Anthropic
   }
-  return fetch(PROXY, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...built, provider: meta.provider, model: meta.model, client: "app", runId: liveRunId(), store: meta.store }), signal: abort });   // the proxy (server-side credential)
+  return fetch(proxyBase() + "/agent/stream", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...built, provider: meta.provider, model: meta.model, client: "app", runId: liveRunId(), store: meta.store }), signal: abort });   // the proxy (server-side credential), at the configured base
 }
 
 // A stable id for THIS browser session's conversation — minted once per page load, sent with every turn so the proxy's
@@ -41,7 +39,7 @@ export async function checkLive(provider?: string): Promise<boolean> {
   if (agentOff()) return false;                                  // explicit "no copilot"
   if (provider === "openai") { if (localCfg()?.url) return true; }   // a configured local endpoint = reachable browser-direct
   else if (loadCred()) return true;                              // a pasted credential = reachable browser-direct (no proxy)
-  try { const r = await fetch("/api/health" + (provider ? "?provider=" + encodeURIComponent(provider) : "")); const j = await r.json(); return !!j.ok; } catch { return false; }
+  try { const r = await fetch(proxyBase() + "/health" + (provider ? "?provider=" + encodeURIComponent(provider) : "")); const j = await r.json(); return !!j.ok; } catch { return false; }
 }
 
 interface Tool { name: string; description: string; input_schema: any; }

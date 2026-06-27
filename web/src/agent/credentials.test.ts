@@ -1,7 +1,15 @@
 // Unit tests for the browser-direct credential core (pure). Run from web/: `node --test src/agent/credentials.test.ts`.
 import { test } from "node:test";
 import assert from "node:assert";
-import { detectCred, buildDirectAnthropic, statusOf, modeOf, type Cred } from "./credentials.ts";
+import { detectCred, buildDirectAnthropic, statusOf, modeOf, normProxyUrl, type Cred } from "./credentials.ts";
+
+test("normProxyUrl: blank → null; normalizes to the /api mount; trims trailing slashes", () => {
+  assert.equal(normProxyUrl(""), null);
+  assert.equal(normProxyUrl("   "), null);
+  assert.equal(normProxyUrl("http://localhost:8786"), "http://localhost:8786/api");
+  assert.equal(normProxyUrl("http://localhost:8786/api/"), "http://localhost:8786/api");
+  assert.equal(normProxyUrl("https://proxy.example/api"), "https://proxy.example/api");
+});
 
 test("detectCred: kind from prefix, oauth.json blob, junk", () => {
   assert.deepEqual(detectCred("sk-ant-api03-abc"), { token: "sk-ant-api03-abc", kind: "apikey" });

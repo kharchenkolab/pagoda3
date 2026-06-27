@@ -11,6 +11,21 @@ export interface Cred { token: string; kind: CredKind; expiresAt?: number; }   /
 const STORE = "p3-agent-cred";
 const LOCAL = "p3-agent-local";   // a client-configured local OpenAI-compatible endpoint (browser-direct, no proxy)
 const OFF = "p3-agent-off";       // explicit "no copilot" — disables the agent even if a proxy is reachable
+const PROXY_CFG = "p3-agent-proxy";   // a non-default proxy base (e.g. CDN-hosted app + a proxy running elsewhere)
+
+// The proxy BASE — same-origin `/api` by default, or a configured absolute base (e.g. a proxy on another host). The
+// agent stream + health endpoints hang off it: `${base}/agent/stream`, `${base}/health`. normProxyUrl normalizes a
+// pasted URL to the `/api` mount (pure, node-testable); blank → null → same-origin default.
+export function normProxyUrl(raw: string): string | null {
+  let s = (raw || "").trim().replace(/\/+$/, "");
+  if (!s) return null;
+  if (!/\/api$/i.test(s)) s += "/api";   // the proxy serves its routes under /api
+  return s;
+}
+export function proxyCfg(): string | null { try { return localStorage.getItem(PROXY_CFG); } catch { return null; } }
+export function setProxyCfg(raw: string): void { const n = normProxyUrl(raw); try { if (n) localStorage.setItem(PROXY_CFG, n); else localStorage.removeItem(PROXY_CFG); } catch { /* */ } }
+export function clearProxyCfg(): void { try { localStorage.removeItem(PROXY_CFG); } catch { /* */ } }
+export function proxyBase(): string { return proxyCfg() || "/api"; }
 
 // ---- the agent endpoint CONFIG beyond the Anthropic credential: a local model + an explicit off switch ----
 export interface LocalCfg { url: string; model: string; }

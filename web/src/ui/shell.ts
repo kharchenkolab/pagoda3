@@ -6,7 +6,7 @@ import { EmbeddingView } from "../render/embedding.ts";
 import { Agent, Scope } from "../agent/agent.ts";
 import { agentPanelTypes } from "./panel-registry.ts";
 import { checkLive } from "../agent/live.ts";
-import { saveCred, clearCred, loadCred, credStatus, detectCred, resolveMode, localCfg, setLocalCfg, setAgentOff } from "../agent/credentials.ts";
+import { saveCred, clearCred, loadCred, credStatus, detectCred, resolveMode, localCfg, setLocalCfg, setAgentOff, proxyCfg, setProxyCfg, proxyBase } from "../agent/credentials.ts";
 import { getProvider, providerModel, PROVIDER_KEY } from "../agent/providers.ts";
 import { normalizeViewPatch, RawViewPatch, World, PanelSpec, PanelPatch, MAX_COLS } from "../agent/viewpatch.ts";
 import { validateCellSet, resolveCellSet, describeCellSet, CellSet, CellWorld, CellEnv } from "../agent/cellset.ts";
@@ -1735,12 +1735,13 @@ export class App {
   async fillProxyStatus(el: HTMLElement | null): Promise<void> {
     if (!el) return;
     const esc = (s: string) => String(s).replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]!));
+    const base = proxyBase(); const where = base.startsWith("/") ? location.origin + base : base;
     try {
-      const j = await (await fetch("/api/health")).json();
-      if (!j.ok) { el.textContent = "Proxy unreachable — the copilot is off."; el.style.color = "#e2504a"; return; }
+      const j = await (await fetch(base + "/health")).json();
+      if (!j.ok) { el.innerHTML = `<span style="color:#e2504a">Proxy unreachable</span> <span style="opacity:.65">at ${esc(where)}</span>`; return; }
       const detail = j.mode === "oauth" ? `OAuth${j.expires_in ? " · server token expires in " + this.fmtSecs(j.expires_in) : ""}` : j.mode === "apikey" ? "server API key" : (j.mode || "");
-      el.innerHTML = `<span style="color:var(--good,#5abf8f)">Proxy · ${esc(detail)}</span> <span style="opacity:.65">at ${esc(location.origin)}/api</span>`;
-    } catch { el.textContent = "Proxy unreachable — the copilot is off."; el.style.color = "#e2504a"; }
+      el.innerHTML = `<span style="color:var(--good,#5abf8f)">Proxy · ${esc(detail)}</span> <span style="opacity:.65">at ${esc(where)}</span>`;
+    } catch { el.innerHTML = `<span style="color:#e2504a">Proxy unreachable</span> <span style="opacity:.65">at ${esc(where)}</span>`; }
   }
   // Called by the live agent on a 401/403 mid-run (an expired/invalid pasted token): open the config card so the
   // now-"expired" status + the field are right there to re-paste.
@@ -1768,7 +1769,7 @@ export class App {
     ];
     const body = (): string => {
       if (sel === "off") return `<div class="acsub">No copilot. The viewer, compute, and manual analysis all work on their own.</div>`;
-      if (sel === "proxy") return `<div class="acsub" id="acproxystat">Checking the proxy…</div><div class="acsub" style="margin-top:6px;opacity:.7;line-height:1.45">Uses a credential held by the server at <span style="font-family:var(--mono)">${esc(location.origin)}/api</span>. The only mode that needs a running server.</div>`;
+      if (sel === "proxy") return `<label class="acsub" style="display:block;margin-bottom:4px">proxy url <span style="opacity:.7">(blank = same origin)</span></label><input id="acfp" type="text" class="acwsearch" value="${esc(proxyCfg() || "")}" placeholder="${esc(location.origin)}/api" style="font-family:var(--mono)"><div class="acsub" id="acproxystat" style="margin-top:8px">Checking the proxy…</div><div class="acsub" style="margin-top:6px;opacity:.7;line-height:1.45">The relay holds the server-side credential. The only mode that needs a running server; a cross-origin proxy must allow this page (CORS).</div>`;
       if (sel === "local") { const lc = localCfg(); return `<label class="acsub" style="display:block;margin-bottom:4px">endpoint url (OpenAI-compatible)</label><input id="acfu" type="text" class="acwsearch" value="${esc(lc?.url || "http://localhost:8000/v1")}" style="font-family:var(--mono)"><label class="acsub" style="display:block;margin:10px 0 4px">model</label><input id="acfm" type="text" class="acwsearch" value="${esc(lc?.model || "")}" placeholder="qwen3-8b" style="font-family:var(--mono)"><div class="acsub" style="margin-top:8px;opacity:.7;line-height:1.45">Runs in your browser, calling this endpoint directly — it must allow this page's origin (CORS).</div>`; }
       return `<div id="acfstat" style="margin-bottom:7px">${this.credStatusHtml()}</div><input id="acfk" type="password" autocomplete="off" class="acwsearch" placeholder="paste Anthropic API key…"><div id="acfdet" class="acsub" style="margin-top:5px;min-height:13px"></div><div class="acsub" style="margin-top:7px;opacity:.7;line-height:1.45">Stored only in this browser — requests go straight to Anthropic. A subscription OAuth token works too; it just expires after a few hours.</div>`;
     };
@@ -1792,7 +1793,7 @@ export class App {
   private saveAgentConfig(sel: string, card: HTMLElement, close: () => void): void {
     const setProv = (p: string) => { try { localStorage.setItem(PROVIDER_KEY, p); } catch { /* */ } };
     if (sel === "off") { setAgentOff(true); }
-    else if (sel === "proxy") { setAgentOff(false); setProv("anthropic"); clearCred(); }
+    else if (sel === "proxy") { const p = (card.querySelector("#acfp") as HTMLInputElement)?.value.trim() || ""; setProxyCfg(p); setAgentOff(false); setProv("anthropic"); clearCred(); }   // blank → same-origin
     else if (sel === "local") {
       const url = (card.querySelector("#acfu") as HTMLInputElement)?.value.trim() || "";
       const model = (card.querySelector("#acfm") as HTMLInputElement)?.value.trim() || "";
