@@ -380,8 +380,36 @@ export class LstarView {
   // (log(v) ~ smooth(log(m)); res = observed - fitted). This is the *correct* HVG for a focused
   // subset (T cells only, a lasso, ...): the trend and the residuals are recomputed for that scope,
   // never read off a global precomputed list (which is dominated by major-lineage genes).
+  // Read ONLY the given cells' rows of the cell-major counts as a re-based CSR sub-panel (byte-range reads via the
+  // package reader's csrRows) — for compute on a small selection without pulling the whole matrix. pos = [0..k-1]
+  // over the read rows (input order). null when not eligible (no csrRows, or no all-genes cell-major copy).
+  private async subRowsPanel(cells: number[]): Promise<{ panel: { data: any; indices: any; indptr: any; nGenes: number; lognorm: boolean }; symbols: string[]; pos: number[] } | null> {
+    const name = this.ds.hasField("counts_cellmajor") ? "counts_cellmajor" : null;
+    if (!name || typeof (this.ds as any).csrRows !== "function") return null;
+    const fm = this.ds.field(name)!;
+    if ((fm.span?.[1] ?? "genes") !== "genes") return null;   // need the ALL-genes cell-major copy (indices == global gene ids)
+    const symbols = await this.genes();
+    const sub = await (this.ds as any).csrRows(name, cells);   // { data, indices, indptr, rows }
+    const pos = (sub.rows as number[]).map((_, i) => i);
+    return { panel: { data: sub.data, indices: sub.indices, indptr: sub.indptr, nGenes: symbols.length, lognorm: fm.state === "lognorm" }, symbols, pos };
+  }
+
   async overdispersedGenes(cellIds: number[], topN = 50, maxCells = 2000):
       Promise<{ gene: number; symbol: string; mean: number; varr: number; resid: number; nobs: number }[]> {
+    // SUBSET fast path: if the whole cell-major matrix isn't already cached AND this is a smallish selection, read
+    // only the (deterministically subsampled) cells' rows by byte-range — a few MB instead of the whole 200+ MB
+    // matrix. `sample()` is deterministic, so the same cells are used as the whole-matrix path → identical ranking.
+    // Cap: beyond this, a scattered selection's per-row range reads (csrRows fires one run each) overwhelm the
+    // connection — the whole-matrix panel is better there. The try/catch makes it a safe optimization: any failure
+    // (too many in-flight ranges) falls through to the whole-matrix path, which is correct, just slower.
+    const SUBSET_MAX = 1500;
+    if (this.dePanelCache === undefined && cellIds.length <= SUBSET_MAX) {
+      try {
+        const sp = await this.subRowsPanel(sample(cellIds, maxCells));
+        if (sp) return overdispersedCore(sp.panel, sp.pos, topN, sp.pos.length)
+          .map((r) => ({ gene: r.g, symbol: sp.symbols[r.g], mean: r.mean, varr: r.varr, resid: r.resid, nobs: r.nobs }));
+      } catch { /* fall through to the whole-matrix panel */ }
+    }
     const dp = await this.dePanel();
     if (!dp) return [];
     // OFF the main thread when isolated + the panel is SAB-backed (posting it SHARES, no copy); else run the SAME core
