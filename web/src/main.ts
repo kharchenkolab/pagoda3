@@ -1,4 +1,4 @@
-import { openLstar, fetchStore } from "./data/store.ts";
+import { openLstar, HttpStore } from "./data/store.ts";
 import { LstarView } from "./data/view.ts";
 import { Coord } from "./data/coord.ts";
 import { Ctx } from "./data/ctx.ts";
@@ -11,7 +11,7 @@ const storeParam = new URLSearchParams(location.search).get("store") || "/sample
 const STORE_URL = new URL(storeParam.endsWith("/") ? storeParam : storeParam + "/", location.origin).href;
 
 async function boot() {
-  const ds = await openLstar(fetchStore(STORE_URL));
+  const ds = await openLstar(new HttpStore(STORE_URL));   // byte-range fast path + consolidated `.zmetadata` open
   const view = new LstarView(ds);
   const computePool = new ComputePool();   // off-main-thread kernel pool; view dispatches to it when cross-origin isolated, else runs the same core inline
   view.setComputePool(computePool);
