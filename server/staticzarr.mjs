@@ -5,6 +5,7 @@
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
+import zlib from "node:zlib";
 
 const ROOT = path.resolve(process.argv[2] || "web/public");
 const PORT = Number(process.argv[3] || 9100);
@@ -48,9 +49,20 @@ const server = http.createServer((req, res) => {
           return fs.createReadStream(filePath, { start, end }).pipe(res);
         }
       }
+      // FULL read: offer gzip TRANSFER-compression. This is the conflict-free way to shrink bulk reads (the whole
+      // cell-major matrix for large-selection DE/overdispersion) — the range (206) branch above stays RAW, so byte-
+      // offset reads (gene coloring, csrRows subset) keep working. A real server (nginx/S3/CloudFront) does this;
+      // demonstrated here. Skip tiny files (metadata) where the gzip framing isn't worth it.
+      const wantGzip = /\bgzip\b/.test(String(req.headers["accept-encoding"] || "")) && st.size > 4096;
       res.statusCode = 200;
-      res.setHeader("Content-Length", st.size);
       nReq++; nBytes += st.size;
+      if (wantGzip) {
+        res.setHeader("Content-Encoding", "gzip");
+        res.setHeader("Vary", "Accept-Encoding");   // caches must key on Accept-Encoding (raw vs gzip)
+        if (req.method === "HEAD") return res.end();
+        return fs.createReadStream(filePath).pipe(zlib.createGzip({ level: 6 })).pipe(res);
+      }
+      res.setHeader("Content-Length", st.size);
       if (req.method === "HEAD") return res.end();
       fs.createReadStream(filePath).pipe(res);
     };
