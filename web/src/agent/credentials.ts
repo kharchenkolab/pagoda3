@@ -9,6 +9,27 @@ export type CredKind = "apikey" | "oauth";
 export interface Cred { token: string; kind: CredKind; expiresAt?: number; }   // expiresAt = epoch SECONDS, when known
 
 const STORE = "p3-agent-cred";
+const LOCAL = "p3-agent-local";   // a client-configured local OpenAI-compatible endpoint (browser-direct, no proxy)
+const OFF = "p3-agent-off";       // explicit "no copilot" — disables the agent even if a proxy is reachable
+
+// ---- the agent endpoint CONFIG beyond the Anthropic credential: a local model + an explicit off switch ----
+export interface LocalCfg { url: string; model: string; }
+export function localCfg(): LocalCfg | null { try { const s = localStorage.getItem(LOCAL); return s ? JSON.parse(s) as LocalCfg : null; } catch { return null; } }
+export function setLocalCfg(url: string, model: string): void { try { localStorage.setItem(LOCAL, JSON.stringify({ url: (url || "").trim().replace(/\/+$/, ""), model: (model || "").trim() })); } catch { /* */ } }
+export function clearLocalCfg(): void { try { localStorage.removeItem(LOCAL); } catch { /* */ } }
+export function agentOff(): boolean { try { return localStorage.getItem(OFF) === "1"; } catch { return false; } }
+export function setAgentOff(b: boolean): void { try { if (b) localStorage.setItem(OFF, "1"); else localStorage.removeItem(OFF); } catch { /* */ } }
+
+// The ACTIVE mode, resolved from the stored prefs (sync; proxy REACHABILITY is checked separately by the UI). modeOf is
+// the pure core (node-testable); resolveMode reads the live prefs. Precedence: off > local(openai) > pasted cred > proxy.
+export type AgentMode = "off" | "oauth" | "key" | "local" | "proxy";
+export function modeOf(provider: "anthropic" | "openai", cred: Cred | null, off: boolean): AgentMode {
+  if (off) return "off";
+  if (provider === "openai") return "local";
+  if (cred) return cred.kind === "oauth" ? "oauth" : "key";
+  return "proxy";
+}
+export function resolveMode(provider: "anthropic" | "openai"): AgentMode { return modeOf(provider, loadCred(), agentOff()); }
 // The exact system marker the proxy prepends in OAuth mode — subscription-OAuth calls are validated as coming from a
 // Claude agent, so a browser-direct OAuth request must carry it too or it's refused.
 const MARKER = { type: "text", text: "You are a Claude agent, built on Anthropic's Claude Agent SDK." };

@@ -1,7 +1,7 @@
 // Unit tests for the browser-direct credential core (pure). Run from web/: `node --test src/agent/credentials.test.ts`.
 import { test } from "node:test";
 import assert from "node:assert";
-import { detectCred, buildDirectAnthropic, statusOf, type Cred } from "./credentials.ts";
+import { detectCred, buildDirectAnthropic, statusOf, modeOf, type Cred } from "./credentials.ts";
 
 test("detectCred: kind from prefix, oauth.json blob, junk", () => {
   assert.deepEqual(detectCred("sk-ant-api03-abc"), { token: "sk-ant-api03-abc", kind: "apikey" });
@@ -47,6 +47,16 @@ test("buildDirectAnthropic: does NOT mutate the caller's shared tools/messages a
   buildDirectAnthropic({ system: "S", messages, tools, model: "m", max_tokens: 8 }, { token: "k", kind: "apikey" });
   assert.equal((tools[1] as any).cache_control, undefined, "tools array must be untouched (reused across turns)");
   assert.equal(typeof messages[0].content, "string", "messages must be untouched");
+});
+
+test("modeOf: precedence off > local > cred > proxy", () => {
+  const key: Cred = { token: "sk-ant-api03-k", kind: "apikey" };
+  const oat: Cred = { token: "sk-ant-oat01-k", kind: "oauth" };
+  assert.equal(modeOf("anthropic", oat, true), "off");        // off wins over everything
+  assert.equal(modeOf("openai", key, false), "local");        // openai provider → local (even with a cred present)
+  assert.equal(modeOf("anthropic", oat, false), "oauth");     // pasted OAuth → browser-direct oauth
+  assert.equal(modeOf("anthropic", key, false), "key");       // pasted API key
+  assert.equal(modeOf("anthropic", null, false), "proxy");    // nothing pasted → proxy
 });
 
 test("statusOf: none / active / expiring / expired (and runtime-expired override)", () => {

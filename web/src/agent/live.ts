@@ -13,7 +13,7 @@ import { listRecipes, findRecipes, getRecipe, recipeSource } from "../widget/rec
 import { applyEdits } from "../widget/edits.ts";
 import { getProvider, providerModel, adapterFor } from "./providers.ts";
 import { newLoopState, isStuck } from "./loopguard.ts";
-import { loadCred, buildDirectAnthropic, markCredExpired } from "./credentials.ts";
+import { loadCred, buildDirectAnthropic, markCredExpired, localCfg, agentOff } from "./credentials.ts";
 
 const PROXY = "/api/agent/stream";
 
@@ -21,12 +21,14 @@ const PROXY = "/api/agent/stream";
 // api.anthropic.com DIRECTLY from the browser — the zero-process path, no proxy. Otherwise hit the proxy (which holds
 // a server-side credential). The Anthropic provider is canonical, so the SAME SSE parse loop consumes either stream.
 function agentStream(built: any, meta: { provider: string; model: string; store: string | null }, abort: AbortSignal): Promise<Response> {
-  const cred = meta.provider === "openai" ? null : loadCred();
-  if (cred) {
-    const { url, headers, body } = buildDirectAnthropic({ ...built, model: meta.model }, cred);
-    return fetch(url, { method: "POST", headers, body: JSON.stringify(body), signal: abort });
+  if (meta.provider === "openai") {
+    const lc = localCfg();
+    if (lc?.url) return fetch(lc.url + "/chat/completions", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...built, model: lc.model || meta.model, stream: true, stream_options: { include_usage: true } }), signal: abort });   // browser-direct to a local OpenAI-compatible server
+  } else {
+    const cred = loadCred();
+    if (cred) { const { url, headers, body } = buildDirectAnthropic({ ...built, model: meta.model }, cred); return fetch(url, { method: "POST", headers, body: JSON.stringify(body), signal: abort }); }   // browser-direct to Anthropic
   }
-  return fetch(PROXY, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...built, provider: meta.provider, model: meta.model, client: "app", runId: liveRunId(), store: meta.store }), signal: abort });
+  return fetch(PROXY, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...built, provider: meta.provider, model: meta.model, client: "app", runId: liveRunId(), store: meta.store }), signal: abort });   // the proxy (server-side credential)
 }
 
 // A stable id for THIS browser session's conversation — minted once per page load, sent with every turn so the proxy's
@@ -36,7 +38,9 @@ let _liveRunId = "";
 function liveRunId(): string { if (!_liveRunId) _liveRunId = "r" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); return _liveRunId; }
 
 export async function checkLive(provider?: string): Promise<boolean> {
-  if (provider !== "openai" && loadCred()) return true;   // a pasted credential = the agent is reachable browser-direct (no proxy)
+  if (agentOff()) return false;                                  // explicit "no copilot"
+  if (provider === "openai") { if (localCfg()?.url) return true; }   // a configured local endpoint = reachable browser-direct
+  else if (loadCred()) return true;                              // a pasted credential = reachable browser-direct (no proxy)
   try { const r = await fetch("/api/health" + (provider ? "?provider=" + encodeURIComponent(provider) : "")); const j = await r.json(); return !!j.ok; } catch { return false; }
 }
 

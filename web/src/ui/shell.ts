@@ -6,8 +6,8 @@ import { EmbeddingView } from "../render/embedding.ts";
 import { Agent, Scope } from "../agent/agent.ts";
 import { agentPanelTypes } from "./panel-registry.ts";
 import { checkLive } from "../agent/live.ts";
-import { saveCred, clearCred, credStatus, detectCred } from "../agent/credentials.ts";
-import { getProvider, providerModel } from "../agent/providers.ts";
+import { saveCred, clearCred, loadCred, credStatus, detectCred, resolveMode, localCfg, setLocalCfg, setAgentOff } from "../agent/credentials.ts";
+import { getProvider, providerModel, PROVIDER_KEY } from "../agent/providers.ts";
 import { normalizeViewPatch, RawViewPatch, World, PanelSpec, PanelPatch, MAX_COLS } from "../agent/viewpatch.ts";
 import { validateCellSet, resolveCellSet, describeCellSet, CellSet, CellWorld, CellEnv } from "../agent/cellset.ts";
 import { validateComputeResult, runInWorker, buildComputeSnapshot } from "../agent/codeapi.ts";
@@ -1679,14 +1679,8 @@ export class App {
           <button data-a="reset" title="Reset layout &amp; reload">↺</button>
         </div></div>
       <div class="acsec"><div class="aclabel">AGENT CONNECTION</div>
-        <div id="acconn" style="margin-bottom:7px">${this.credStatusHtml()}</div>
-        <input class="acwsearch" id="accred" type="password" autocomplete="off" placeholder="paste Anthropic API key…">
-        <div id="accreddet" class="acsub" style="margin-top:5px;min-height:13px"></div>
-        <div style="display:flex;gap:6px;margin-top:7px">
-          <button class="acbtn" id="accredsave" style="flex:1;margin:0">Save</button>
-          <button class="acbtn" id="accredclear" style="flex:0 0 auto;margin:0">Clear</button>
-        </div>
-        <div class="acsub" style="margin-top:7px;opacity:.7;line-height:1.45">Stored only in this browser — requests go straight to Anthropic.</div></div>
+        <div id="acconn">${this.agentStatusHtml()}</div>
+        <button class="acbtn" id="acconnbtn" style="margin-top:8px">${resolveMode(getProvider()) === "off" ? "Set up agent…" : "Change…"}</button></div>
       <div class="acsec"><div class="aclabel">ADD TO WORKBENCH</div>
         <input class="acwsearch" id="acwsearch" placeholder="search panels & widgets…">
         <div class="acwidgets" id="acwlist">${widgets}</div></div>`;
@@ -1710,30 +1704,111 @@ export class App {
       }); });
     const sb = c.querySelector<HTMLInputElement>("#acwsearch");   // filter the combined list in place (no menu re-render → keeps focus)
     if (sb) sb.oninput = () => { const q = sb.value.trim().toLowerCase(); c.querySelectorAll<HTMLElement>(".acwrow").forEach((el) => { el.style.display = !q || (el.dataset.search || "").includes(q) ? "" : "none"; }); };
-    // AGENT CONNECTION: one field accepts an API key OR a subscription OAuth token — detect-as-you-type, save → the
-    // agent goes browser-direct (no proxy), clear → back to the proxy (if any). Stays inside the menu so the outside-
-    // click dismisser doesn't fire mid-edit.
-    const credIn = c.querySelector<HTMLInputElement>("#accred"); const credDet = c.querySelector<HTMLElement>("#accreddet");
-    if (credIn && credDet) credIn.oninput = () => { const d = detectCred(credIn.value); credDet.textContent = d ? (d.kind === "oauth" ? "detected: OAuth token" + (d.expiresAt ? " (with expiry)" : "") : "detected: API key") : ""; };
-    const saveBtn = c.querySelector<HTMLElement>("#accredsave");
-    if (saveBtn) saveBtn.onclick = (e) => { e.stopPropagation(); const v = (credIn?.value || "").trim(); if (!v) return; const cc = saveCred(v); if (!cc) { this.toast("Couldn't read that as a key or token", null); return; } this.agent.live = true; this.toast("Agent connected · " + (cc.kind === "oauth" ? "OAuth token" : "API key"), "Requests go straight to Anthropic from this browser."); this.openAccountMenu(); };
-    const clearBtn = c.querySelector<HTMLElement>("#accredclear");
-    if (clearBtn) clearBtn.onclick = (e) => { e.stopPropagation(); clearCred(); this.toast("Credential cleared", null); void checkLive(getProvider()).then((ok) => { this.agent.live = ok; }); this.openAccountMenu(); };
+    // AGENT CONNECTION: the menu shows STATUS; "Change…" opens the full config card. (Outside-click dismiss is fine —
+    // the card is its own overlay.)
+    const connBtn = c.querySelector<HTMLElement>("#acconnbtn");
+    if (connBtn) connBtn.onclick = (e) => { e.stopPropagation(); c.classList.remove("show"); this.showAgentConfig(); };
+    if (resolveMode(getProvider()) === "proxy") void this.fillProxyStatus(this.$("acproxystat"));   // the proxy line needs a health round-trip
   }
-  // The current agent-credential status, as a short line for the account menu (kind + expiry state).
+  private fmtSecs(sec?: number): string { return sec == null ? "" : sec >= 3600 ? `~${Math.floor(sec / 3600)}h ${Math.round((sec % 3600) / 60)}m` : `~${Math.max(1, Math.round(sec / 60))}m`; }
+  // The active agent connection, as a short status line — mode-appropriate detail (proxy where + mode / OAuth expiry /
+  // local where / API key). The proxy line is a placeholder filled by refreshProxyStatus (needs /api/health).
+  agentStatusHtml(): string {
+    const esc = (s: string) => String(s).replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]!));
+    const mode = resolveMode(getProvider());
+    if (mode === "off") return `<div class="acsub">Copilot off.</div>`;
+    if (mode === "local") { const lc = localCfg(); return `<div class="acsub" style="color:var(--good,#5abf8f)">Local model${lc?.model ? " · " + esc(lc.model) : ""} <span style="opacity:.7">at <span style="font-family:var(--mono)">${esc(lc?.url || "?")}</span></span></div>`; }
+    if (mode === "oauth" || mode === "key") return this.credStatusHtml();
+    return `<div class="acsub" id="acproxystat">Proxy · checking…</div>`;   // mode === "proxy"
+  }
+  // The pasted-credential status (OAuth countdown / API key / expired). Shared by the menu + the config card.
   credStatusHtml(): string {
     const s = credStatus();
-    if (s.state === "none") return `<div class="acsub">No pasted credential — using the proxy if one's running, else the copilot is off.</div>`;
+    if (s.state === "none") return `<div class="acsub">No pasted credential.</div>`;
     const kind = s.kind === "oauth" ? "OAuth token" : "API key";
-    const fmt = (sec?: number) => sec == null ? "" : sec >= 3600 ? `~${Math.floor(sec / 3600)}h ${Math.round((sec % 3600) / 60)}m` : `~${Math.max(1, Math.round(sec / 60))}m`;
-    if (s.state === "expired") return `<div class="acsub" style="color:#e2504a">${kind} expired — paste a fresh one to continue.</div>`;
-    if (s.state === "expiring") return `<div class="acsub" style="color:var(--amber,#e0a458)">${kind} · expires in ${fmt(s.secondsLeft)} — re-paste soon.</div>`;
-    if (s.kind === "oauth") return `<div class="acsub" style="color:var(--good,#5abf8f)">OAuth token · ${s.secondsLeft != null ? "active, expires in " + fmt(s.secondsLeft) : "active (expires after a few hours)"}</div>`;
-    return `<div class="acsub" style="color:var(--good,#5abf8f)">API key · active</div>`;
+    if (s.state === "expired") return `<div class="acsub" style="color:#e2504a">${kind} expired — set a fresh one to continue.</div>`;
+    if (s.state === "expiring") return `<div class="acsub" style="color:var(--amber,#e0a458)">${kind} · expires in ${this.fmtSecs(s.secondsLeft)} — re-paste soon.</div>`;
+    if (s.kind === "oauth") return `<div class="acsub" style="color:var(--good,#5abf8f)">OAuth token · ${s.secondsLeft != null ? "active, expires in " + this.fmtSecs(s.secondsLeft) : "active (expires after a few hours; a credit balance isn't readable from a browser)"}</div>`;
+    return `<div class="acsub" style="color:var(--good,#5abf8f)">API key · active <span style="opacity:.7">(balance isn't readable from a browser)</span></div>`;
   }
-  // Called by the live agent when a request is rejected 401/403 mid-run (an expired/invalid pasted token): open the
-  // account menu so the now-"expired" status + the paste field are right there.
-  onCredExpired(): void { this.openAccountMenu(); }
+  // Fill a proxy status element in place after a /api/health round-trip: where it's reached + the server credential mode.
+  async fillProxyStatus(el: HTMLElement | null): Promise<void> {
+    if (!el) return;
+    const esc = (s: string) => String(s).replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]!));
+    try {
+      const j = await (await fetch("/api/health")).json();
+      if (!j.ok) { el.textContent = "Proxy unreachable — the copilot is off."; el.style.color = "#e2504a"; return; }
+      const detail = j.mode === "oauth" ? `OAuth${j.expires_in ? " · server token expires in " + this.fmtSecs(j.expires_in) : ""}` : j.mode === "apikey" ? "server API key" : (j.mode || "");
+      el.innerHTML = `<span style="color:var(--good,#5abf8f)">Proxy · ${esc(detail)}</span> <span style="opacity:.65">at ${esc(location.origin)}/api</span>`;
+    } catch { el.textContent = "Proxy unreachable — the copilot is off."; el.style.color = "#e2504a"; }
+  }
+  // Called by the live agent on a 401/403 mid-run (an expired/invalid pasted token): open the config card so the
+  // now-"expired" status + the field are right there to re-paste.
+  onCredExpired(): void { this.showAgentConfig(); }
+
+  // The comprehensive AGENT CONNECTION config card (modal): pick proxy / API-key-or-token / local model / off, fill the
+  // mode's fields, Save. Everything is browser-local; only the proxy mode needs a running server. Opened from the
+  // account menu's "Change…"/"Set up…" and auto-opened on a mid-run token expiry.
+  showAgentConfig(): void {
+    const esc = (s: string) => String(s).replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]!));
+    const cur = resolveMode(getProvider());
+    let sel: string = (cur === "oauth" || cur === "key") ? "cred" : cur;   // one "cred" row covers key + OAuth
+    const wrap = document.createElement("div");
+    wrap.style.cssText = "position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.5)";
+    const card = document.createElement("div");
+    card.style.cssText = "width:440px;max-width:92vw;background:var(--panel);border:1px solid var(--line2);border-radius:12px;padding:16px 18px;box-shadow:0 18px 50px rgba(0,0,0,.5)";
+    wrap.appendChild(card);
+    const close = () => wrap.remove();
+    wrap.onclick = (e) => { if (e.target === wrap) close(); };
+    const MODES = [
+      { id: "proxy", title: "Shared proxy", sub: "bundled relay · server credential", badge: "needs a server", bad: true },
+      { id: "cred", title: "API key or token", sub: "API key, or a subscription OAuth token", badge: "no server", bad: false },
+      { id: "local", title: "Local model", sub: "vLLM / Ollama on your machine", badge: "no server", bad: false },
+      { id: "off", title: "Off", sub: "pure viewer, no copilot", badge: "", bad: false },
+    ];
+    const body = (): string => {
+      if (sel === "off") return `<div class="acsub">No copilot. The viewer, compute, and manual analysis all work on their own.</div>`;
+      if (sel === "proxy") return `<div class="acsub" id="acproxystat">Checking the proxy…</div><div class="acsub" style="margin-top:6px;opacity:.7;line-height:1.45">Uses a credential held by the server at <span style="font-family:var(--mono)">${esc(location.origin)}/api</span>. The only mode that needs a running server.</div>`;
+      if (sel === "local") { const lc = localCfg(); return `<label class="acsub" style="display:block;margin-bottom:4px">endpoint url (OpenAI-compatible)</label><input id="acfu" type="text" class="acwsearch" value="${esc(lc?.url || "http://localhost:8000/v1")}" style="font-family:var(--mono)"><label class="acsub" style="display:block;margin:10px 0 4px">model</label><input id="acfm" type="text" class="acwsearch" value="${esc(lc?.model || "")}" placeholder="qwen3-8b" style="font-family:var(--mono)"><div class="acsub" style="margin-top:8px;opacity:.7;line-height:1.45">Runs in your browser, calling this endpoint directly — it must allow this page's origin (CORS).</div>`; }
+      return `<div id="acfstat" style="margin-bottom:7px">${this.credStatusHtml()}</div><input id="acfk" type="password" autocomplete="off" class="acwsearch" placeholder="paste Anthropic API key…"><div id="acfdet" class="acsub" style="margin-top:5px;min-height:13px"></div><div class="acsub" style="margin-top:7px;opacity:.7;line-height:1.45">Stored only in this browser — requests go straight to Anthropic. A subscription OAuth token works too; it just expires after a few hours.</div>`;
+    };
+    const render = () => {
+      card.innerHTML = `<div style="font-size:15px;font-weight:600;margin-bottom:3px">Agent connection</div>
+        <div class="acsub" style="margin-bottom:12px;line-height:1.45">Where the copilot sends requests. Data, compute, and rendering always run in your browser.</div>
+        <div style="display:flex;flex-direction:column;gap:6px">${MODES.map((m) => `<div class="acfmode" data-m="${m.id}" style="display:flex;align-items:center;gap:11px;padding:9px 11px;border:0.5px solid ${sel === m.id ? "var(--cyan,#78e0ff)" : "var(--line)"};border-radius:8px;cursor:pointer;background:${sel === m.id ? "var(--inset)" : "transparent"}"><div style="flex:1;min-width:0"><div style="font-size:13.5px;font-weight:500">${m.title}</div><div class="acsub">${m.sub}</div></div>${m.badge ? `<span style="font-size:11px;padding:2px 8px;border-radius:8px;background:${m.bad ? "rgba(224,164,88,.15)" : "rgba(90,191,143,.15)"};color:${m.bad ? "var(--amber,#e0a458)" : "var(--good,#5abf8f)"};white-space:nowrap">${m.badge}</span>` : ""}<span style="visibility:${sel === m.id ? "visible" : "hidden"};color:var(--cyan,#78e0ff)">✓</span></div>`).join("")}</div>
+        <div style="margin-top:13px;border-top:0.5px solid var(--line);padding-top:13px">${body()}</div>
+        <div style="display:flex;gap:8px;margin-top:14px;justify-content:flex-end"><button class="acbtn" id="acfcancel" style="margin:0;width:auto;padding:0 14px">Cancel</button><button class="acbtn" id="acfsave" style="margin:0;width:auto;padding:0 18px">Save</button></div>`;
+      card.querySelectorAll<HTMLElement>(".acfmode").forEach((el) => el.onclick = () => { sel = el.dataset.m!; render(); });
+      if (sel === "proxy") void this.fillProxyStatus(card.querySelector<HTMLElement>("#acproxystat"));
+      if (sel === "cred") { const k = card.querySelector<HTMLInputElement>("#acfk"), d = card.querySelector<HTMLElement>("#acfdet"); if (k && d) { k.oninput = () => { const det = detectCred(k.value); d.textContent = det ? (det.kind === "oauth" ? "detected: OAuth token" + (det.expiresAt ? " (with expiry)" : "") : "detected: API key") : ""; }; setTimeout(() => k.focus(), 0); } }
+      (card.querySelector("#acfcancel") as HTMLElement).onclick = close;
+      (card.querySelector("#acfsave") as HTMLElement).onclick = () => this.saveAgentConfig(sel, card, close);
+    };
+    render();
+    document.body.appendChild(wrap);
+  }
+  // Apply the chosen mode from the config card, then re-check reachability + toast. Provider is derived: local→openai,
+  // everything else→anthropic. "off" wins via the explicit flag.
+  private saveAgentConfig(sel: string, card: HTMLElement, close: () => void): void {
+    const setProv = (p: string) => { try { localStorage.setItem(PROVIDER_KEY, p); } catch { /* */ } };
+    if (sel === "off") { setAgentOff(true); }
+    else if (sel === "proxy") { setAgentOff(false); setProv("anthropic"); clearCred(); }
+    else if (sel === "local") {
+      const url = (card.querySelector("#acfu") as HTMLInputElement)?.value.trim() || "";
+      const model = (card.querySelector("#acfm") as HTMLInputElement)?.value.trim() || "";
+      if (!url) { this.toast("Enter the local endpoint URL", null); return; }
+      setAgentOff(false); setProv("openai"); setLocalCfg(url, model);
+    } else {   // cred (API key or OAuth token)
+      const v = (card.querySelector("#acfk") as HTMLInputElement)?.value.trim() || "";
+      setAgentOff(false); setProv("anthropic");
+      if (v) { const cc = saveCred(v); if (!cc) { this.toast("Couldn't read that as a key or token", null); return; } }
+      else if (!loadCred()) { this.toast("Paste an API key or token first", null); return; }
+    }
+    close();
+    void checkLive(getProvider()).then((ok) => { this.agent.live = ok; });
+    const m = resolveMode(getProvider());
+    this.toast("Agent connection updated", m === "off" ? "Copilot is off — the viewer works on its own." : "Mode: " + (m === "oauth" ? "OAuth token" : m === "key" ? "API key" : m) + (m === "proxy" || m === "local" ? "" : " · browser-direct"));
+  }
   // A small confirmation modal for a destructive action: spells it out, defaults focus to Cancel, dismisses on
   // Esc / backdrop / Cancel (→ onCancel), and runs onConfirm only on the explicit OK click. `title`/`body`/`ok`
   // are HTML (the caller escapes any dynamic text). All clicks are kept INSIDE the overlay so the page's
