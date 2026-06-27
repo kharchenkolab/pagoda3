@@ -6,6 +6,7 @@ import { EmbeddingView } from "../render/embedding.ts";
 import { Agent, Scope } from "../agent/agent.ts";
 import { agentPanelTypes } from "./panel-registry.ts";
 import { checkLive } from "../agent/live.ts";
+import { saveCred, clearCred, credStatus, detectCred } from "../agent/credentials.ts";
 import { getProvider, providerModel } from "../agent/providers.ts";
 import { normalizeViewPatch, RawViewPatch, World, PanelSpec, PanelPatch, MAX_COLS } from "../agent/viewpatch.ts";
 import { validateCellSet, resolveCellSet, describeCellSet, CellSet, CellWorld, CellEnv } from "../agent/cellset.ts";
@@ -1677,6 +1678,15 @@ export class App {
           <button data-a="import" title="Open a session file">⤒</button>
           <button data-a="reset" title="Reset layout &amp; reload">↺</button>
         </div></div>
+      <div class="acsec"><div class="aclabel">AGENT CONNECTION</div>
+        <div id="acconn" style="margin-bottom:7px">${this.credStatusHtml()}</div>
+        <input class="acwsearch" id="accred" type="password" autocomplete="off" placeholder="paste Anthropic API key…">
+        <div id="accreddet" class="acsub" style="margin-top:5px;min-height:13px"></div>
+        <div style="display:flex;gap:6px;margin-top:7px">
+          <button class="acbtn" id="accredsave" style="flex:1;margin:0">Save</button>
+          <button class="acbtn" id="accredclear" style="flex:0 0 auto;margin:0">Clear</button>
+        </div>
+        <div class="acsub" style="margin-top:7px;opacity:.7;line-height:1.45">Stored only in this browser — requests go straight to Anthropic.</div></div>
       <div class="acsec"><div class="aclabel">ADD TO WORKBENCH</div>
         <input class="acwsearch" id="acwsearch" placeholder="search panels & widgets…">
         <div class="acwidgets" id="acwlist">${widgets}</div></div>`;
@@ -1700,7 +1710,30 @@ export class App {
       }); });
     const sb = c.querySelector<HTMLInputElement>("#acwsearch");   // filter the combined list in place (no menu re-render → keeps focus)
     if (sb) sb.oninput = () => { const q = sb.value.trim().toLowerCase(); c.querySelectorAll<HTMLElement>(".acwrow").forEach((el) => { el.style.display = !q || (el.dataset.search || "").includes(q) ? "" : "none"; }); };
+    // AGENT CONNECTION: one field accepts an API key OR a subscription OAuth token — detect-as-you-type, save → the
+    // agent goes browser-direct (no proxy), clear → back to the proxy (if any). Stays inside the menu so the outside-
+    // click dismisser doesn't fire mid-edit.
+    const credIn = c.querySelector<HTMLInputElement>("#accred"); const credDet = c.querySelector<HTMLElement>("#accreddet");
+    if (credIn && credDet) credIn.oninput = () => { const d = detectCred(credIn.value); credDet.textContent = d ? (d.kind === "oauth" ? "detected: OAuth token" + (d.expiresAt ? " (with expiry)" : "") : "detected: API key") : ""; };
+    const saveBtn = c.querySelector<HTMLElement>("#accredsave");
+    if (saveBtn) saveBtn.onclick = (e) => { e.stopPropagation(); const v = (credIn?.value || "").trim(); if (!v) return; const cc = saveCred(v); if (!cc) { this.toast("Couldn't read that as a key or token", null); return; } this.agent.live = true; this.toast("Agent connected · " + (cc.kind === "oauth" ? "OAuth token" : "API key"), "Requests go straight to Anthropic from this browser."); this.openAccountMenu(); };
+    const clearBtn = c.querySelector<HTMLElement>("#accredclear");
+    if (clearBtn) clearBtn.onclick = (e) => { e.stopPropagation(); clearCred(); this.toast("Credential cleared", null); void checkLive(getProvider()).then((ok) => { this.agent.live = ok; }); this.openAccountMenu(); };
   }
+  // The current agent-credential status, as a short line for the account menu (kind + expiry state).
+  credStatusHtml(): string {
+    const s = credStatus();
+    if (s.state === "none") return `<div class="acsub">No pasted credential — using the proxy if one's running, else the copilot is off.</div>`;
+    const kind = s.kind === "oauth" ? "OAuth token" : "API key";
+    const fmt = (sec?: number) => sec == null ? "" : sec >= 3600 ? `~${Math.floor(sec / 3600)}h ${Math.round((sec % 3600) / 60)}m` : `~${Math.max(1, Math.round(sec / 60))}m`;
+    if (s.state === "expired") return `<div class="acsub" style="color:#e2504a">${kind} expired — paste a fresh one to continue.</div>`;
+    if (s.state === "expiring") return `<div class="acsub" style="color:var(--amber,#e0a458)">${kind} · expires in ${fmt(s.secondsLeft)} — re-paste soon.</div>`;
+    if (s.kind === "oauth") return `<div class="acsub" style="color:var(--good,#5abf8f)">OAuth token · ${s.secondsLeft != null ? "active, expires in " + fmt(s.secondsLeft) : "active (expires after a few hours)"}</div>`;
+    return `<div class="acsub" style="color:var(--good,#5abf8f)">API key · active</div>`;
+  }
+  // Called by the live agent when a request is rejected 401/403 mid-run (an expired/invalid pasted token): open the
+  // account menu so the now-"expired" status + the paste field are right there.
+  onCredExpired(): void { this.openAccountMenu(); }
   // A small confirmation modal for a destructive action: spells it out, defaults focus to Cancel, dismisses on
   // Esc / backdrop / Cancel (→ onCancel), and runs onConfirm only on the explicit OK click. `title`/`body`/`ok`
   // are HTML (the caller escapes any dynamic text). All clicks are kept INSIDE the overlay so the page's

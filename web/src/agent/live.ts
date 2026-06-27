@@ -13,8 +13,21 @@ import { listRecipes, findRecipes, getRecipe, recipeSource } from "../widget/rec
 import { applyEdits } from "../widget/edits.ts";
 import { getProvider, providerModel, adapterFor } from "./providers.ts";
 import { newLoopState, isStuck } from "./loopguard.ts";
+import { loadCred, buildDirectAnthropic, markCredExpired } from "./credentials.ts";
 
 const PROXY = "/api/agent/stream";
+
+// The agent's network hop. With a pasted Anthropic credential (API key OR subscription OAuth token), call
+// api.anthropic.com DIRECTLY from the browser — the zero-process path, no proxy. Otherwise hit the proxy (which holds
+// a server-side credential). The Anthropic provider is canonical, so the SAME SSE parse loop consumes either stream.
+function agentStream(built: any, meta: { provider: string; model: string; store: string | null }, abort: AbortSignal): Promise<Response> {
+  const cred = meta.provider === "openai" ? null : loadCred();
+  if (cred) {
+    const { url, headers, body } = buildDirectAnthropic({ ...built, model: meta.model }, cred);
+    return fetch(url, { method: "POST", headers, body: JSON.stringify(body), signal: abort });
+  }
+  return fetch(PROXY, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...built, provider: meta.provider, model: meta.model, client: "app", runId: liveRunId(), store: meta.store }), signal: abort });
+}
 
 // A stable id for THIS browser session's conversation — minted once per page load, sent with every turn so the proxy's
 // debug capture (PAGODA_AGENT_DEBUG) can attribute turns to one session (current.json + sess-<runId>.jsonl) instead of
@@ -23,6 +36,7 @@ let _liveRunId = "";
 function liveRunId(): string { if (!_liveRunId) _liveRunId = "r" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); return _liveRunId; }
 
 export async function checkLive(provider?: string): Promise<boolean> {
+  if (provider !== "openai" && loadCred()) return true;   // a pasted credential = the agent is reachable browser-direct (no proxy)
   try { const r = await fetch("/api/health" + (provider ? "?provider=" + encodeURIComponent(provider) : "")); const j = await r.json(); return !!j.ok; } catch { return false; }
 }
 
@@ -337,7 +351,15 @@ export async function runLive(app: App, userText: string, abort: AbortSignal): P
   let emptyRetries = 0; const loop = newLoopState();
   for (let turn = 0; turn < 12; turn++) {   // headroom for multi-step flows like widget authoring (template → preview → fix → save)
     if (abort.aborted) break;
-    const res = await fetch(PROXY, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...adapter.buildBody({ system: sys, messages, tools: TOOLS, maxTokens: 8192 }), provider, model, client: "app", runId: liveRunId(), store: app.currentStore() }), signal: abort });
+    const res = await agentStream(adapter.buildBody({ system: sys, messages, tools: TOOLS, maxTokens: 8192 }), { provider, model, store: app.currentStore() }, abort);
+    // A pasted credential that's expired/invalid comes back 401/403. Detect it gracefully mid-run: flag it (so the
+    // connection UI shows "expired"), tell the user plainly, and stop this turn — don't fall through to the generic
+    // "unreachable" path (which throws + drops to the offline fallback).
+    if ((res.status === 401 || res.status === 403) && loadCred()) {
+      markCredExpired();
+      app.thread.entries.push({ role: "agent", text: "Your Anthropic token was rejected — most likely the OAuth token expired. Open ⚙ connection and paste a fresh token, then resend." });
+      ag.renderThread(); app.setPip("idle"); (app as any).onCredExpired?.(); return;
+    }
     if (!res.ok || !res.body) { app.thread.entries.push({ role: "agent", text: "(agent unreachable — using local fallback)" }); ag.renderThread(); throw new Error("live unreachable"); }
     const assistant: any[] = []; let curText = ""; let curTool: any = null; let curJson = ""; let textEntry: any = null; let stop = "";
     const pstate = adapter.newState();
