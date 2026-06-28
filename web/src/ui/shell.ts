@@ -1440,26 +1440,42 @@ export class App {
     const Aids = [...resolveCellSet(input.A, env)];
     if (!Aids.length) return { error: `A (${describeCellSet(input.A)}) resolves to no cells` };
     await ctx.view.genes();
-    // Human label that RESOLVES {selection}/{focus} to their LIVE identity — the chosen category's value (so a DE on the
-    // current selection reads "CD14 mono vs rest", not the generic "selection vs rest"), or a cell count for a manual
-    // selection. Categories / all / set ops fall through to describeCellSet.
+    // The category a cell set RESOLVES to (so we can name it AUTHORITATIVELY), or null. {category} is itself; {selection}
+    // resolves via the live OR ask-pinned selection ref; {focus} via the focus ref. Used both to label and to decide
+    // whether the system title overrides a generic agent-supplied one.
+    const catRefOf = (expr: any): { grouping: string; value: any } | null => {
+      if (expr?.category) return expr.category;
+      const r: any = expr?.selection ? (ctx.coord.state.selection || (this.askScope?.type === "selection" ? (this.askScope as any).sel : null)) : (expr?.focus ? ctx.coord.state.focus : null);
+      return r?.kind === "category" ? { grouping: r.grouping, value: r.value } : null;
+    };
+    const catLabel = (g: string, v: any) => /^\d+$/.test(String(v)) ? `${g} ${v}` : String(v);   // bare-number cluster → name it ("leiden 4", not "4")
+    // Human label that RESOLVES {selection}/{focus} to their LIVE identity — the chosen category (so a DE on the current
+    // selection reads "CD14 mono vs rest" / "leiden 4 vs rest", not the generic "selection vs rest"), or a cell count for
+    // a manual selection. Categories / all / set ops fall through to describeCellSet.
     const richLabel = (expr: any, ids: number[]): string => {
-      if (expr?.selection) { const s: any = ctx.coord.state.selection || (this.askScope?.type === "selection" ? (this.askScope as any).sel : null); return s?.kind === "category" ? String(s.value) : `selection · ${ids.length.toLocaleString()} cells`; }
+      const c = catRefOf(expr);
+      if (c) return catLabel(c.grouping, c.value);
+      if (expr?.selection) return `selection · ${ids.length.toLocaleString()} cells`;
       if (expr?.focus) { const f: any = ctx.coord.state.focus; return f?.label ? String(f.label) : "focus"; }
       return describeCellSet(expr);
     };
+    const namedA = !!catRefOf(input.A);   // A is an authoritative category → the SYSTEM names the card (a generic agent `title` is ignored)
     const place = (spec: Partial<Panel>) => { if (input.toCanvas) this.addPanel(spec); else this.agent.addRail(spec); };
 
     if (input.stat === "overdispersion") {
       const hv = await ctx.view.overdispersedGenes(Aids, 1e9);   // ALL scored genes (topN caps the return; scoring is over every gene) — the panel filters/searches the full list
       if (!hv.length) return { error: "no overdispersion (store has no cell-major counts panel)" };
       const label = richLabel(input.A, Aids);
-      place({ type: "GeneList", title: input.title || `Variable genes · ${label}`, cap: "overdispersion", bind: "hvg:scope", rows: hv.map((h) => ({ symbol: h.symbol, score: h.resid })) });
+      place({ type: "GeneList", title: namedA ? `Variable genes · ${label}` : (input.title || `Variable genes · ${label}`), cap: "overdispersion", bind: "hvg:scope", rows: hv.map((h) => ({ symbol: h.symbol, score: h.resid })) });
       return { ok: `top variable genes in ${label} (${Aids.length} cells), recomputed for this scope: ${hv.slice(0, 10).map((h) => h.symbol).join(", ")}` };
     }
     const Bids = [...resolveCellSet(Bexpr!, env)];
     if (!Bids.length) return { error: `B (${describeCellSet(Bexpr!)}) resolves to no cells` };
     const aL = richLabel(input.A, Aids), bL = input.B ? richLabel(Bexpr!, Bids) : "rest";
+    // When either side is an authoritative category, the contrast IS the title — ignore a generic agent `title`. Only an
+    // anonymous (manual-lasso) contrast falls back to the agent's title, so it can still NAME an otherwise-unlabelled set.
+    const named = namedA || (input.B ? !!catRefOf(Bexpr!) : false);
+    const titleOf = (sys: string) => named ? sys : (input.title || sys);
 
     // CLUSTER vs REST → the store's PRECOMPUTED 1-vs-rest markers (markers_<grouping>). Instant, NO matrix read — these
     // ARE the cluster-vs-rest DE. Reading the whole matrix to compare a cluster against everything is bytes-bound (the
@@ -1471,7 +1487,7 @@ export class App {
         const rows0 = (await ctx.view.markers(g, 1e9)).get(val);
         if (rows0?.length) {
           const rows = rows0.map((r: any) => ({ gene: r.gene, symbol: r.symbol, lfc: r.lfc, p: r.padj }));
-          place({ type: "DeTable", title: input.title || `${aL} vs rest`, cap: "1-vs-rest markers", bind: "de:markers", aLabel: aL, bLabel: "rest", rows });
+          place({ type: "DeTable", title: titleOf(`${aL} vs rest`), cap: "1-vs-rest markers", bind: "de:markers", aLabel: aL, bLabel: "rest", rows });
           const up = rows.filter((r: any) => r.lfc > 0).slice(0, 8).map((r: any) => r.symbol).join(", ");
           return { ok: `DE ${aL} vs rest from the store's precomputed 1-vs-rest markers — instant, no recompute. Up in ${aL}: ${up}. (To recompute at the cell level, compare ${aL} against a SPECIFIC other group instead of rest.)` };
         }
@@ -1492,7 +1508,7 @@ export class App {
       if (repsA.length < 2 || repsB.length < 2) return { error: `pseudobulk needs ≥2 replicates per group, but A has ${repsA.length} and B has ${repsB.length} ${rep}(s) with ≥${minCells} cells. Pick a replicate field with enough samples on each side (a 1-vs-1 or 3-vs-0 split can't carry a population claim).` };
       const genes = await ctx.view.genes();
       const rows = pr.map((r) => ({ gene: r.g, symbol: genes[r.g], lfc: r.lfc, p: r.p, meanA: r.meanA, meanB: r.meanB }));
-      place({ type: "DeTable", title: input.title || `${aL} vs ${bL}`, cap: `donor-level · ${repsA.length} vs ${repsB.length} ${rep}s`, bind: "pseudobulk:donor", aLabel: aL, bLabel: bL, rows });
+      place({ type: "DeTable", title: titleOf(`${aL} vs ${bL}`), cap: `donor-level · ${repsA.length} vs ${repsB.length} ${rep}s`, bind: "pseudobulk:donor", aLabel: aL, bLabel: bL, rows });
       const sig = rows.filter((r) => r.p < 0.05).length;
       const top = rows.slice(0, 8).map((r) => `${r.symbol}${r.p < 0.05 ? "*" : ""}`).join(", ");
       return { ok: `pseudobulk DE ${aL} vs ${bL} across ${rep}, ${repsA.length} vs ${repsB.length} replicates: ${sig} gene(s) at p<0.05 (Welch t-test on per-replicate mean log-expression). Top by p: ${top}. The replicate is the unit here, so unlike cell-level de this carries a real p-value and supports a population-level claim — but with few replicates power is limited; treat marginal hits cautiously.` };
@@ -1501,7 +1517,7 @@ export class App {
     // de (cell-level, ranking-grade)
     const { ranked, panel } = await ctx.view.subsampleDE(Aids, Bids);
     const rows = ranked.map((r: any) => ({ gene: r.gene, symbol: r.symbol, lfc: r.lfc, meanA: r.meanA, meanB: r.meanB }));   // ALL tested genes — the panel filters/searches the full list (render is capped)
-    place({ type: "DeTable", title: input.title || `${aL} vs ${bL}`, cap: "cell-level DE", bind: "de:between", aLabel: aL, bLabel: bL, rows });   // title = the contrast (the identity); cap = the test TYPE (secondary, non-redundant) — the approx/ranking nature lives in the caveat
+    place({ type: "DeTable", title: titleOf(`${aL} vs ${bL}`), cap: "cell-level DE", bind: "de:between", aLabel: aL, bLabel: bL, rows });   // title = the contrast (the identity); cap = the test TYPE (secondary, non-redundant) — the approx/ranking nature lives in the caveat
     const up = rows.filter((r: any) => r.lfc > 0).slice(0, 6).map((r: any) => r.symbol).join(", ");
     const dn = rows.filter((r: any) => r.lfc < 0).slice(0, 6).map((r: any) => r.symbol).join(", ");
     return { ok: `DE ${aL} (${Aids.length}) vs ${bL} (${Bids.length}), compared directly. Higher in ${aL}: ${up || "—"}. Higher in ${bL}: ${dn || "—"}.` };
