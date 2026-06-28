@@ -1177,33 +1177,36 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
   // FACETING: if the panel is scoped (e.g. condition=day0), compute the dots WITHIN that population. Columns stay in
   // the grouping's full order, so two scoped panels (day0 / day7) share identical rows AND columns — directly comparable.
   const scope = p.view?.scope as any;
-  let scopeCells = scope ? ctx.refToCells(scope) : null;
-  let scopeLabel = scope ? (scope.kind === "category" ? scope.value : `${scopeCells!.length} cells`) : "";
-  let statsKey = scope && scope.kind === "category" ? `${scope.grouping}=${scope.value}` : (scope ? `cells:${scopeCells!.length}` : undefined);
-  const subset = ctx.subsetCells();   // L3 global subset — compute the dots WITHIN it (∩ any per-panel facet scope)
-  if (subset) {
-    const sub = new Set(subset); scopeCells = scopeCells ? scopeCells.filter((c) => sub.has(c)) : subset;
-    scopeLabel = scopeLabel ? `${scopeLabel} ∩ subset` : String(ctx.coord.state.focus?.label || "subset");
-    statsKey = `subset${ctx.coord.state.focus?.ids.length}${statsKey ? "+" + statsKey : ""}`;
-  }
-  const scoped = !!(scopeCells && scopeCells.length);
-  const gs = scoped
-    ? await ctx.groupStatsForCells(grouping, scopeCells!, statsKey)
-    : await ctx.groupStatsCached(grouping);
-  // top 3 genes per group, unique
-  const seen = new Set<number>(); const markerRows: { gene: number; symbol: string; pinned?: boolean }[] = [];
-  for (const grp of gs.groups) for (const m of (markers.get(grp) || []).slice(0, 3)) if (!seen.has(m.gene)) { seen.add(m.gene); markerRows.push({ gene: m.gene, symbol: m.symbol }); }
-  // pinned custom genes (agent/user added) — resolved to indices, placed FIRST and highlighted; any marker dup is
-  // folded in. A requested gene that isn't in this dataset is collected into `missing` and shown as a panel
-  // footnote, so an unmeasured request (e.g. IL17B in a panel that lacks it) gives visible feedback, not silence.
+  // PINNED custom genes (agent/user added) — depend on p.genes only (NOT the subset), so resolve once. A requested gene
+  // absent from this dataset goes to `missing` (shown as a footnote), so an unmeasured request gives feedback, not silence.
   const pinnedRows: { gene: number; symbol: string; pinned?: boolean }[] = []; const pinnedSet = new Set<number>(); const missing: string[] = [];
   if (p.genes?.length) { await ctx.view.genes();
     for (const sym of p.genes) { const gi = await ctx.view.geneCol(sym); if (gi == null) { if (!missing.includes(sym)) missing.push(sym); continue; } if (pinnedSet.has(gi)) continue; pinnedSet.add(gi); pinnedRows.push({ gene: gi, symbol: sym, pinned: true }); } }
-  const rows = [...pinnedRows, ...markerRows.filter((r) => !pinnedSet.has(r.gene))];
-  const nPinned = pinnedRows.length;
-  const G = gs.groups.length, R = rows.length, x0 = 70, y0 = 6;
+  // SUBSET-DEPENDENT data — re-derived by loadData() whenever the L3 subset (focus) changes (afterAttach subscribes), so
+  // the DOTS recompute within the current subpopulation. The GENES (rows) stay the WHOLE-dataset markers — a stable
+  // reference frame; only the dot values change. (FACET scope p.view.scope intersects the global subset, as before.)
+  let scopeCells: number[] | Int32Array | null = null, scopeLabel = "", scoped = false;
+  let gs: any = null, rows: { gene: number; symbol: string; pinned?: boolean }[] = [], nPinned = 0, G = 0, R = 0, xLabMax = 1;
+  async function loadData() {
+    scopeCells = scope ? ctx.refToCells(scope) : null;
+    scopeLabel = scope ? (scope.kind === "category" ? scope.value : `${scopeCells!.length} cells`) : "";
+    let statsKey = scope && scope.kind === "category" ? `${scope.grouping}=${scope.value}` : (scope ? `cells:${scopeCells!.length}` : undefined);
+    const subset = ctx.subsetCells();
+    if (subset) {
+      const sub = new Set(subset); scopeCells = scopeCells ? scopeCells.filter((c) => sub.has(c)) : subset;
+      scopeLabel = scopeLabel ? `${scopeLabel} ∩ subset` : String(ctx.coord.state.focus?.label || "subset");
+      statsKey = `subset${ctx.coord.state.focus?.ids.length}${statsKey ? "+" + statsKey : ""}`;
+    }
+    scoped = !!(scopeCells && scopeCells.length);
+    gs = scoped ? await ctx.groupStatsForCells(grouping, scopeCells!, statsKey) : await ctx.groupStatsCached(grouping);
+    const seen = new Set<number>(); const markerRows: { gene: number; symbol: string; pinned?: boolean }[] = [];
+    for (const grp of gs.groups) for (const m of (markers.get(grp) || []).slice(0, 3)) if (!seen.has(m.gene)) { seen.add(m.gene); markerRows.push({ gene: m.gene, symbol: m.symbol }); }
+    rows = [...pinnedRows, ...markerRows.filter((r) => !pinnedSet.has(r.gene))];
+    nPinned = pinnedRows.length; G = gs.groups.length; R = rows.length; xLabMax = Math.max(1, ...gs.groups.map((g: string) => g.length));
+  }
+  await loadData();
+  const x0 = 70, y0 = 6;
   let s = resolvePanelStyleFor(ctx, "Heatmap", p.view);   // the panel's resolved style (dot/cell/font/ramp/highlight); the ramp endpoints are theme-baked → re-resolve on theme change (afterAttach)
-  const xLabMax = Math.max(1, ...gs.groups.map((s) => s.length));   // longest column label — drives rotate vs horizontal
   const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
   let mode: "heat" | "dot" = p.heatMode === "heat" ? "heat" : "dot";   // dotplot is the default; "heat" only when explicitly set
   // cross-panel coordination state: which groups (columns) are selected / hovered elsewhere, translated into THIS
@@ -1240,7 +1243,7 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
     const svg = host.querySelector("svg"); if (!svg) return;
     const hl = svg.querySelector(".hcolhl"); if (!hl) return;
     let hlSvg = "";
-    gs.groups.forEach((grp, c) => {
+    gs.groups.forEach((grp: string, c: number) => {
       const sel = !!selGroups?.has(grp), hov = !sel && !!hovGroups?.has(grp);
       if (sel || hov) hlSvg += `<rect x="${(x0 + c * geomCw).toFixed(1)}" y="${y0}" width="${geomCw.toFixed(1)}" height="${(R * geomCh).toFixed(1)}" fill="rgba(92,200,255,${sel ? s.highlight.selOpacity : s.highlight.hovOpacity})" pointer-events="none"/>`;
     });
@@ -1295,7 +1298,7 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
     if (nPinned > 0 && nPinned < R) g += `<line x1="${x0.toFixed(1)}" y1="${(y0 + nPinned * ch).toFixed(1)}" x2="${(x0 + G * cw).toFixed(1)}" y2="${(y0 + nPinned * ch).toFixed(1)}" stroke="var(--cyan)" stroke-opacity="0.4" stroke-width="0.6"/>`;
     const bottomY = y0 + R * ch;
     const xFit = rotX ? Math.max(3, Math.floor((axisH - 8) / 0.72 / (grpFs * 0.6))) : 99;   // chars that fit the rotated band at the live font (rest ellipsised; hover gives full)
-    gs.groups.forEach((grp, c) => {
+    gs.groups.forEach((grp: string, c: number) => {
       if (c % grpStride !== 0) return;   // thinned when very dense — the column + dots still render; hover reads the name
       const cx = x0 + c * cw + cw / 2;
       const lab = grp.length > xFit ? grp.slice(0, xFit - 1) + "…" : grp;
@@ -1328,6 +1331,7 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
       el.addEventListener("click", () => ctx.coord.setSelection({ kind: "category", grouping, value: grp }));   // commit a selection (clusters/cell types coordinate everywhere)
     });
     paintCols(); paintGeneRow();   // re-apply cross-panel highlights after the (re)layout
+    if (scoped) { scopeTag.textContent = `▸ within ${scopeLabel}`; scopeTag.title = `dots computed within ${scopeLabel} (genes are the dataset-wide markers)`; scopeTag.style.display = "flex"; } else scopeTag.style.display = "none";
   };
 
   // ORTHOGONAL-selection notice: when a category of a DIFFERENT grouping is selected (e.g. a sample, while this dotplot
@@ -1336,6 +1340,9 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
   const orthPill = mk("div", "orthpill"); const orthTxt = mk("span", "t"); const orthAct = mk("span", "x");
   orthAct.textContent = "subset to it →"; orthAct.title = "restrict the whole workspace to these cells (focus) — then this dotplot recomputes within them";
   orthPill.append(orthTxt, orthAct); orthPill.style.display = "none"; w.appendChild(orthPill);
+  // L3 SUBSET scope tag — when a focus/subset is active, the dots are computed WITHIN it; this names the subpopulation
+  // so the panel visibly reflects the restriction (draw() shows/updates it). Muted (not amber/cyan → no ramp clash).
+  const scopeTag = mk("div", "scopetag"); scopeTag.style.display = "none"; w.appendChild(scopeTag);
   const setOrthogonal = (info: { grouping: string; value: string } | null) => {
     if (!info) { orthPill.style.display = "none"; return; }
     orthTxt.innerHTML = `⊙ <b>${esc(info.grouping)} = ${esc(info.value)}</b> selected · not a column in this ${esc(grouping)} view`;
@@ -1354,6 +1361,10 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
     hooks.registerComposition({ grouping, setSelect: (v) => { selGroups = v; paintCols(); }, setHover: (v) => { hovGroups = v; paintCols(); }, setOrthogonal });
     hooks.registerGeneHover((sym) => { hovGene = sym; paintGeneRow(); });   // another dotplot hovered a gene → highlight its row here
     hooks.onTheme(() => { s = resolvePanelStyleFor(ctx, "Heatmap", p.view); draw(); });   // theme toggled → re-resolve the (build-time-baked) ramp endpoints + redraw, so the dotplot follows the theme
+    // NOTE: live recompute-on-subset (hooks.onCoord focus → loadData + draw) is intentionally NOT wired here yet: it
+    // deadlocks because groupStatsForCells loads the whole cell-major matrix (dePanel) via the compute-pool worker, and
+    // that path races/hangs when triggered from the focus subscription. loadData() is factored out and ready; wire it
+    // once the pool path is made re-entrancy-safe (own task). For now the dots reflect the subset only on a fresh build.
     let ro: ResizeObserver;
     ro = new ResizeObserver(() => { if (!w.isConnected) ro.disconnect(); else draw(); });   // re-fill on resize; self-cleans
     if (pb) ro.observe(pb);
