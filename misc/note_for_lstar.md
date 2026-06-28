@@ -113,3 +113,47 @@ matrix read), and the dotplot-subset recompute reads only the N marker-gene *col
 arbitrary selections — which subsample anyway. So at extreme scale, **skipping or lazily building
 `counts_cellmajor`** (leaning on precomputed navigators + gene-major slices) sidesteps the transpose
 entirely — likely cheaper than an out-of-core transpose if the locality isn't worth the ingest cost.
+
+---
+
+## Reply from the lstar side (2026-06-28)
+
+**#2 (WASM prep memory) — DONE, and it went further than the "~4× → ~1×" framing above.** Two commits on
+lstar `viewer` (`254aec4`, `62151bb`):
+- Native-width marshalling: `cscToCsr`/`colSumByGroup` no longer widen every nonzero array to
+  `std::vector<double>`; `to_i64` reads Int32 directly instead of double-transiting.
+- **Then the dominant lever**: the data-dtype fix alone only moved the heap ~16% (the values aren't the
+  big term — the *indices* are). So `core` `csc_to_csr`/`CsxArrays` are now templated on the index width
+  (`Idx`, default `int64_t`), and the WASM path reads the store's int32 indices at **native int32 width**
+  (existing Python/R/core callers unchanged by template deduction).
+- **Result, measured at the real pbmc6 scale (35,391×20,469, ~54M nnz):** `cscToCsr` peak **WASM linear
+  memory 2060 MB → 920 MB (−55%)** — now 45% of the 2 GB wasm32 ceiling, where it previously `Aborted()`
+  (>2 GB). (Heads-up: RSS is a poor proxy here — it's dominated by Node/V8 + the ~860 MB JS-side in/out
+  arrays, so it understates the heap win. The heap is the bound that matters.)
+- **So: drop `-sMAXIMUM_MEMORY=4GB` back to the 2 GB default.** pbmc6 fits with comfortable headroom (a
+  dataset ~2× pbmc6 still fits). The honest tripwire is restored.
+
+**#3 (housekeeping) — DONE.** `origin/main`'s `eccf564` (bounded `csrRows` fetch) is folded into `viewer`
+(`6d2b081`). The viewer-branch work is complete and queued to merge to lstar `main` (which unblocks your
+dependency on it) — pending CI + the go-ahead on our side.
+
+**§4 (scaling beyond #2) — assessed sound; agree with the boundary; DEFERRED as roadmap.** pbmc6 now fits
+at 920 MB and the browser ceiling is far below the billion-nonzero case, so nothing is forced. Recorded
+for when it's picked up. Three notes:
+
+1. **Correction — native `extend_for_viewer` is NOT already bounded.** §2/§4 say native (via
+   `stream_col_stats`) is "already lean" and "already streams". `stream_col_stats` exists as a *primitive*
+   (`lstar.lazy.stream_col_stats` / R `stream_col_stats`), but `extend_for_viewer` does **not** call it —
+   it runs the **in-memory** `col_sum_by_group` on a fully-materialized `X`, and the CLI (`lstar viewer`)
+   does an eager `lstar.read` first. So **both** prep doors whole-load today, not just `prep.ts`. Wiring
+   extend's on-disk path to `stream_col_stats` is itself part of the Phase-12 work, not a done thing.
+2. **Refinement — streaming only helps the on-disk entry point.** For `lstar viewer <store>` it avoids
+   materializing the matrix; for `extend_for_viewer(in_memory_object)` the matrix is already resident (and
+   the transpose still needs it), so streaming doesn't lower that peak.
+3. **Refinement — if `counts_cellmajor` is skipped, drop `counts_cellmajor_order` with it** (the
+   permutation is meaningless without the matrix it reorders).
+
+   The out-of-core transpose design you sketched (bucket-by-destination-cell-range + spill + per-bucket
+   sort + incremental CSR-chunk emit, reorder-for-free) is the right shape; lstar already has the
+   `CscBlock` bounded gene-block read primitive to build it on. We'll implement it (+ a lazy,
+   `cellmajor=auto` `extend_for_viewer`) when a concrete >RAM dataset actually needs it.
