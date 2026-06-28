@@ -23,6 +23,7 @@ export class EmbeddingView {
   private viewState: any;
   private fitZoom = 0;   // the zoom at which the current frame fits — reference for fading the hint accent ring as you zoom OUT past it
   private frameN = 0;    // cells in the current frame (whole dataset, or the focused subset) — sizes the zoom-IN limit
+  private bounds = { minX: 0, maxX: 0, minY: 0, maxY: 0 };   // the current frame's data bounding box — used by clampTarget (pan bounds)
   onSelect?: (ids: Int32Array) => void;
   onHover?: (index: number | null) => void;   // a cell under the cursor (or null) — emits the cross-panel hint
   onPick?: (index: number | null, x?: number, y?: number) => void;   // a plain click: a cell (→ select its cluster) or empty (→ deselect); x/y px for the selpop anchor
@@ -59,7 +60,7 @@ export class EmbeddingView {
       canvas,
       views: [new OrthographicView({ flipY: false })],
       viewState: this.viewState,
-      onViewStateChange: ({ viewState }: any) => { this.viewState = viewState; this.deck.setProps({ viewState }); },   // controlled: keep our state in sync (for fitTo + the hint-ring fade). The zoom LIMITS live on the CONTROLLER (minZoom/maxZoom) below -- clamping here only fixes the read-back value, not the controller's interactive wheel.
+      onViewStateChange: ({ viewState }: any) => { viewState.target = this.clampTarget(viewState.target, viewState.zoom); this.viewState = viewState; this.deck.setProps({ viewState }); return viewState; },   // PAN BOUNDS via clampTarget, RETURNED so deck uses the clamped value; zoom is bounded by the controller (below).
       controller: this.controllerProps(),
       layers: this.layers(),
       // hover IS available in pan mode — picking fires on move, not drag. Emit the picked cell (or null).
@@ -243,12 +244,24 @@ export class EmbeddingView {
     const ppu = Math.min((rect.width || 800) / spanX, (rect.height || 600) / spanY) * this.style.fit.pad;
     this.frameN = count;   // cells in THIS frame (the subset when scoped) — sizes the zoom-IN limit so a focused subpopulation can't zoom past ~2 points
     this.fitZoom = Math.log2(Math.max(ppu, 1e-3));   // remember the fit scale → the hint ring fades when zoomed OUT past it
+    this.bounds = { minX, maxX, minY, maxY };
     return { target: [(minX + maxX) / 2, (minY + maxY) / 2, 0], zoom: this.fitZoom };
   }
   /** Reframe the viewport to a cell set (the `scope` property / focus_view primitive); no ids = fit all. */
   // The controller's zoom bounds for the CURRENT frame: minZoom = fit (the wheel can't pull OUT past all-cells),
   // maxZoom ≈ fit + log2(√frameN / 2) (can't zoom IN past ~2 points across the frame). deck.gl enforces these during
   // interaction (unlike an onViewStateChange clamp). Re-applied on fitTo() since fit/frameN change with the subset.
+  // PAN BOUNDS: clamp the view target so the data cloud can't be dragged out of frame. When the box fits the
+  // window (zoomed out) the target stays near centre; zoomed IN past the box, the window stays inside it.
+  // RETURNED from onViewStateChange so deck USES it (a setProps clamp races the controller and loses — see zoom).
+  private clampTarget(target: any, zoom: number): number[] {
+    const rect = this.container.getBoundingClientRect();
+    const scale = Math.pow(2, zoom), halfW = (rect.width || 800) / 2 / scale, halfH = (rect.height || 600) / 2 / scale;
+    const b = this.bounds;
+    const loX = Math.min(b.maxX - halfW, b.minX + halfW), hiX = Math.max(b.maxX - halfW, b.minX + halfW);
+    const loY = Math.min(b.maxY - halfH, b.minY + halfH), hiY = Math.max(b.maxY - halfH, b.minY + halfH);
+    return [Math.max(loX, Math.min(hiX, target[0])), Math.max(loY, Math.min(hiY, target[1])), target[2] || 0];
+  }
   private controllerProps() { return { dragPan: true, scrollZoom: true, doubleClickZoom: false, minZoom: this.fitZoom, maxZoom: this.fitZoom + Math.log2(Math.max(2, Math.sqrt(this.frameN || this.n) / 2)) }; }
   fitTo(ids?: Int32Array) { this.viewState = this.computeView(ids); this.deck.setProps({ viewState: this.viewState, controller: this.controllerProps() }); }
 
