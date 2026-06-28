@@ -5,18 +5,21 @@ import { PALETTES, normalizePalette, Palette } from "./palettes.ts";
 
 export interface Legend { kind: "categorical" | "numeric"; items: { label: string; rgb: [number, number, number] }[]; title: string; unvalidated?: boolean; }
 
-import { DIM_RGB, DIM_A, recedeInto, SEL_GHOST, defaultNumericPalette } from "./theme.ts";   // non-focus cells under a focus — theme-aware (live binding)
+import { DIM_RGB, DIM_A, recedeInto, floorInto, defaultNumericPalette } from "./theme.ts";   // non-focus cells under a focus — theme-aware (live binding)
 // Per-cell RGBA for a NUMERIC field through a chosen palette. Maps the value range [lo,hi] → palette [0,1] (lo/hi
 // come from winsorBounds, so a few outlier cells don't compress everyone else into the pale end). Replaces the old
 // fixed-ramp scalarToRGBA so the colormap is a drivable property, not baked into paint.
 function numericRGBA(values: ArrayLike<number>, lo: number, hi: number, pal: Palette, focusMask?: Uint8Array, dimKeepColor = false): Uint8Array {
   const n = values.length, out = new Uint8Array(n * 4), span = (hi - lo) || 1;
+  const liftFloor = !!(focusMask && dimKeepColor);   // active SELECTION on a numeric colouring → lift selected cells' neutral end so the footprint reads at ~0 expression
   for (let i = 0; i < n; i++) {
     const dim = !!(focusMask && !focusMask[i]);
     if (dim && !dimKeepColor) { out[i * 4] = DIM_RGB[0]; out[i * 4 + 1] = DIM_RGB[1]; out[i * 4 + 2] = DIM_RGB[2]; out[i * 4 + 3] = DIM_A; continue; }   // grey (scope desaturate)
-    const [r, g, b] = pal(Math.max(0, Math.min(1, (values[i] - lo) / span)));
-    if (dim) { recedeInto(out, i, r, g, b, SEL_GHOST); continue; }   // UNSELECTED (numeric selection): ghost toward an OFFSET grey so the dim reads even at ~0 signal
-    out[i * 4] = r; out[i * 4 + 1] = g; out[i * 4 + 2] = b; out[i * 4 + 3] = 230;
+    const t = Math.max(0, Math.min(1, (values[i] - lo) / span));
+    const [r, g, b] = pal(t);
+    if (dim) { recedeInto(out, i, r, g, b); continue; }          // UNSELECTED: recede toward the canvas (density-robust)
+    if (liftFloor) { floorInto(out, i, r, g, b, t); continue; }  // SELECTED: lift the low end to a visible grey (membership legible at ~0 signal)
+    out[i * 4] = r; out[i * 4 + 1] = g; out[i * 4 + 2] = b; out[i * 4 + 3] = 230;   // no selection: true palette (low fades into canvas)
   }
   return out;
 }

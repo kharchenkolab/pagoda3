@@ -12,19 +12,29 @@ export let DIM_A = 150;
 // cell's OWN colour kept (the rest blended into the background) — small, so a whisper of hue survives but it reads as bg.
 export let BG_RECEDE: [number, number, number] = [22, 27, 34];   // ≈ --panel #161b22 (dark)
 export const SEL_DIM_KEEP = 0.16;
-// SELECTION ghost target (numeric colourings). A sequential colormap's neutral/low end ≈ the canvas, so receding an
-// UNSELECTED neutral cell toward the canvas (BG_RECEDE) barely moves it — the dim is invisible in low-signal regions.
-// Instead, for numeric colourings recede the unselected cells toward SEL_GHOST: a grey OFFSET from the canvas, so even a
-// ~0-expression unselected cell becomes a visible grey ghost and the selected/unselected boundary reads with no signal.
-// Still opaque (full alpha) → density-robust. Categorical dim keeps receding toward the canvas (saturated hues recede fine).
-export let SEL_GHOST: [number, number, number] = [58, 64, 76];   // dark: soft grey, clearly above --panel
-// Write cell (r,g,b) RECEDED toward the background into out[i*4..+3] at full alpha — the SELECTION-dim treatment,
-// shared by the numeric and categorical colourers so they recede identically.
-export function recedeInto(out: Uint8Array, i: number, r: number, g: number, b: number, target: [number, number, number] = BG_RECEDE): void {
-  out[i * 4]     = target[0] + (r - target[0]) * SEL_DIM_KEEP;
-  out[i * 4 + 1] = target[1] + (g - target[1]) * SEL_DIM_KEEP;
-  out[i * 4 + 2] = target[2] + (b - target[2]) * SEL_DIM_KEEP;
+// SELECTION floor (numeric colourings only). A sequential colormap's neutral/low end ≈ the canvas (low expression fades
+// into it), so receding it is a near-identity there — a selected cell at ~0 expression looks like the background and the
+// selected/unselected boundary vanishes in low-signal regions. While a selection is active we LIFT the selected cells'
+// low end to SEL_FLOOR (a mid-grey clearly offset from the canvas), ramping back to the true palette colour by FLOOR_KNEE.
+// So the selected footprint reads even with no signal, WITHOUT changing the no-selection look (low still fades into canvas).
+export let SEL_FLOOR: [number, number, number] = [72, 78, 90];   // dark: soft slate grey, well above --panel
+export const FLOOR_KNEE = 0.35;   // values at/above this fraction of the range use the pure palette; only the bottom lifts
+// Write cell (r,g,b) RECEDED toward the background into out[i*4..+3] at full alpha — the SELECTION-dim treatment for the
+// UNSELECTED cells, shared by the numeric and categorical colourers so they recede identically.
+export function recedeInto(out: Uint8Array, i: number, r: number, g: number, b: number): void {
+  out[i * 4]     = BG_RECEDE[0] + (r - BG_RECEDE[0]) * SEL_DIM_KEEP;
+  out[i * 4 + 1] = BG_RECEDE[1] + (g - BG_RECEDE[1]) * SEL_DIM_KEEP;
+  out[i * 4 + 2] = BG_RECEDE[2] + (b - BG_RECEDE[2]) * SEL_DIM_KEEP;
   out[i * 4 + 3] = 255;
+}
+// Write a SELECTED cell's colour with its low end LIFTED to SEL_FLOOR: lerp floor → palette colour over [0, FLOOR_KNEE],
+// pure palette above. Keeps the selection footprint legible where expression ≈ 0. t = the cell's normalized value [0,1].
+export function floorInto(out: Uint8Array, i: number, r: number, g: number, b: number, t: number): void {
+  const k = t >= FLOOR_KNEE ? 1 : t / FLOOR_KNEE;
+  out[i * 4]     = SEL_FLOOR[0] + (r - SEL_FLOOR[0]) * k;
+  out[i * 4 + 1] = SEL_FLOOR[1] + (g - SEL_FLOOR[1]) * k;
+  out[i * 4 + 2] = SEL_FLOOR[2] + (b - SEL_FLOOR[2]) * k;
+  out[i * 4 + 3] = 230;
 }
 let isDark = true;
 export function setThemeColors(dark: boolean): void {
@@ -32,7 +42,7 @@ export function setThemeColors(dark: boolean): void {
   DIM_RGB = dark ? [62, 68, 80] : [201, 194, 174];
   DIM_A = dark ? 150 : 200;
   BG_RECEDE = dark ? [22, 27, 34] : [251, 250, 247];   // --panel: #161b22 / #fbfaf7
-  SEL_GHOST = dark ? [58, 64, 76] : [210, 207, 199];   // numeric selection-dim ghost: a grey clearly offset from the canvas in either theme
+  SEL_FLOOR = dark ? [72, 78, 90] : [205, 202, 194];   // selection floor: a mid-grey clearly offset from the canvas in either theme
 }
 // Default sequential palette for NUMERIC colourings (gene/qc/score) when none is chosen: the dark ramp fades
 // low values into the dark canvas; on the light theme that inverts (low would be darkest), so default to a
