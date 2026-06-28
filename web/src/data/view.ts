@@ -311,21 +311,47 @@ export class LstarView {
     return this.globalStatsCache;
   }
 
-  // a-vs-REST DE from sufficient stats: read ONLY A's rows (contiguous + cheap on a reordered store) to get A's per-gene
-  // mean(log1p), and take rest = GLOBAL − A from the precomputed global stats — no whole-matrix download, no read of the
-  // rest's cells. Same (gene, meanA, meanB, lfc) shape as the cell-level path (ranking-grade, no p). null without stats.
+  // a-vs-REST DE from sufficient stats: read A's rows to get A's per-gene mean(log1p), and take rest = GLOBAL − A from the
+  // precomputed global stats — no whole-matrix download, no read of the rest's cells. Ranking-grade, no p. null w/o stats.
+  // A can be ANY set: a CLUSTER is contiguous on a reordered store, but a SAMPLE / CONDITION / DONOR is ORTHOGONAL to the
+  // (cluster, Hilbert) reorder and scatters across every block — reading FULL A there fires thousands of range reads and
+  // fails ("Failed to fetch"). So on a reordered store WINDOW the read (sampleRows → a few contiguous windows, ~deCap
+  // cells) and EXTRAPOLATE the sampled sum to full A (scale = nA/nSampled) for the rest = global − A subtraction.
   private async deVsRestFromStats(cellsA: number[]): Promise<{ ranked: DEResult[]; nA: number; nB: number; approx: boolean; panel: boolean; nGenesRanked: number } | null> {
     const gs = await this.globalGeneStats(); if (!gs) return null;
-    const restN = gs.N - cellsA.length; if (restN <= 0) return null;
-    const sp = await this.subRowsPanel(cellsA); if (!sp) return null;   // read full A only
-    const ng = sp.panel.nGenes, nA = cellsA.length;
+    const nA = cellsA.length, restN = gs.N - nA; if (restN <= 0) return null;
+    const reordered = this.ds.hasField("counts_cellmajor_order");
+    const Acells: number[] = (reordered && nA > this.deCap) ? await (this.ds as any).sampleRows("counts_cellmajor", cellsA, this.deCap) : cellsA;
+    const sp = await this.subRowsPanel(Acells); if (!sp) return null;
+    const ng = sp.panel.nGenes, nSamp = Acells.length, scale = nA / nSamp;   // extrapolate the sampled A-sum to full A
     const data = sp.panel.data as ArrayLike<number>, indices = sp.panel.indices as ArrayLike<number>, indptr = sp.panel.indptr as ArrayLike<number>;
     const aSum = new Float64Array(ng);
-    for (let i = 0; i < nA; i++) for (let k = Number(indptr[i]); k < Number(indptr[i + 1]); k++) aSum[indices[k]] += Math.log1p(Number(data[k]));
+    for (let i = 0; i < nSamp; i++) for (let k = Number(indptr[i]); k < Number(indptr[i + 1]); k++) aSum[indices[k]] += Math.log1p(Number(data[k]));
     const ranked: DEResult[] = new Array(ng);
-    for (let j = 0; j < ng; j++) { const meanA = aSum[j] / nA, meanB = (gs.sumLog[j] - aSum[j]) / restN; ranked[j] = { gene: j, symbol: sp.symbols[j], meanA, meanB, lfc: meanA - meanB }; }
+    for (let j = 0; j < ng; j++) { const meanA = aSum[j] / nSamp, meanB = (gs.sumLog[j] - aSum[j] * scale) / restN; ranked[j] = { gene: j, symbol: sp.symbols[j], meanA, meanB, lfc: meanA - meanB }; }
     ranked.sort((a, b) => Math.abs(b.lfc) - Math.abs(a.lfc));
-    return { ranked, nA, nB: restN, approx: false, panel: true, nGenesRanked: ng };
+    return { ranked, nA, nB: restN, approx: nSamp < nA, panel: true, nGenesRanked: ng };
+  }
+
+  // a-vs-REST when A is ORTHOGONAL to the row order — a SAMPLE / CONDITION / DONOR scatters across a (cluster, Hilbert)
+  // reorder, so A's cells are ~uniformly sparse in physical space and DON'T coalesce: reading them is request-bound
+  // (e.g. 400 windowed cells → 154 tiny range reads → seconds, or thousands → "Failed to fetch"). Instead read a
+  // CONTIGUOUS physical sample of the WHOLE dataset (a dozen coalesced runs) and split it into A vs rest BY MEMBERSHIP —
+  // both sides are densely present in any contiguous block, so the ranking holds. Oversample so ~deCap cells land in A.
+  private async deVsRestStratified(cellsA: number[]): Promise<{ ranked: DEResult[]; nA: number; nB: number; approx: boolean; panel: boolean; nGenesRanked: number } | null> {
+    if (typeof (this.ds as any).sampleRows !== "function") return null;
+    const nA = cellsA.length, frac = Math.max(nA / this.nCells, 0.02);
+    const total = Math.min(this.nCells, 6000, Math.max(this.deCap * 3, Math.ceil(this.deCap / frac)));   // enough that ~deCap land in A
+    const allIds = Array.from({ length: this.nCells }, (_, i) => i);
+    const cells: number[] = await (this.ds as any).sampleRows("counts_cellmajor", allIds, total);   // CONTIGUOUS windows over ALL cells
+    const sp = await this.subRowsPanel(cells); if (!sp) return null;
+    const Aset = new Set(cellsA);
+    const Apos: number[] = [], Bpos: number[] = [];
+    sp.rows.forEach((c, p) => { (Aset.has(c) ? Apos : Bpos).push(p); });
+    if (!Apos.length || !Bpos.length) return null;   // A absent from the sample (too rare) — let the caller fall back
+    const ranked: DEResult[] = deCore(sp.panel, Apos, Bpos).map((r) => ({ gene: r.g, symbol: sp.symbols[r.g], meanA: r.meanA, meanB: r.meanB, lfc: r.lfc }));
+    ranked.sort((a, b) => Math.abs(b.lfc) - Math.abs(a.lfc));
+    return { ranked, nA, nB: this.nCells - nA, approx: true, panel: true, nGenesRanked: sp.panel.nGenes };
   }
 
   // Subsample DE on arbitrary selections — the gene scope is the WHOLE transcriptome.
@@ -339,7 +365,10 @@ export class LstarView {
     // never the whole matrix. (Cluster-vs-rest is already served by precomputed markers upstream; this catches a LASSO /
     // custom / expression-derived A.) Falls through if the store has no group stats.
     if (this.dePanelCache === undefined && (cellsA.length + cellsB.length) >= this.nCells * 0.95) {
-      const vr = await this.deVsRestFromStats(cellsA);
+      // On a reordered store prefer the stratified CONTIGUOUS read (fast for a scattered A like a sample); fall back to
+      // the windowed sufficient-stats path. On a canonical store A keeps its original order, so the stats path is fine.
+      const reordered = this.ds.hasField("counts_cellmajor_order");
+      const vr = (reordered ? await this.deVsRestStratified(cellsA) : null) ?? await this.deVsRestFromStats(cellsA);
       if (vr) return vr;
     }
 
