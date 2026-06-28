@@ -58,7 +58,13 @@ export class EmbeddingView {
       canvas,
       views: [new OrthographicView({ flipY: false })],
       viewState: this.viewState,
-      onViewStateChange: ({ viewState }: any) => { this.viewState = viewState; this.deck.setProps({ viewState }); },   // controlled: keeps pan/zoom while letting fitTo() reframe
+      onViewStateChange: ({ viewState }: any) => {
+        // AUTO-LIMIT zoom: don't zoom OUT past the fit (all points already visible), nor IN past ~2 points across the view
+        // (≈ fit + log2(√n / 2) levels — from "√n points across at the fit" down to 2). Keeps the cloud in frame both ways.
+        const maxZoom = this.fitZoom + Math.log2(Math.max(2, Math.sqrt(this.n) / 2));
+        viewState.zoom = Math.max(this.fitZoom, Math.min(maxZoom, viewState.zoom));
+        this.viewState = viewState; this.deck.setProps({ viewState });
+      },   // controlled: keeps pan/zoom while letting fitTo() reframe
       controller: { dragPan: true, scrollZoom: true, doubleClickZoom: false },
       layers: this.layers(),
       // hover IS available in pan mode — picking fires on move, not drag. Emit the picked cell (or null).
@@ -102,49 +108,34 @@ export class EmbeddingView {
 
   private layers() {
     const s = this.style;   // resolved style — geometry/typography/opacity read from here, not inline literals
-    // HINT presentation. The DEFAULT 'lift' satisfies two things at once, at ANY zoom:
-    //  (1) a CONSISTENT highlight colour — a SPARSE accent-ring spray (capped to s.hint.maxMarks, so the rings can never
-    //      merge into a haze however tightly the cloud packs on zoom-out), and
-    //  (2) the cells' ACTUAL VALUES shown "within" — an own-colour FILL drawn for EVERY hinted cell (own colours never
-    //      occlude), on top of a dimmed cloud so the bright region reads as the highlight.
-    // 'ring' = sparse hollow accent rings only (no fill); 'fill' = sparse accent discs; 'adaptive' = ring small / lift large.
+    // HINT presentation. DEFAULT 'lift' draws EVERY hinted cell as two stacked layers — and lets DRAW ORDER do the work:
+    //   • an accent RING just outside each cell (one consistent highlight colour), drawn UNDER,
+    //   • the cell's OWN-COLOUR FILL drawn ON TOP (the value "within").
+    // Spread out (zoom-in), each cell shows its value with an accent halo around it. As the cloud PACKS (zoom-out), the
+    // own-colour fills — drawn last — cover the rings, so the VALUES dominate and the accent recedes on its own. No cap
+    // (every cell is ringed when there's room), no zoom hack. 'ring' = hollow accent only; 'fill' = accent disc.
     const nHint = this.highlightIds ? this.highlightIds.length : 0;
     const hmode = s.hint.mode === "adaptive" ? (nHint && nHint <= s.hint.ringThreshold ? "ring" : "lift") : s.hint.mode;
     const baseOpacity = (nHint && hmode === "lift") ? s.point.opacity * s.hint.dim : s.point.opacity;
     const all = this.highlightIds;
-    const cap = s.hint.maxMarks;
-    // ringMarks: even sub-sample for the accent rings (consistent-colour marker that can't haze). Fills use ALL of `all`.
-    const ringMarks: ArrayLike<number> = (all && cap > 0 && nHint > cap)
-      ? (() => { const out = new Int32Array(cap), step = nHint / cap; for (let i = 0; i < cap; i++) out[i] = all![Math.floor(i * step)]; return out; })()
-      : (all || new Int32Array(0));
     const hintLayers: any[] = [];
     if (all && nHint) {
-      const acc = accentRGB();
-      // The accent ring is pixel-sized, so it can't avoid overlapping once the cloud packs on zoom-out. FADE it as the
-      // current zoom drops below the fit: at/above the fit it's full (consistent highlight colour), zoomed out it recedes
-      // toward transparent so the always-full own-colour FILLS take over and the values stay visible at high density.
-      const ringFade = Math.max(0.05, Math.min(1, Math.pow(2, ((this.viewState?.zoom ?? this.fitZoom) - this.fitZoom) * 1.2)));
-      if (hmode !== "ring") {   // a FILL: lift = own colours for ALL hinted cells (values within); fill = accent disc (sparse)
-        const fillIds = hmode === "lift" ? all : ringMarks;
-        hintLayers.push(new ScatterplotLayer({
-          id: "hl-fill", data: { length: fillIds.length },
-          getPosition: (_: any, { index }: any) => { const c = fillIds[index]; return [this.positions[c * 2], this.positions[c * 2 + 1]]; },
-          radiusUnits: "pixels", getRadius: s.point.radius + s.hint.grow, stroked: false, opacity: 1,
-          getFillColor: hmode === "lift"
-            ? (_: any, { index }: any) => { const c = fillIds[index]; return [this.colors[c * 4], this.colors[c * 4 + 1], this.colors[c * 4 + 2], 255]; }
-            : [...acc, s.hint.opacity],
-          updateTriggers: { getPosition: this.hintVersion, getFillColor: [this.hintVersion, this.colorVersion, hmode] },
-        }) as any);
-      }
-      if (hmode !== "fill" && s.hint.ring > 0) {   // the SPARSE accent RING — one consistent highlight colour, never hazes
-        hintLayers.push(new ScatterplotLayer({
-          id: "hl-ring", data: { length: ringMarks.length },
-          getPosition: (_: any, { index }: any) => { const c = ringMarks[index]; return [this.positions[c * 2], this.positions[c * 2 + 1]]; },
-          radiusUnits: "pixels", getRadius: s.point.radius + s.hint.grow, filled: false, stroked: true, opacity: 1,
-          lineWidthUnits: "pixels", getLineWidth: s.hint.ring, getLineColor: [...acc, Math.round(s.hint.opacity * ringFade)],
-          updateTriggers: { getPosition: this.hintVersion, getLineColor: [this.hintVersion, this.colorVersion] },
-        }) as any);
-      }
+      const acc = accentRGB(), fillR = s.point.radius + s.hint.grow;
+      const pos = (_: any, { index }: any): [number, number] => { const c = all[index]; return [this.positions[c * 2], this.positions[c * 2 + 1]]; };
+      const accentLayer = (id: string, r: number, hollow: boolean) => new ScatterplotLayer({
+        id, data: { length: nHint }, getPosition: pos, radiusUnits: "pixels", getRadius: r, opacity: 1,
+        filled: !hollow, stroked: hollow, getFillColor: [...acc, s.hint.opacity],
+        lineWidthUnits: "pixels", getLineWidth: s.hint.ring, getLineColor: [...acc, s.hint.opacity],
+        updateTriggers: { getPosition: this.hintVersion },
+      }) as any;
+      const ownFill = new ScatterplotLayer({   // the VALUES — own colours, drawn LAST so the topmost cells always read clearly, even packed
+        id: "hl-fill", data: { length: nHint }, getPosition: pos, radiusUnits: "pixels", getRadius: fillR, stroked: false, opacity: 1,
+        getFillColor: (_: any, { index }: any) => { const c = all[index]; return [this.colors[c * 4], this.colors[c * 4 + 1], this.colors[c * 4 + 2], 255]; },
+        updateTriggers: { getPosition: this.hintVersion, getFillColor: [this.hintVersion, this.colorVersion] },
+      }) as any;
+      if (hmode === "lift") hintLayers.push(accentLayer("hl-ring", fillR + 1.2, true), ownFill);   // ring UNDER + own fill ON TOP
+      else if (hmode === "ring") hintLayers.push(accentLayer("hl-ring", fillR, true));             // hollow accent only
+      else hintLayers.push(accentLayer("hl-disc", fillR, false));                                  // accent disc
     }
     return [
       new ScatterplotLayer({
