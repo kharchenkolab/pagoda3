@@ -80,3 +80,36 @@ be build-time heavy, but the in-browser fallback must stay lean — and does.)
   reader wants it; I merged main into viewer locally. Please fold `main` into `viewer`.
 - `2d6f0c1` (the `derived@0.1` vs `viewer@0.1` validate() contract fix) is in and looks right — the
   `provenance.cache="viewer@0.1"` tag round-trips through the reader fine (app reads it without choking).
+
+## 4. Scaling beyond #2 — very-large datasets
+
+#2 buys a constant factor (~4× → ~1×), not unboundedness. For data whose matrix exceeds RAM, the
+operations split cleanly:
+
+- **Reductions (`stats`/`markers`/`od`) already stream and are bounded** — read the CSC one gene-column
+  at a time, accumulate into O(K×ng) buckets (grows with *genes*, not *cells*; ~13 MB for pbmc6).
+  `stream_col_stats` already does this. The only reason `prep.ts` isn't bounded here is that it
+  `fieldSparse`-loads the whole matrix up front — a prep.ts property, not the operation's.
+
+- **The transpose (`counts_cellmajor`) is the one hard case.** A *pure* streaming transpose (constant
+  memory, single in-order pass) is impossible — the last gene-column feeds the first cell's row, so no
+  output row can finalize until all input is seen. But **bounded-RAM out-of-core** transpose is standard:
+  one pass over the CSC routing each nonzero into a bucket keyed by its *destination* cell-range (spill
+  to temp files when full), then per bucket sort by (cell, gene) and emit that block's CSR zarr chunk.
+  RAM = one bucket; ~2× sequential I/O; output written incrementally. **The cluster reorder is free** —
+  route by the permuted destination position, so transpose + reorder happen in the same pass. (Same
+  pattern as matrix-market→CSR / BPCells.)
+
+**Where it belongs:** native `extend_for_viewer` (lazy reader + out-of-core transpose), **not** the WASM
+prep. WASM is 4GB-capped + in-process (can't mmap/spill, can't exceed the wasm32 ceiling per bucket), and
+`prep.ts` whole-loads via `fieldSparse` before any kernel runs — so it fails before a kernel is even
+called once the matrix exceeds RAM. So: native is the very-large path; `prep.ts` stays the dev/moderate
+tool and #2 keeps that lane lean. #2 is still worth doing — it just isn't aimed at the billion-nonzero case.
+
+**Maybe skip `counts_cellmajor` at extreme scale.** It exists purely for locality ("read all genes of a
+contiguous cell-block"). But the viewer's common paths don't need it: cluster stats are precomputed (no
+matrix read), and the dotplot-subset recompute reads only the N marker-gene *columns* from gene-major
+`counts` (~84 KB each), not the cell-major matrix. The cell-major copy mainly serves live HVG/DE on
+arbitrary selections — which subsample anyway. So at extreme scale, **skipping or lazily building
+`counts_cellmajor`** (leaning on precomputed navigators + gene-major slices) sidesteps the transpose
+entirely — likely cheaper than an out-of-core transpose if the locality isn't worth the ingest cost.
