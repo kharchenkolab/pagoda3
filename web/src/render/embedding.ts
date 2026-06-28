@@ -101,12 +101,19 @@ export class EmbeddingView {
 
   private layers() {
     const s = this.style;   // resolved style — geometry/typography/opacity read from here, not inline literals
-    // HINT presentation: 'adaptive' picks a hollow RING for a small/sparse hinted set (crisp, precise) and the own-colour
-    // LIFT for a large/dense one (rings would merge into a haze). While a hint is up, the base cloud is dimmed by s.hint.dim
-    // so the lifted/ringed cells (drawn on top at full alpha) stand out by CONTRAST — pop without an occluding overlay.
+    // HINT presentation. 'ring' = a hollow accent outline (underlying colour shows through); 'lift' = redraw cells in
+    // their OWN colours on top (density-robust but multicolour); 'adaptive' switches by count; 'fill' = legacy disc.
+    // DENSITY REACTION (the key to not occluding): cap the accent marks to s.hint.maxMarks — a dense set is sub-sampled to
+    // an even SPRAY of marks, so the rings never merge into a blue mass and the values stay visible BETWEEN the marks.
+    // The dim is applied only for 'lift' (it needs the contrast); 'ring' marks self-pop, so dimming would just hide values.
     const nHint = this.highlightIds ? this.highlightIds.length : 0;
     const hmode = s.hint.mode === "adaptive" ? (nHint && nHint <= s.hint.ringThreshold ? "ring" : "lift") : s.hint.mode;
-    const baseOpacity = nHint ? s.point.opacity * s.hint.dim : s.point.opacity;
+    const cap = s.hint.maxMarks;
+    const marks: ArrayLike<number> | null = (nHint && cap > 0 && nHint > cap)
+      ? (() => { const out = new Int32Array(cap), step = nHint / cap; for (let i = 0; i < cap; i++) out[i] = this.highlightIds![Math.floor(i * step)]; return out; })()
+      : this.highlightIds;
+    const nMarks = marks ? marks.length : 0;
+    const baseOpacity = (nHint && hmode === "lift") ? s.point.opacity * s.hint.dim : s.point.opacity;
     return [
       new ScatterplotLayer({
         id: "cells",
@@ -142,15 +149,15 @@ export class EmbeddingView {
       // (the underlying colour shows through); 'lift' = redraw the cells in their OWN colours on top + a thin accent ring
       // (like the selection layer — never an opaque blob, density-robust); 'fill' = the legacy accent disc. The fill disc
       // hid the data under a mass of cells (you had to move the mouse to see beneath it); ring/lift don't.
-      this.highlightIds && this.highlightIds.length
+      marks && nMarks
         ? new ScatterplotLayer({
-            id: "hl", data: { length: this.highlightIds.length },
-            getPosition: (_: any, { index }: any) => { const c = this.highlightIds![index]; return [this.positions[c * 2], this.positions[c * 2 + 1]]; },
+            id: "hl", data: { length: nMarks },
+            getPosition: (_: any, { index }: any) => { const c = marks[index]; return [this.positions[c * 2], this.positions[c * 2 + 1]]; },
             radiusUnits: "pixels", getRadius: s.point.radius + s.hint.grow, opacity: 1,
             stroked: hmode !== "fill", filled: hmode !== "ring",
             lineWidthUnits: "pixels", getLineWidth: s.hint.ring, getLineColor: [...accentRGB(), s.hint.opacity],
             getFillColor: hmode === "lift"
-              ? (_: any, { index }: any) => { const c = this.highlightIds![index]; return [this.colors[c * 4], this.colors[c * 4 + 1], this.colors[c * 4 + 2], 255]; }
+              ? (_: any, { index }: any) => { const c = marks[index]; return [this.colors[c * 4], this.colors[c * 4 + 1], this.colors[c * 4 + 2], 255]; }
               : [...accentRGB(), s.hint.opacity],
             updateTriggers: { getPosition: this.hintVersion, getFillColor: [this.hintVersion, this.colorVersion, hmode] },
           }) as any
