@@ -37,7 +37,12 @@ export async function prepStore(storePath: string, opts: { grouping?: string; al
 
   const sp = await ds.fieldSparse("counts");                       // CSC (cells, genes)
   const [ncells, ngenes] = sp.shape;
-  const data = sp.data instanceof Float64Array ? sp.data : Float64Array.from(sp.data);
+  // Counts are small integers — keep them at native (narrow) width instead of widening the whole nnz array
+  // to Float64. cscToCsr only permutes the values, and counts_cellmajor is written Int32 below, so the
+  // double was a kernel-signature artifact, not a storage/precision need. (The larger copy is still
+  // kernel-side: embind re-widens to std::vector<double> regardless of the JS dtype — see
+  // misc/note_for_lstar.md #2 for the lstar-side fix that lets the WASM cap drop back to 2GB.)
+  const data = sp.data instanceof Float64Array ? Float32Array.from(sp.data) : sp.data;
   const indptr = Int32Array.from(sp.indptr), indices = Int32Array.from(sp.indices);
 
   const fields: Record<string, any> = {};
