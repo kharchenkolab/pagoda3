@@ -257,10 +257,15 @@ export class EmbeddingView {
   private clampTarget(target: any, zoom: number): number[] {
     const rect = this.container.getBoundingClientRect();
     const scale = Math.pow(2, zoom), halfW = (rect.width || 800) / 2 / scale, halfH = (rect.height || 600) / 2 / scale;
-    const b = this.bounds;
-    const loX = Math.min(b.maxX - halfW, b.minX + halfW), hiX = Math.max(b.maxX - halfW, b.minX + halfW);
-    const loY = Math.min(b.maxY - halfH, b.minY + halfH), hiY = Math.max(b.maxY - halfH, b.minY + halfH);
-    return [Math.max(loX, Math.min(hiX, target[0])), Math.max(loY, Math.min(hiY, target[1])), target[2] || 0];
+    const b = this.bounds, cx = (b.minX + b.maxX) / 2, cy = (b.minY + b.maxY) / 2;
+    // dev = how far the target may leave the centroid. Zoomed OUT (window >= span): just (halfW - halfSpan), so the box
+    // stays fully in frame (all cells visible). Zoomed IN (window < span): (halfSpan - halfW) would pin a data edge flush
+    // to the viewport border — too stringent; add a margin of M·viewport so an extreme cell can sit comfortably IN from
+    // the edge. M is the only knob (0 = old behaviour; higher = more pan slack / more empty space allowed when zoomed in).
+    const M = 0.2;
+    const dev = (half: number, halfSpan: number) => half >= halfSpan ? (half - halfSpan) : (halfSpan - half) + M * 2 * half;
+    const dx = dev(halfW, (b.maxX - b.minX) / 2), dy = dev(halfH, (b.maxY - b.minY) / 2);
+    return [Math.max(cx - dx, Math.min(cx + dx, target[0])), Math.max(cy - dy, Math.min(cy + dy, target[1])), target[2] || 0];
   }
   private controllerProps() { return { dragPan: true, scrollZoom: true, doubleClickZoom: false, minZoom: this.fitZoom, maxZoom: this.fitZoom + Math.log2(Math.max(2, Math.sqrt(this.frameN || this.n) / 2)) }; }
   fitTo(ids?: Int32Array) { this.viewState = this.computeView(ids); this.deck.setProps({ viewState: this.viewState, controller: this.controllerProps() }); }
