@@ -121,6 +121,28 @@ export class App {
     this.root = mk("div", "app");
   }
 
+  // Surface the store's viewer-optimization level. The app opens ANY lstar zarr and degrades gracefully (a base store
+  // recomputes the cell-major panel from gene-major counts each session; coloring/embedding/metadata need no extension);
+  // this banner just makes the level visible + names the one-command fix. Dismissal is remembered per store + level.
+  private bannerForStore(): void {
+    const el = this.$("optbanner"); if (!el) return;
+    const ds: any = this.ctx.view.ds;
+    const has = (n: string) => typeof ds?.hasField === "function" && ds.hasField(n);
+    const cellmajor = has("counts_cellmajor"), ordered = has("counts_cellmajor_order");
+    if (cellmajor && ordered) { el.style.display = "none"; return; }   // fully viewer-optimized → nothing to say
+    const level = cellmajor ? "ext" : "base";
+    const storeKey = new URLSearchParams(location.search).get("store") || "default";
+    try { if (localStorage.getItem("p2-optdismiss::" + storeKey) === level) { el.style.display = "none"; return; } } catch { /* */ }
+    const fix = "lstar convert IN.h5ad OUT.lstar.zarr --viewer";
+    const msg = cellmajor
+      ? `<b>Extended, but not locality-ordered.</b> Compute is fast, but on a high-latency host the per-selection reads aren't coalesced into one. Add the order — re-run <code>${fix}</code>.`
+      : `<b>Not viewer-optimized.</b> Differential expression & variable genes recompute from the whole matrix each session (slow on large or remote data). Optimize once — <code>${fix}</code>.`;
+    el.innerHTML = `<span class="ob-i">◆</span><span class="ob-t">${msg}</span><span class="ob-x" id="optX" title="dismiss">✕</span>`;
+    el.style.display = "flex";
+    const x = el.querySelector("#optX") as HTMLElement | null;
+    if (x) x.onclick = () => { el.style.display = "none"; try { localStorage.setItem("p2-optdismiss::" + storeKey, level); } catch { /* */ } };
+  }
+
   async mount(parent: HTMLElement) {
     this.agent = new Agent(this);
     this.root.innerHTML = `
@@ -137,6 +159,7 @@ export class App {
         <div class="tb" id="railBtn" title="show / hide the Answers column">Answers</div>
         <div class="tb acct" id="acctBtn" title="account, theme & custom widgets"><span class="acdot">G</span></div>
       </div>
+      <div class="optbanner" id="optbanner" style="display:none"></div>
       <div class="stage">
         <div class="convo" id="convo"></div>
         <div class="canvas"><div class="workbench" id="workbench"></div></div>
@@ -166,6 +189,7 @@ export class App {
     });
     this.wire();
     this.setPip("idle");
+    this.bannerForStore();   // surface the store's viewer-optimization level (extended? locality-ordered?)
     this.switchWS("Metadata", false);
     this.checkpoint("session start", "Baseline Metadata workspace.");
     this.restoreSession();   // restore the last session (layout incl. widget panels) + load the custom-widget library
