@@ -86,7 +86,7 @@ export class App {
   caveatsCollapsed = new Set<string>();   // caveat handles the user clicked to collapse (stay collapsed across renders)
   // presence
   thread: any = null; threadDocked = false; nudgePending: any = null; apTimer: any = null; apIndex = 0;
-  scope: Scope | null = null; hot = 0; filtered: any[] = []; lastSelAnchor: { left: number; top: number; right?: number } = { left: 0, top: 0 };
+  scope: Scope | null = null; askScope: Scope | null = null; hot = 0; filtered: any[] = []; lastSelAnchor: { left: number; top: number; right?: number } = { left: 0, top: 0 };
   proposalWhy = "";
 
   constructor(ctx: Ctx) {
@@ -1136,9 +1136,9 @@ export class App {
   // Resolve a cell-set expression (the same algebra as compute) to indices — used by the annotate tool.
   resolveCells(spec: CellSet): { ids: Int32Array; error?: string } {
     const ctx = this.ctx;
-    const world: CellWorld = { categoricals: ctx.categoricalFields(), valuesOf: (f) => ctx.categoricalValues(f), hasSelection: ctx.selectedCells().length > 0, hasFocus: !!ctx.coord.state.focus };
+    const world: CellWorld = { categoricals: ctx.categoricalFields(), valuesOf: (f) => ctx.categoricalValues(f), hasSelection: this.selectionForCompute().length > 0, hasFocus: !!ctx.coord.state.focus };
     const e = validateCellSet(spec, world, "cells"); if (e) return { ids: new Int32Array(0), error: e };
-    const env: CellEnv = { n: ctx.n, category: (g, v) => ctx.cellsOfCategory(g, v), selection: () => ctx.selectedCells(), focus: () => ctx.coord.state.focus?.ids ?? [] };
+    const env: CellEnv = { n: ctx.n, category: (g, v) => ctx.cellsOfCategory(g, v), selection: () => this.selectionForCompute(), focus: () => ctx.coord.state.focus?.ids ?? [] };
     return { ids: Int32Array.from(resolveCellSet(spec, env)) };
   }
 
@@ -1417,16 +1417,26 @@ export class App {
   // de(A, B=complement(A)) or overdispersion(A). A/B are CellSet exprs (category/selection/focus/all + boolean
   // ops), so the agent can test ANY set it can describe — not just the pre-baked selection-vs-rest etc. Binds
   // the result to the rail (or canvas with toCanvas) and returns a summary / error for the agent.
+  // The selection a compute runs over: the LIVE selection if present, else the one PINNED when this agent turn started
+  // (askScope). So a DE the user kicked off still runs on those cells even if they cleared the selection while the agent
+  // was thinking. The pin never overrides a live selection — the agent can re-select mid-turn and that wins.
+  selectionForCompute(): number[] | Int32Array {
+    const live = this.ctx.selectedCells();
+    if (live.length) return live;
+    const s = this.askScope;
+    return (s?.type === "selection" && s.ids && s.ids.length) ? s.ids : live;
+  }
+
   async runCompute(input: { stat?: string; A?: CellSet; B?: CellSet; replicate?: string; toCanvas?: boolean; title?: string }): Promise<{ ok?: string; error?: string }> {
     const ctx = this.ctx;
     if (input.stat !== "de" && input.stat !== "overdispersion" && input.stat !== "pseudobulk") return { error: `unknown stat "${input.stat}" — use "de", "pseudobulk", or "overdispersion"` };
     if (!input.A) { if (input.stat === "overdispersion") input.A = { all: true } as CellSet; else return { error: "A (a cell set) is required" }; }   // global variable genes when no scope given
-    const world: CellWorld = { categoricals: ctx.categoricalFields(), valuesOf: (f) => ctx.categoricalValues(f), hasSelection: ctx.selectedCells().length > 0, hasFocus: !!ctx.coord.state.focus };
+    const world: CellWorld = { categoricals: ctx.categoricalFields(), valuesOf: (f) => ctx.categoricalValues(f), hasSelection: this.selectionForCompute().length > 0, hasFocus: !!ctx.coord.state.focus };
     const eA = validateCellSet(input.A, world, "A"); if (eA) return { error: eA };
     const needsB = input.stat === "de" || input.stat === "pseudobulk";
     const Bexpr: CellSet | undefined = needsB ? (input.B ?? ({ complement: input.A } as CellSet)) : undefined;
     if (Bexpr) { const eB = validateCellSet(Bexpr, world, "B"); if (eB) return { error: eB }; }
-    const env: CellEnv = { n: ctx.n, category: (g, v) => ctx.cellsOfCategory(g, v), selection: () => ctx.selectedCells(), focus: () => ctx.coord.state.focus?.ids ?? [] };
+    const env: CellEnv = { n: ctx.n, category: (g, v) => ctx.cellsOfCategory(g, v), selection: () => this.selectionForCompute(), focus: () => ctx.coord.state.focus?.ids ?? [] };
     const Aids = [...resolveCellSet(input.A, env)];
     if (!Aids.length) return { error: `A (${describeCellSet(input.A)}) resolves to no cells` };
     await ctx.view.genes();
@@ -1434,7 +1444,7 @@ export class App {
     // current selection reads "CD14 mono vs rest", not the generic "selection vs rest"), or a cell count for a manual
     // selection. Categories / all / set ops fall through to describeCellSet.
     const richLabel = (expr: any, ids: number[]): string => {
-      if (expr?.selection) { const s: any = ctx.coord.state.selection; return s?.kind === "category" ? String(s.value) : `selection · ${ids.length.toLocaleString()} cells`; }
+      if (expr?.selection) { const s: any = ctx.coord.state.selection || (this.askScope?.type === "selection" ? (this.askScope as any).sel : null); return s?.kind === "category" ? String(s.value) : `selection · ${ids.length.toLocaleString()} cells`; }
       if (expr?.focus) { const f: any = ctx.coord.state.focus; return f?.label ? String(f.label) : "focus"; }
       return describeCellSet(expr);
     };
@@ -1941,7 +1951,7 @@ export class App {
     this.ctx.metaOf("cell_type").then((m: any) => {
       const cts: Record<string, number> = {}; for (const i of ids) cts[m.categories[m.codes[i]]] = (cts[m.categories[m.codes[i]]] || 0) + 1;
       const top = Object.entries(cts).sort((a, b) => b[1] - a[1])[0];
-      this.scope = { type: "selection", ids: Array.from(ids), summary: `${ids.length} cells (mostly ${top?.[0] || "?"})` };
+      this.scope = { type: "selection", ids: Array.from(ids), summary: `${ids.length} cells (mostly ${top?.[0] || "?"})`, sel: this.coord.state.selection } as any;
       const sp = this.$("selpop");
       sp.innerHTML = `<div class="head">${ids.length} cells · mostly ${top?.[0] || "?"}</div>` +
         `<div class="it" data-a="ask"><span class="ic">⌘K</span>Ask about these…</div>` +

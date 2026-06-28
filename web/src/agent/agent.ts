@@ -9,7 +9,7 @@ import type { Panel } from "../ui/panels.ts";
 import { runLive } from "./live.ts";
 import { isAgentPanelType } from "../ui/panel-registry.ts";   // the validated panel-type list now lives in the panel registry (built-ins register in panels.ts; external modules self-register)
 
-export interface Scope { type: "selection" | "panel"; summary: string; ids?: number[]; }
+export interface Scope { type: "selection" | "panel"; summary: string; ids?: number[]; sel?: any; }   // sel = the selection ref at capture time (faithful label after the live selection clears)
 
 // Tool labels + step details are interpolated into innerHTML; they derive from tool inputs/outputs (gene names,
 // queries, error text), so `<...>` in them would otherwise be parsed as HTML and corrupt the thread layout.
@@ -25,6 +25,7 @@ export class Agent {
 
   // dispatcher: real Anthropic planner when available, faithful mock otherwise
   async ask(qraw: string, sc?: Scope | null) {
+    this.app.askScope = sc || null;   // PIN the selection for this turn — a compute that resolves {selection} late (after the user moved on) still runs on the cells they asked about
     if (this.live) return this.askLive(qraw, sc);
     return this.askMock(qraw, sc);
   }
