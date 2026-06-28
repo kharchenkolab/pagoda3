@@ -190,11 +190,13 @@ button{font-family:inherit}
 @keyframes slidein{from{opacity:0;transform:translateX(10px)}to{opacity:1;transform:none}}
 .rch{display:flex;align-items:center;gap:7px;padding:7px 9px;border-bottom:1px solid var(--line2)}
 .rch .rt{font-family:var(--mono);font-size:9px;letter-spacing:.8px;color:var(--cyan)}
-.rch .rtitle{font-size:12px;color:var(--text);font-weight:500;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.rch .rtcap{font-size:10px;color:var(--dim);font-family:var(--mono);white-space:nowrap}
-.rch .sp{margin-left:auto;display:flex;gap:5px}
-.pin{background:var(--cyan);color:var(--on-accent);border:0;border-radius:5px;font-size:11px;padding:2px 8px;font-weight:600;cursor:pointer}
-.dismiss{background:none;border:1px solid var(--line);color:var(--faint);border-radius:5px;font-size:11px;padding:2px 7px;cursor:pointer}
+.rch .rtitle{font-size:12px;color:var(--text);font-weight:500;flex:0 1 auto;min-width:3.5em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}   /* PRIMARY — protected: the cap yields before the title shrinks */
+.rch .rtcap{font-size:10px;color:var(--dim);font-family:var(--mono);flex:0 3 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}   /* SECONDARY — ellipsizes first (shrinks 3×) */
+.rch .sp{margin-left:auto;display:flex;gap:5px;flex:0 0 auto}
+.pin{display:inline-flex;align-items:center;justify-content:center;background:var(--cyan);color:var(--on-accent);border:0;border-radius:5px;font-size:13px;line-height:1;padding:0;width:22px;height:22px;cursor:pointer}   /* icon-only; meaning in the tooltip */
+.dismiss{display:inline-flex;align-items:center;justify-content:center;gap:5px;background:none;border:1px solid var(--line);color:var(--faint);border-radius:5px;font-size:12px;line-height:1;padding:3px 7px;cursor:pointer}
+.dismiss:hover{color:var(--text);border-color:var(--line2)}
+.dismiss.ico{padding:0;width:22px;height:22px}   /* icon-only close (× everywhere) — the shared look you preferred */
 .rq{padding:5px 9px;font-size:11px;color:var(--dim);font-style:italic;border-bottom:1px solid var(--line2)}
 .rcard .pbody{padding:9px} .rcard .embpanel .pbody{height:240px}
 .proposal{border:1px solid var(--amber);background:rgba(224,164,88,.06)} .proposal .rch .rt{color:var(--amber)}

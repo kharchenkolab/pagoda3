@@ -565,7 +565,7 @@ export class App {
     }
     const span = Object.assign(mk("button", "mini", isFull ? "◫" : "▦"), { title: "maximize" }) as HTMLButtonElement;
     span.onclick = () => { p.full = !isFull; this.fullRender(); this.checkpoint((p.full ? "maximize · " : "restore · ") + p.title, "You resized a panel — the layout is yours to shape."); };
-    const close = Object.assign(mk("button", "mini", "✕"), { title: "remove" }) as HTMLButtonElement;
+    const close = Object.assign(mk("button", "dismiss ico", "✕"), { title: "remove" }) as HTMLButtonElement;   // the shared light × (matches the Answers card)
     close.onclick = () => { this.canvas = this.canvas.filter((z) => z.id !== p.id); this.fullRender(); this.checkpoint("remove " + p.title, "You removed a panel — direct edits to your own layout always win."); };
     if (p.type === "Widget") { const info = Object.assign(mk("button", "mini", "ⓘ"), { title: "view source + declared permissions" }) as HTMLButtonElement; info.onclick = () => this.showWidgetInfo(p); sp.appendChild(info); }   // inspect a trusted widget (the post-trust analog of the consent gate)
     sp.appendChild(span); sp.appendChild(close);
@@ -1453,7 +1453,7 @@ export class App {
         const rows0 = (await ctx.view.markers(g, 1e9)).get(val);
         if (rows0?.length) {
           const rows = rows0.map((r: any) => ({ gene: r.gene, symbol: r.symbol, lfc: r.lfc, p: r.padj }));
-          place({ type: "DeTable", title: input.title || `DE · ${aL} vs rest`, cap: `${aL} vs rest · precomputed markers`, bind: "de:markers", aLabel: aL, bLabel: "rest", rows });
+          place({ type: "DeTable", title: input.title || `${aL} vs rest`, cap: "1-vs-rest markers", bind: "de:markers", aLabel: aL, bLabel: "rest", rows });
           const up = rows.filter((r: any) => r.lfc > 0).slice(0, 8).map((r: any) => r.symbol).join(", ");
           return { ok: `DE ${aL} vs rest from the store's precomputed 1-vs-rest markers — instant, no recompute. Up in ${aL}: ${up}. (To recompute at the cell level, compare ${aL} against a SPECIFIC other group instead of rest.)` };
         }
@@ -1474,7 +1474,7 @@ export class App {
       if (repsA.length < 2 || repsB.length < 2) return { error: `pseudobulk needs ≥2 replicates per group, but A has ${repsA.length} and B has ${repsB.length} ${rep}(s) with ≥${minCells} cells. Pick a replicate field with enough samples on each side (a 1-vs-1 or 3-vs-0 split can't carry a population claim).` };
       const genes = await ctx.view.genes();
       const rows = pr.map((r) => ({ gene: r.g, symbol: genes[r.g], lfc: r.lfc, p: r.p, meanA: r.meanA, meanB: r.meanB }));
-      place({ type: "DeTable", title: input.title || `Pseudobulk · ${aL} vs ${bL}`, cap: `${repsA.length} vs ${repsB.length} ${rep}s · donor-level`, bind: "pseudobulk:donor", aLabel: aL, bLabel: bL, rows });
+      place({ type: "DeTable", title: input.title || `${aL} vs ${bL}`, cap: `donor-level · ${repsA.length} vs ${repsB.length} ${rep}s`, bind: "pseudobulk:donor", aLabel: aL, bLabel: bL, rows });
       const sig = rows.filter((r) => r.p < 0.05).length;
       const top = rows.slice(0, 8).map((r) => `${r.symbol}${r.p < 0.05 ? "*" : ""}`).join(", ");
       return { ok: `pseudobulk DE ${aL} vs ${bL} across ${rep}, ${repsA.length} vs ${repsB.length} replicates: ${sig} gene(s) at p<0.05 (Welch t-test on per-replicate mean log-expression). Top by p: ${top}. The replicate is the unit here, so unlike cell-level de this carries a real p-value and supports a population-level claim — but with few replicates power is limited; treat marginal hits cautiously.` };
@@ -1483,7 +1483,7 @@ export class App {
     // de (cell-level, ranking-grade)
     const { ranked, panel } = await ctx.view.subsampleDE(Aids, Bids);
     const rows = ranked.map((r: any) => ({ gene: r.gene, symbol: r.symbol, lfc: r.lfc, meanA: r.meanA, meanB: r.meanB }));   // ALL tested genes — the panel filters/searches the full list (render is capped)
-    place({ type: "DeTable", title: input.title || `DE · ${aL} vs ${bL}`, cap: `${aL} vs ${bL}${panel ? " · panel" : " · approx"}`, bind: "de:between", aLabel: aL, bLabel: bL, rows });
+    place({ type: "DeTable", title: input.title || `${aL} vs ${bL}`, cap: "cell-level DE", bind: "de:between", aLabel: aL, bLabel: bL, rows });   // title = the contrast (the identity); cap = the test TYPE (secondary, non-redundant) — the approx/ranking nature lives in the caveat
     const up = rows.filter((r: any) => r.lfc > 0).slice(0, 6).map((r: any) => r.symbol).join(", ");
     const dn = rows.filter((r: any) => r.lfc < 0).slice(0, 6).map((r: any) => r.symbol).join(", ");
     return { ok: `DE ${aL} (${Aids.length}) vs ${bL} (${Bids.length}), compared directly. Higher in ${aL}: ${up || "—"}. Higher in ${bL}: ${dn || "—"}.` };
@@ -1605,12 +1605,12 @@ export class App {
     }
     for (const p of this.rail) {
       const d = mk("div", "rcard"); const h = mk("div", "rch");
-      h.appendChild(Object.assign(mk("span", "rtitle"), { textContent: p.title }));   // the answer's own title (the column already says "disposable")
-      if (p.cap) h.appendChild(Object.assign(mk("span", "rtcap"), { textContent: "· " + p.cap }));
+      h.appendChild(Object.assign(mk("span", "rtitle"), { textContent: p.title, title: p.title }));   // PRIMARY — tooltip recovers it if truncated
+      if (p.cap) h.appendChild(Object.assign(mk("span", "rtcap"), { textContent: "· " + p.cap, title: p.cap }));   // SECONDARY — yields width first
       const sp = mk("div", "sp");
       const valid = this.agent.validate(p).ok;
-      if (p.type !== "Note" && valid) { const pin = mk("button", "pin", "⤴ pin"); pin.onclick = () => { this.rail = this.rail.filter((z) => z.id !== p.id); this.canvas.push(this.newPanel(p)); this.fullRender(); if (!this.rail.length) this.setRail(false); this.checkpoint("pin " + p.title, "You promoted a disposable answer into your workbench — generation accretes only by your hand."); }; sp.appendChild(pin); }
-      const ds = mk("button", "dismiss", "✕"); ds.onclick = () => { this.rail = this.rail.filter((z) => z.id !== p.id); this.renderRail(); this.repaint(); if (!this.rail.length && !this.proposal) this.setRail(false); };
+      if (p.type !== "Note" && valid) { const pin = Object.assign(mk("button", "pin", "⤴"), { title: "pin to workbench" }); pin.onclick = () => { this.rail = this.rail.filter((z) => z.id !== p.id); this.canvas.push(this.newPanel(p)); this.fullRender(); if (!this.rail.length) this.setRail(false); this.checkpoint("pin " + p.title, "You promoted a disposable answer into your workbench — generation accretes only by your hand."); }; sp.appendChild(pin); }
+      const ds = Object.assign(mk("button", "dismiss ico", "✕"), { title: "dismiss" }); ds.onclick = () => { this.rail = this.rail.filter((z) => z.id !== p.id); this.renderRail(); this.repaint(); if (!this.rail.length && !this.proposal) this.setRail(false); };
       sp.appendChild(ds); h.appendChild(sp); d.appendChild(h);
       if (p.q) d.appendChild(Object.assign(mk("div", "rq"), { textContent: "“" + p.q + "”" }));
       const H = this.ctx.handleOf(p.bind);
