@@ -132,13 +132,21 @@ export class EmbeddingView {
             updateTriggers: { getPosition: this.selVersion, getFillColor: [this.selVersion, this.colorVersion] },
           }) as any
         : null,
-      // CATEGORY hint → a light overlay lifting that category's cells (honest even when they're not compact)
+      // CATEGORY hint → lift that category's cells WITHOUT occluding what's under them. 'ring' = a hollow accent outline
+      // (the underlying colour shows through); 'lift' = redraw the cells in their OWN colours on top + a thin accent ring
+      // (like the selection layer — never an opaque blob, density-robust); 'fill' = the legacy accent disc. The fill disc
+      // hid the data under a mass of cells (you had to move the mouse to see beneath it); ring/lift don't.
       this.highlightIds && this.highlightIds.length
         ? new ScatterplotLayer({
             id: "hl", data: { length: this.highlightIds.length },
             getPosition: (_: any, { index }: any) => { const c = this.highlightIds![index]; return [this.positions[c * 2], this.positions[c * 2 + 1]]; },
-            radiusUnits: "pixels", getRadius: s.point.radius + s.hint.grow, stroked: false, getFillColor: [...accentRGB(), s.hint.opacity],
-            updateTriggers: { getPosition: this.hintVersion },
+            radiusUnits: "pixels", getRadius: s.point.radius + s.hint.grow, opacity: 1,
+            stroked: s.hint.mode !== "fill", filled: s.hint.mode !== "ring",
+            lineWidthUnits: "pixels", getLineWidth: s.hint.ring, getLineColor: [...accentRGB(), s.hint.opacity],
+            getFillColor: s.hint.mode === "lift"
+              ? (_: any, { index }: any) => { const c = this.highlightIds![index]; return [this.colors[c * 4], this.colors[c * 4 + 1], this.colors[c * 4 + 2], 255]; }
+              : [...accentRGB(), s.hint.opacity],
+            updateTriggers: { getPosition: this.hintVersion, getFillColor: [this.hintVersion, this.colorVersion, s.hint.mode] },
           }) as any
         : null,
       // CELL hint → full-panel crosshairs intersecting at the cell (precise "you are here", any zoom)
