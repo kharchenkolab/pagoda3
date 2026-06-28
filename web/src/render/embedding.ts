@@ -101,15 +101,16 @@ export class EmbeddingView {
 
   private layers() {
     const s = this.style;   // resolved style — geometry/typography/opacity read from here, not inline literals
-    // HINT presentation. 'ring' = a hollow accent outline (underlying colour shows through); 'lift' = redraw cells in
-    // their OWN colours on top (density-robust but multicolour); 'adaptive' switches by count; 'fill' = legacy disc.
-    // DENSITY REACTION (the key to not occluding): cap the accent marks to s.hint.maxMarks — a dense set is sub-sampled to
-    // an even SPRAY of marks, so the rings never merge into a blue mass and the values stay visible BETWEEN the marks.
-    // The dim is applied only for 'lift' (it needs the contrast); 'ring' marks self-pop, so dimming would just hide values.
+    // HINT presentation, chosen by what keeps the VALUES visible at any zoom:
+    //  'lift' (default) — DIM-OTHERS: redraw the hinted cells in their OWN colours on top of a dimmed cloud (exactly the
+    //   selection layer's trick). No accent ink ⇒ values are NEVER occluded, at any density/zoom; the highlight reads as
+    //   the bright region against the receded rest. 'ring'/'fill' — a consistent ACCENT overlay (outline / disc): easy to
+    //   read but it INHERENTLY covers values once cells pack on screen (zoom-out, fixed-px marks), so its marks are
+    //   sub-sampled to a spray (s.hint.maxMarks) to limit — not eliminate — the haze. 'adaptive' = ring small, lift large.
     const nHint = this.highlightIds ? this.highlightIds.length : 0;
     const hmode = s.hint.mode === "adaptive" ? (nHint && nHint <= s.hint.ringThreshold ? "ring" : "lift") : s.hint.mode;
     const cap = s.hint.maxMarks;
-    const marks: ArrayLike<number> | null = (nHint && cap > 0 && nHint > cap)
+    const marks: ArrayLike<number> | null = (nHint && hmode !== "lift" && cap > 0 && nHint > cap)   // sparsify ACCENT modes only; lift draws ALL (own colours don't occlude)
       ? (() => { const out = new Int32Array(cap), step = nHint / cap; for (let i = 0; i < cap; i++) out[i] = this.highlightIds![Math.floor(i * step)]; return out; })()
       : this.highlightIds;
     const nMarks = marks ? marks.length : 0;
@@ -154,7 +155,7 @@ export class EmbeddingView {
             id: "hl", data: { length: nMarks },
             getPosition: (_: any, { index }: any) => { const c = marks[index]; return [this.positions[c * 2], this.positions[c * 2 + 1]]; },
             radiusUnits: "pixels", getRadius: s.point.radius + s.hint.grow, opacity: 1,
-            stroked: hmode !== "fill", filled: hmode !== "ring",
+            stroked: hmode === "ring", filled: hmode !== "ring",   // ONLY 'ring' strokes; 'lift'/'fill' are filled (lift = own-colour dim-others, no accent ring → no haze at zoom-out)
             lineWidthUnits: "pixels", getLineWidth: s.hint.ring, getLineColor: [...accentRGB(), s.hint.opacity],
             getFillColor: hmode === "lift"
               ? (_: any, { index }: any) => { const c = marks[index]; return [this.colors[c * 4], this.colors[c * 4 + 1], this.colors[c * 4 + 2], 255]; }
