@@ -13,6 +13,19 @@ const STORE_URL = new URL(storeParam.endsWith("/") ? storeParam : storeParam + "
 async function boot() {
   const ds = await openLstar(new HttpStore(STORE_URL));   // byte-range fast path + consolidated `.zmetadata` open
   const view = new LstarView(ds);
+  // persisted user compute settings: per-side DE/HVG sample caps (approx ranking) + the read-cache memory budget.
+  // Console: p2.setCompute({deCap:800, hvgCap:3000, cacheBudgetMB:512}). Lower caps = faster/cheaper, coarser ranking.
+  try {
+    const s = JSON.parse(localStorage.getItem("p2-compute") || "{}");
+    view.setSampleCaps({ de: s.deCap, hvg: s.hvgCap });
+    if (s.cacheBudgetMB != null) ds.setReadCacheBudget(Math.max(0, s.cacheBudgetMB) * 1048576);
+  } catch { /* defaults */ }
+  const setCompute = (s: { deCap?: number; hvgCap?: number; cacheBudgetMB?: number }) => {
+    view.setSampleCaps({ de: s.deCap, hvg: s.hvgCap });
+    if (s.cacheBudgetMB != null) ds.setReadCacheBudget(Math.max(0, s.cacheBudgetMB) * 1048576);
+    try { const cur = JSON.parse(localStorage.getItem("p2-compute") || "{}"); localStorage.setItem("p2-compute", JSON.stringify({ ...cur, ...s })); } catch { /* */ }
+    return { deCap: view.deCap, hvgCap: view.hvgCap, cacheBudgetMB: Math.round(((ds as any).readCacheStats?.().budget || 0) / 1048576) };
+  };
   const computePool = new ComputePool();   // off-main-thread kernel pool; view dispatches to it when cross-origin isolated, else runs the same core inline
   view.setComputePool(computePool);
   if (computePool.isolated) void computePool.ping().catch(() => { /* worker warm-up is best-effort; kernels fall back to the main thread */ });   // spawn + warm the worker at boot so the first real compute isn't cold
@@ -28,7 +41,7 @@ async function boot() {
   // the console: p2.setProvider("openai"). getProvider() is read at the start of every ask, so the NEXT ask uses it
   // (no reload needed). See web/src/agent/providers.ts.
   const setProvider = (p: Provider) => { try { localStorage.setItem(PROVIDER_KEY, p === "openai" ? "openai" : "anthropic"); } catch { /* */ } return "agent provider → " + getProvider() + " (applies on next ask)"; };
-  (window as any).p2 = { ds, view, coord, ctx, app, getProvider, setProvider, computePool, widgetPool };
+  (window as any).p2 = { ds, view, coord, ctx, app, getProvider, setProvider, setCompute, computePool, widgetPool };
 }
 
 boot().catch((e) => {

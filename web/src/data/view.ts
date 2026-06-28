@@ -281,6 +281,16 @@ export class LstarView {
     return out;
   }
 
+  // Approximate-compute sample caps (user setting): how many cells per side a DE / overdispersion test reads + scores.
+  // We don't need exact p-values — a capped sample gives a near-identical gene RANKING at a fraction of the bytes on a
+  // large selection. Lower = faster/cheaper/coarser. On a reordered store the capped read is windowed (see ds.sampleRows).
+  deCap = 400;     // DE: cells per side (A and B each)
+  hvgCap = 2000;   // overdispersion: cells
+  setSampleCaps(opts: { de?: number; hvg?: number }): void {
+    if (opts.de && opts.de > 0) this.deCap = Math.max(20, Math.floor(opts.de));
+    if (opts.hvg && opts.hvg > 0) this.hvgCap = Math.max(50, Math.floor(opts.hvg));
+  }
+
   // Global per-gene sufficient stats (Σlog1p, Σlog1p², #expressing over ALL cells), summed from the precomputed
   // per-group stats_<grouping> (groups partition cells). One ~9MB read, cached — lets a-vs-REST derive the rest's
   // mean WITHOUT reading the rest's cells. null when the store carries no precomputed group stats.
@@ -323,7 +333,7 @@ export class LstarView {
   //  cells, read only their rows, reduce over EVERY gene. Cost is O(sampled cells); the gene scope
   //  is never restricted, because a global overdispersed subset would miss the genes that actually
   //  distinguish a local selection (e.g. T-cell subsets). Fallback — full-counts CSC + WASM kernel.
-  async subsampleDE(cellsA: number[], cellsB: number[], maxPerGroup = 400):
+  async subsampleDE(cellsA: number[], cellsB: number[], maxPerGroup = this.deCap):
       Promise<{ ranked: DEResult[]; nA: number; nB: number; approx: boolean; panel: boolean; nGenesRanked: number }> {
     // a-vs-REST (A∪B covers ~all cells): read ONLY A and derive the rest's mean from the precomputed global gene stats —
     // never the whole matrix. (Cluster-vs-rest is already served by precomputed markers upstream; this catches a LASSO /
@@ -342,14 +352,15 @@ export class LstarView {
     // each block and forfeit the order. Capped at 60% of cells so a-vs-REST (huge B) doesn't pull most of the matrix.
     if (this.dePanelCache === undefined && this.ds.hasField("counts_cellmajor_order") && (cellsA.length + cellsB.length) <= this.nCells * 0.6) {
       try {
-        const sp = await this.subRowsPanel([...cellsA, ...cellsB]);
+        const As = await (this.ds as any).sampleRows("counts_cellmajor", cellsA, maxPerGroup);   // read ONLY ~maxPerGroup
+        const Bs = await (this.ds as any).sampleRows("counts_cellmajor", cellsB, maxPerGroup);   // per side (windowed)
+        const sp = await this.subRowsPanel([...As, ...Bs]);
         if (sp) {
-          const Aset = new Set(cellsA), Bset = new Set(cellsB);
-          const Aall: number[] = [], Ball: number[] = [];
-          sp.rows.forEach((c, p) => { if (Aset.has(c)) Aall.push(p); else if (Bset.has(c)) Ball.push(p); });
-          const Ap = sample(Aall, maxPerGroup), Bp = sample(Ball, maxPerGroup);
-          const ranked: DEResult[] = deCore(sp.panel, Ap, Bp).map((r) => ({ gene: r.g, symbol: sp.symbols[r.g], meanA: r.meanA, meanB: r.meanB, lfc: r.lfc }));
-          return { ranked, nA: Ap.length, nB: Bp.length, approx: Ap.length < cellsA.length || Bp.length < cellsB.length, panel: true, nGenesRanked: sp.panel.nGenes };
+          const Aset = new Set(As), Bset = new Set(Bs);
+          const Apos: number[] = [], Bpos: number[] = [];
+          sp.rows.forEach((c, p) => { if (Aset.has(c)) Apos.push(p); else if (Bset.has(c)) Bpos.push(p); });
+          const ranked: DEResult[] = deCore(sp.panel, Apos, Bpos).map((r) => ({ gene: r.g, symbol: sp.symbols[r.g], meanA: r.meanA, meanB: r.meanB, lfc: r.lfc }));
+          return { ranked, nA: Apos.length, nB: Bpos.length, approx: As.length < cellsA.length || Bs.length < cellsB.length, panel: true, nGenesRanked: sp.panel.nGenes };
         }
       } catch { /* fall through */ }
     }
@@ -493,7 +504,7 @@ export class LstarView {
     return { panel: { data: sub.data, indices: sub.indices, indptr: sub.indptr, nGenes: symbols.length, lognorm: fm.state === "lognorm" }, symbols, pos: rows.map((_, i) => i), rows };
   }
 
-  async overdispersedGenes(cellIds: number[], topN = 50, maxCells = 2000):
+  async overdispersedGenes(cellIds: number[], topN = 50, maxCells = this.hvgCap):
       Promise<{ gene: number; symbol: string; mean: number; varr: number; resid: number; nobs: number }[]> {
     // GLOBAL (whole dataset) variable genes = the PRECOMPUTED od_score — no compute, no matrix read (one ~160KB dense
     // read). Only fires when cellIds is ALL cells: a focused SUBSET must recompute (the global list is dominated by
@@ -509,7 +520,8 @@ export class LstarView {
     // would scatter within the contiguous block and forfeit the ordering. (Canonical store → the size-gated path below.)
     if (this.dePanelCache === undefined && this.ds.hasField("counts_cellmajor_order") && cellIds.length <= this.nCells * 0.5) {
       try {
-        const sp = await this.subRowsPanel(cellIds);
+        const cells = await (this.ds as any).sampleRows("counts_cellmajor", cellIds, maxCells);   // read ONLY ~maxCells (windowed) — the kernel scores them all; a capped sample ≈ the full ranking
+        const sp = await this.subRowsPanel(cells);
         if (sp) return overdispersedCore(sp.panel, sp.pos, topN, maxCells)
           .map((r) => ({ gene: r.g, symbol: sp.symbols[r.g], mean: r.mean, varr: r.varr, resid: r.resid, nobs: r.nobs }));
       } catch { /* fall through */ }
