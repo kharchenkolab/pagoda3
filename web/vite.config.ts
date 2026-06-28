@@ -79,9 +79,22 @@ function zarrStorePlugin() {
         const rel = decodeURIComponent(url.replace(/^\/+/, ""));
         const file = path.join(PUBLIC, rel);
         if (!file.startsWith(PUBLIC)) { res.statusCode = 403; return res.end("forbidden"); }
-        if (fs.existsSync(file) && fs.statSync(file).isFile()) {
+        const st = fs.existsSync(file) ? fs.statSync(file) : null;
+        if (st && st.isFile()) {
           res.setHeader("Content-Type", "application/octet-stream");
           res.setHeader("Access-Control-Allow-Origin", "*");
+          // Honor Range like the production host (S3/nginx/CDN). Without this the dev server returned 200 = the WHOLE
+          // file, so the reader's byte-range fast paths (gene colour, csrRows, the dotplot gene-slice) silently fetched
+          // the entire 200+MB chunk and sliced client-side — correct but bandwidth-defeating, ONLY on local dev.
+          res.setHeader("Accept-Ranges", "bytes");
+          const m = /bytes=(\d+)-(\d*)/.exec(String(req.headers["range"] || ""));
+          if (m) {
+            const start = Number(m[1]), end = m[2] ? Number(m[2]) : st.size - 1;
+            if (start >= st.size || end >= st.size || start > end) { res.statusCode = 416; res.setHeader("Content-Range", `bytes */${st.size}`); return res.end(); }
+            res.statusCode = 206; res.setHeader("Content-Range", `bytes ${start}-${end}/${st.size}`); res.setHeader("Content-Length", String(end - start + 1));
+            return fs.createReadStream(file, { start, end }).pipe(res);
+          }
+          res.setHeader("Content-Length", String(st.size));
           return fs.createReadStream(file).pipe(res);
         }
         res.statusCode = 404;
