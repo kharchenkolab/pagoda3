@@ -59,14 +59,8 @@ export class EmbeddingView {
       canvas,
       views: [new OrthographicView({ flipY: false })],
       viewState: this.viewState,
-      onViewStateChange: ({ viewState }: any) => {
-        // AUTO-LIMIT zoom: don't zoom OUT past the fit (all points already visible), nor IN past ~2 points across the view
-        // (≈ fit + log2(√n / 2) levels — from "√n points across at the fit" down to 2). Keeps the cloud in frame both ways.
-        const maxZoom = this.fitZoom + Math.log2(Math.max(2, Math.sqrt(this.frameN || this.n) / 2));
-        viewState.zoom = Math.max(this.fitZoom, Math.min(maxZoom, viewState.zoom));
-        this.viewState = viewState; this.deck.setProps({ viewState });
-      },   // controlled: keeps pan/zoom while letting fitTo() reframe
-      controller: { dragPan: true, scrollZoom: true, doubleClickZoom: false },
+      onViewStateChange: ({ viewState }: any) => { this.viewState = viewState; this.deck.setProps({ viewState }); },   // controlled: keep our state in sync (for fitTo + the hint-ring fade). The zoom LIMITS live on the CONTROLLER (minZoom/maxZoom) below -- clamping here only fixes the read-back value, not the controller's interactive wheel.
+      controller: this.controllerProps(),
       layers: this.layers(),
       // hover IS available in pan mode — picking fires on move, not drag. Emit the picked cell (or null).
       onHover: (info: any) => this.onHover?.(info && info.index != null && info.index >= 0 ? this.draw[info.index] : null),    // draw slot → cell
@@ -252,7 +246,11 @@ export class EmbeddingView {
     return { target: [(minX + maxX) / 2, (minY + maxY) / 2, 0], zoom: this.fitZoom };
   }
   /** Reframe the viewport to a cell set (the `scope` property / focus_view primitive); no ids = fit all. */
-  fitTo(ids?: Int32Array) { this.viewState = this.computeView(ids); this.deck.setProps({ viewState: this.viewState }); }
+  // The controller's zoom bounds for the CURRENT frame: minZoom = fit (the wheel can't pull OUT past all-cells),
+  // maxZoom ≈ fit + log2(√frameN / 2) (can't zoom IN past ~2 points across the frame). deck.gl enforces these during
+  // interaction (unlike an onViewStateChange clamp). Re-applied on fitTo() since fit/frameN change with the subset.
+  private controllerProps() { return { dragPan: true, scrollZoom: true, doubleClickZoom: false, minZoom: this.fitZoom, maxZoom: this.fitZoom + Math.log2(Math.max(2, Math.sqrt(this.frameN || this.n) / 2)) }; }
+  fitTo(ids?: Int32Array) { this.viewState = this.computeView(ids); this.deck.setProps({ viewState: this.viewState, controller: this.controllerProps() }); }
 
   setColors(rgba: Uint8Array) { this.colors = rgba; const d = this.draw, dc = this.drawColors; for (let k = 0; k < this.n; k++) { const c = d[k] * 4, o = k * 4; dc[o] = rgba[c]; dc[o + 1] = rgba[c + 1]; dc[o + 2] = rgba[c + 2]; dc[o + 3] = rgba[c + 3]; } this.colorVersion++; this.redraw(); }
 
