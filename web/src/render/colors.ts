@@ -5,7 +5,7 @@ import { PALETTES, normalizePalette, Palette } from "./palettes.ts";
 
 export interface Legend { kind: "categorical" | "numeric"; items: { label: string; rgb: [number, number, number] }[]; title: string; unvalidated?: boolean; }
 
-import { DIM_RGB, DIM_A, recedeInto, defaultNumericPalette } from "./theme.ts";   // non-focus cells under a focus — theme-aware (live binding)
+import { DIM_RGB, DIM_A, recedeInto, SEL_GHOST, defaultNumericPalette } from "./theme.ts";   // non-focus cells under a focus — theme-aware (live binding)
 // Per-cell RGBA for a NUMERIC field through a chosen palette. Maps the value range [lo,hi] → palette [0,1] (lo/hi
 // come from winsorBounds, so a few outlier cells don't compress everyone else into the pale end). Replaces the old
 // fixed-ramp scalarToRGBA so the colormap is a drivable property, not baked into paint.
@@ -15,7 +15,7 @@ function numericRGBA(values: ArrayLike<number>, lo: number, hi: number, pal: Pal
     const dim = !!(focusMask && !focusMask[i]);
     if (dim && !dimKeepColor) { out[i * 4] = DIM_RGB[0]; out[i * 4 + 1] = DIM_RGB[1]; out[i * 4 + 2] = DIM_RGB[2]; out[i * 4 + 3] = DIM_A; continue; }   // grey (scope desaturate)
     const [r, g, b] = pal(Math.max(0, Math.min(1, (values[i] - lo) / span)));
-    if (dim) { recedeInto(out, i, r, g, b); continue; }   // SELECTION: blend toward bg, full alpha (density-robust)
+    if (dim) { recedeInto(out, i, r, g, b, SEL_GHOST); continue; }   // UNSELECTED (numeric selection): ghost toward an OFFSET grey so the dim reads even at ~0 signal
     out[i * 4] = r; out[i * 4 + 1] = g; out[i * 4 + 2] = b; out[i * 4 + 3] = 230;
   }
   return out;

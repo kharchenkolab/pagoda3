@@ -292,6 +292,24 @@ export class LstarView {
     const approx = A.length < cellsA.length || B.length < cellsB.length;
     const na = Math.max(A.length, 1), nb = Math.max(B.length, 1);
 
+    // SUBSET fast path: read ONLY the sampled rows (≤2·maxPerGroup, a few MB) by byte-range instead of the whole
+    // cell-major matrix. deCore runs over the re-based positions (classified A vs B by global cell id, robust to
+    // csrRows' row ordering); `sample()` is deterministic so the ranking is identical to the whole-matrix path.
+    // try/catch falls through to dePanel() on any failure (e.g. too many in-flight ranges) — pure optimization.
+    if (this.dePanelCache === undefined) {
+      try {
+        const sp = await this.subRowsPanel([...A, ...B]);
+        if (sp) {
+          const Aset = new Set(A), Bset = new Set(B);
+          const Apos: number[] = [], Bpos: number[] = [];
+          sp.rows.forEach((c, p) => { if (Aset.has(c)) Apos.push(p); else if (Bset.has(c)) Bpos.push(p); });
+          const ranked: DEResult[] = deCore(sp.panel, Apos, Bpos)
+            .map((r) => ({ gene: r.g, symbol: sp.symbols[r.g], meanA: r.meanA, meanB: r.meanB, lfc: r.lfc }));
+          return { ranked, nA: A.length, nB: B.length, approx, panel: true, nGenesRanked: sp.panel.nGenes };
+        }
+      } catch { /* fall through to the whole-matrix panel */ }
+    }
+
     const dp = await this.dePanel();
     if (dp) {
       // Whole-transcriptome reduction over the cell-major panel — OFF the main thread when isolated + the panel is
@@ -383,19 +401,28 @@ export class LstarView {
   // Read ONLY the given cells' rows of the cell-major counts as a re-based CSR sub-panel (byte-range reads via the
   // package reader's csrRows) — for compute on a small selection without pulling the whole matrix. pos = [0..k-1]
   // over the read rows (input order). null when not eligible (no csrRows, or no all-genes cell-major copy).
-  private async subRowsPanel(cells: number[]): Promise<{ panel: { data: any; indices: any; indptr: any; nGenes: number; lognorm: boolean }; symbols: string[]; pos: number[] } | null> {
+  private async subRowsPanel(cells: number[]): Promise<{ panel: { data: any; indices: any; indptr: any; nGenes: number; lognorm: boolean }; symbols: string[]; pos: number[]; rows: number[] } | null> {
     const name = this.ds.hasField("counts_cellmajor") ? "counts_cellmajor" : null;
     if (!name || typeof (this.ds as any).csrRows !== "function") return null;
     const fm = this.ds.field(name)!;
     if ((fm.span?.[1] ?? "genes") !== "genes") return null;   // need the ALL-genes cell-major copy (indices == global gene ids)
     const symbols = await this.genes();
-    const sub = await (this.ds as any).csrRows(name, cells);   // { data, indices, indptr, rows }
-    const pos = (sub.rows as number[]).map((_, i) => i);
-    return { panel: { data: sub.data, indices: sub.indices, indptr: sub.indptr, nGenes: symbols.length, lognorm: fm.state === "lognorm" }, symbols, pos };
+    const sub = await (this.ds as any).csrRows(name, cells);   // { data, indices, indptr, rows } — rows = the global cell id at each panel position
+    const rows = sub.rows as number[];
+    return { panel: { data: sub.data, indices: sub.indices, indptr: sub.indptr, nGenes: symbols.length, lognorm: fm.state === "lognorm" }, symbols, pos: rows.map((_, i) => i), rows };
   }
 
   async overdispersedGenes(cellIds: number[], topN = 50, maxCells = 2000):
       Promise<{ gene: number; symbol: string; mean: number; varr: number; resid: number; nobs: number }[]> {
+    // GLOBAL (whole dataset) variable genes = the PRECOMPUTED od_score — no compute, no matrix read (one ~160KB dense
+    // read). Only fires when cellIds is ALL cells: a focused SUBSET must recompute (the global list is dominated by
+    // major-lineage genes — see the scope-aware note above), so this is exactly the global-HVG case the prep computed.
+    if (cellIds.length >= this.nCells && this.ds.hasField("od_score")) {
+      const od = (await this.ds.fieldDense("od_score")).data as Float64Array;   // per-gene residual over the global mean-var trend
+      const symbols = await this.genes();
+      const order = Array.from(od, (_, g) => g).sort((a, b) => od[b] - od[a]);
+      return order.slice(0, topN).map((g) => ({ gene: g, symbol: symbols[g], mean: 0, varr: 0, resid: od[g], nobs: cellIds.length }));
+    }
     // SUBSET fast path: if the whole cell-major matrix isn't already cached AND this is a smallish selection, read
     // only the (deterministically subsampled) cells' rows by byte-range — a few MB instead of the whole 200+ MB
     // matrix. `sample()` is deterministic, so the same cells are used as the whole-matrix path → identical ranking.
