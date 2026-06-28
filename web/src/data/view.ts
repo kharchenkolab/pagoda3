@@ -292,6 +292,23 @@ export class LstarView {
     const approx = A.length < cellsA.length || B.length < cellsB.length;
     const na = Math.max(A.length, 1), nb = Math.max(B.length, 1);
 
+    // REORDERED store: read the FULL groups via csrRows (each cluster/lasso is contiguous → ~1 run per group) and
+    // subsample the POSITIONS in memory. Sampling cells BEFORE the read (the canonical path below) would scatter within
+    // each block and forfeit the order. Capped at 60% of cells so a-vs-REST (huge B) doesn't pull most of the matrix.
+    if (this.dePanelCache === undefined && this.ds.hasField("counts_cellmajor_order") && (cellsA.length + cellsB.length) <= this.nCells * 0.6) {
+      try {
+        const sp = await this.subRowsPanel([...cellsA, ...cellsB]);
+        if (sp) {
+          const Aset = new Set(cellsA), Bset = new Set(cellsB);
+          const Aall: number[] = [], Ball: number[] = [];
+          sp.rows.forEach((c, p) => { if (Aset.has(c)) Aall.push(p); else if (Bset.has(c)) Ball.push(p); });
+          const Ap = sample(Aall, maxPerGroup), Bp = sample(Ball, maxPerGroup);
+          const ranked: DEResult[] = deCore(sp.panel, Ap, Bp).map((r) => ({ gene: r.g, symbol: sp.symbols[r.g], meanA: r.meanA, meanB: r.meanB, lfc: r.lfc }));
+          return { ranked, nA: Ap.length, nB: Bp.length, approx: Ap.length < cellsA.length || Bp.length < cellsB.length, panel: true, nGenesRanked: sp.panel.nGenes };
+        }
+      } catch { /* fall through */ }
+    }
+
     // SUBSET fast path: read ONLY the sampled rows (≤2·maxPerGroup, a few MB) by byte-range instead of the whole
     // cell-major matrix. deCore runs over the re-based positions (classified A vs B by global cell id, robust to
     // csrRows' row ordering); `sample()` is deterministic so the ranking is identical to the whole-matrix path.
@@ -381,7 +398,19 @@ export class LstarView {
     const symbols = allGenes ? await this.genes() : await this.ds.axisLabels(geneAxis);
     let geneCol: Int32Array | null = null;
     if (!allGenes) { await this.genes(); geneCol = Int32Array.from(symbols.map((s) => this.geneIndex!.get(s) ?? -1)); }
-    const sp = await this.ds.fieldSparse(name);
+    let sp = await this.ds.fieldSparse(name);
+    if (this.ds.hasField(name + "_order")) {
+      // The rows are stored in a LOCALITY (Hilbert/cluster) order. dePanel is the whole-matrix panel that every
+      // consumer (dotplot groupStatsForCells, DE/HVG fallback, widget worker) indexes BY CELL ID — so restore cell
+      // order here once (cached). The per-selection ops read contiguous rows via csrRows instead and never hit this.
+      const posOf = (await this.ds.fieldDense(name + "_order")).data as ArrayLike<number>;   // cell -> physical row
+      const nc = this.nCells, ip = sp.indptr, nnz = sp.data.length;
+      const nd = new Float32Array(nnz), ni = new Int32Array(nnz), np = new Int32Array(nc + 1);
+      let w = 0;
+      for (let c = 0; c < nc; c++) { const pr = posOf[c] | 0; np[c] = w; for (let k = Number(ip[pr]); k < Number(ip[pr + 1]); k++) { nd[w] = Number(sp.data[k]); ni[w] = Number(sp.indices[k]); w++; } }
+      np[nc] = w;
+      sp = { ...sp, data: nd, indices: ni, indptr: np };
+    }
     const data = toShared(Float32Array.from(sp.data as any));
     this.dePanelCache = {
       data,
@@ -428,6 +457,16 @@ export class LstarView {
       const symbols = await this.genes();
       const order = Array.from(od, (_, g) => g).sort((a, b) => od[b] - od[a]);
       return order.slice(0, topN).map((g) => ({ gene: g, symbol: symbols[g], mean: 0, varr: 0, resid: od[g], nobs: cellIds.length }));
+    }
+    // REORDERED store: the selection's rows are physically contiguous, so read the FULL selection via csrRows (1-few
+    // coalesced reads — latency-cheap regardless of size) and let overdispersedCore subsample IN MEMORY. Pre-subsampling
+    // would scatter within the contiguous block and forfeit the ordering. (Canonical store → the size-gated path below.)
+    if (this.dePanelCache === undefined && this.ds.hasField("counts_cellmajor_order")) {
+      try {
+        const sp = await this.subRowsPanel(cellIds);
+        if (sp) return overdispersedCore(sp.panel, sp.pos, topN, maxCells)
+          .map((r) => ({ gene: r.g, symbol: sp.symbols[r.g], mean: r.mean, varr: r.varr, resid: r.resid, nobs: r.nobs }));
+      } catch { /* fall through */ }
     }
     // SUBSET fast path: if the whole cell-major matrix isn't already cached AND this is a smallish selection, read
     // only the (deterministically subsampled) cells' rows by byte-range — a few MB instead of the whole 200+ MB
