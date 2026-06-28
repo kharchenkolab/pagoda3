@@ -281,6 +281,43 @@ export class LstarView {
     return out;
   }
 
+  // Global per-gene sufficient stats (Σlog1p, Σlog1p², #expressing over ALL cells), summed from the precomputed
+  // per-group stats_<grouping> (groups partition cells). One ~9MB read, cached — lets a-vs-REST derive the rest's
+  // mean WITHOUT reading the rest's cells. null when the store carries no precomputed group stats.
+  private globalStatsCache?: { sumLog: Float64Array; sumsqLog: Float64Array; nexpr: Float64Array; N: number } | null;
+  private async globalGeneStats() {
+    if (this.globalStatsCache !== undefined) return this.globalStatsCache;
+    const sumField = this.ds.fieldNames().find((n) => n.startsWith("stats_") && n.endsWith("_sum"));
+    if (!sumField) { this.globalStatsCache = null; return null; }
+    const g = sumField.slice("stats_".length, -"_sum".length);
+    const ng = this.nGenes;
+    const S = (await this.ds.fieldDense(`stats_${g}_sum`)).data as ArrayLike<number>;
+    const SS = (await this.ds.fieldDense(`stats_${g}_sumsq`)).data as ArrayLike<number>;
+    const NE = (await this.ds.fieldDense(`stats_${g}_nexpr`)).data as ArrayLike<number>;
+    const G = Math.round((S as any).length / ng);
+    const sumLog = new Float64Array(ng), sumsqLog = new Float64Array(ng), nexpr = new Float64Array(ng);
+    for (let gi = 0; gi < G; gi++) { const off = gi * ng; for (let j = 0; j < ng; j++) { sumLog[j] += S[off + j]; sumsqLog[j] += SS[off + j]; nexpr[j] += NE[off + j]; } }
+    this.globalStatsCache = { sumLog, sumsqLog, nexpr, N: this.nCells };
+    return this.globalStatsCache;
+  }
+
+  // a-vs-REST DE from sufficient stats: read ONLY A's rows (contiguous + cheap on a reordered store) to get A's per-gene
+  // mean(log1p), and take rest = GLOBAL − A from the precomputed global stats — no whole-matrix download, no read of the
+  // rest's cells. Same (gene, meanA, meanB, lfc) shape as the cell-level path (ranking-grade, no p). null without stats.
+  private async deVsRestFromStats(cellsA: number[]): Promise<{ ranked: DEResult[]; nA: number; nB: number; approx: boolean; panel: boolean; nGenesRanked: number } | null> {
+    const gs = await this.globalGeneStats(); if (!gs) return null;
+    const restN = gs.N - cellsA.length; if (restN <= 0) return null;
+    const sp = await this.subRowsPanel(cellsA); if (!sp) return null;   // read full A only
+    const ng = sp.panel.nGenes, nA = cellsA.length;
+    const data = sp.panel.data as ArrayLike<number>, indices = sp.panel.indices as ArrayLike<number>, indptr = sp.panel.indptr as ArrayLike<number>;
+    const aSum = new Float64Array(ng);
+    for (let i = 0; i < nA; i++) for (let k = Number(indptr[i]); k < Number(indptr[i + 1]); k++) aSum[indices[k]] += Math.log1p(Number(data[k]));
+    const ranked: DEResult[] = new Array(ng);
+    for (let j = 0; j < ng; j++) { const meanA = aSum[j] / nA, meanB = (gs.sumLog[j] - aSum[j]) / restN; ranked[j] = { gene: j, symbol: sp.symbols[j], meanA, meanB, lfc: meanA - meanB }; }
+    ranked.sort((a, b) => Math.abs(b.lfc) - Math.abs(a.lfc));
+    return { ranked, nA, nB: restN, approx: false, panel: true, nGenesRanked: ng };
+  }
+
   // Subsample DE on arbitrary selections — the gene scope is the WHOLE transcriptome.
   //  Fast path — the cell-major counts panel (counts_cellmajor, CSR over all genes): subsample the
   //  cells, read only their rows, reduce over EVERY gene. Cost is O(sampled cells); the gene scope
@@ -288,6 +325,14 @@ export class LstarView {
   //  distinguish a local selection (e.g. T-cell subsets). Fallback — full-counts CSC + WASM kernel.
   async subsampleDE(cellsA: number[], cellsB: number[], maxPerGroup = 400):
       Promise<{ ranked: DEResult[]; nA: number; nB: number; approx: boolean; panel: boolean; nGenesRanked: number }> {
+    // a-vs-REST (A∪B covers ~all cells): read ONLY A and derive the rest's mean from the precomputed global gene stats —
+    // never the whole matrix. (Cluster-vs-rest is already served by precomputed markers upstream; this catches a LASSO /
+    // custom / expression-derived A.) Falls through if the store has no group stats.
+    if (this.dePanelCache === undefined && (cellsA.length + cellsB.length) >= this.nCells * 0.95) {
+      const vr = await this.deVsRestFromStats(cellsA);
+      if (vr) return vr;
+    }
+
     const A = sample(cellsA, maxPerGroup), B = sample(cellsB, maxPerGroup);
     const approx = A.length < cellsA.length || B.length < cellsB.length;
     const na = Math.max(A.length, 1), nb = Math.max(B.length, 1);
