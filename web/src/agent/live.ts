@@ -401,7 +401,17 @@ export async function runLive(app: App, userText: string, abort: AbortSignal): P
     const results: any[] = [];
     for (const tu of toolUses) {
       app.setPip("working", tu.name);
-      let out = ""; try { out = await execTool(app, tu.name, tu.input); } catch (e) { out = "error: " + e; }
+      // mirror data-fetch progress onto the ACTIVE step so a compute tool isn't a silent wait ("DE (compute) · fetching 60%").
+      const active = [...app.thread.entries].reverse().find((e: any) => e.tool === tu.name && e.status === "active");
+      const fview: any = (app as any).ctx?.view; let offFetch = () => {}, lastPaint = 0;
+      if (active && typeof fview?.onFetchProgress === "function") {
+        offFetch = fview.onFetchProgress((done: number, total: number) => {
+          if (done >= total) return;
+          active.detail = `fetching ${total ? Math.round(done / total * 100) : 0}%`;
+          const t = Date.now(); if (t - lastPaint > 120) { lastPaint = t; ag.renderThread(); }
+        });
+      }
+      let out = ""; try { out = await execTool(app, tu.name, tu.input); } catch (e) { out = "error: " + e; } finally { offFetch(); }
       // mark the step done — the MODEL gets the full `out` (pushed to results below); the CHAT gets a short summary
       // (displayDetail), so big payloads (the widget contract, recipe/template SOURCE, preview JSON) don't dump raw
       // code into the thread and reflow it ("long stretches of code, then jumps").
