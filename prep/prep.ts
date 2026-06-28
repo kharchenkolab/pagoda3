@@ -42,6 +42,7 @@ export async function prepStore(storePath: string, opts: { grouping?: string; al
 
   const fields: Record<string, any> = {};
   const axes: Record<string, any> = {};
+  const CACHE = { cache: "viewer@0.1" };   // all prep outputs are regenerable caches (see lstar docs/format.md)
 
   // cell-major (CSR) copy of counts (natural cell order for now; physically reordered below).
   const csr = M.cscToCsr(data, indices, indptr, ncells, ngenes);
@@ -58,7 +59,7 @@ export async function prepStore(storePath: string, opts: { grouping?: string; al
     nobs[g] = (gAll.n_expr as Float64Array)[g];
   }
   fields["od_score"] = { role: "measure", span: ["genes"], encoding: "dense", shape: [ngenes],
-                         data: Float32Array.from(M.overdispersion(mean, varr, nobs)) };
+                         data: Float32Array.from(M.overdispersion(mean, varr, nobs)), provenance: CACHE };
 
   // per-annotation cluster stats (group-major) + 1-vs-rest markers (gene-major); cell_order from primary.
   let primaryCode: Int32Array | null = null;
@@ -75,12 +76,12 @@ export async function prepStore(storePath: string, opts: { grouping?: string; al
     const mk = M.markersOneVsRest(S, NE, nper, K, ngenes, ncells);   // {lfc,padj} gene-major ng×K
     axes["groups_" + gp] = { labels: groups, origin: "derived", role: "feature" };
     const sg = ["groups_" + gp, "genes"];                           // stats: group-major
-    fields["stats_" + gp + "_sum"]   = { role: "measure", span: sg, encoding: "dense", shape: [K, ngenes], data: Float32Array.from(S) };
-    fields["stats_" + gp + "_sumsq"] = { role: "measure", span: sg, encoding: "dense", shape: [K, ngenes], data: Float32Array.from(SS) };
-    fields["stats_" + gp + "_nexpr"] = { role: "measure", span: sg, encoding: "dense", shape: [K, ngenes], data: Float32Array.from(NE) };
+    fields["stats_" + gp + "_sum"]   = { role: "measure", span: sg, encoding: "dense", shape: [K, ngenes], data: Float32Array.from(S), provenance: CACHE };
+    fields["stats_" + gp + "_sumsq"] = { role: "measure", span: sg, encoding: "dense", shape: [K, ngenes], data: Float32Array.from(SS), provenance: CACHE };
+    fields["stats_" + gp + "_nexpr"] = { role: "measure", span: sg, encoding: "dense", shape: [K, ngenes], data: Float32Array.from(NE), provenance: CACHE };
     const mg = ["genes", "groups_" + gp];                           // markers: gene-major
-    fields["markers_" + gp + "_lfc"]  = { role: "measure", span: mg, encoding: "dense", shape: [ngenes, K], data: Float32Array.from(mk.lfc) };
-    fields["markers_" + gp + "_padj"] = { role: "measure", span: mg, encoding: "dense", shape: [ngenes, K], data: Float32Array.from(mk.padj) };
+    fields["markers_" + gp + "_lfc"]  = { role: "measure", span: mg, encoding: "dense", shape: [ngenes, K], data: Float32Array.from(mk.lfc), provenance: CACHE };
+    fields["markers_" + gp + "_padj"] = { role: "measure", span: mg, encoding: "dense", shape: [ngenes, K], data: Float32Array.from(mk.padj), provenance: CACHE };
   }
 
   // cluster-contiguous physical row order: perm[p] = cell at physical row p; pos_of[cell] = its row.
@@ -98,9 +99,9 @@ export async function prepStore(storePath: string, opts: { grouping?: string; al
     for (let k = cmIndptr[src]; k < cmIndptr[src + 1]; k++) { rData[dst] = cmData[k]; rInd[dst] = cmIndices[k]; dst++; }
   }
   fields["counts_cellmajor"] = { role: "measure", span: ["cells", "genes"], encoding: "csr", state: "raw",
-                                 shape: [ncells, ngenes], data: rData, indices: rInd, indptr: rIndptr };
+                                 shape: [ncells, ngenes], data: rData, indices: rInd, indptr: rIndptr, provenance: CACHE };
   fields["counts_cellmajor_order"] = { role: "measure", span: ["cells"], encoding: "dense",
-                                       state: "permutation", shape: [ncells], data: posOf };
+                                       state: "permutation", shape: [ncells], data: posOf, provenance: CACHE };
 
   await addToStore(store, { axes, fields, profiles: ["viewer@0.1"] });
   return Object.keys(fields);
