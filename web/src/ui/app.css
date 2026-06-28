@@ -392,7 +392,7 @@ select.inline{background:var(--inset);color:var(--text);border:1px solid var(--l
 .embsubset .x{pointer-events:auto;cursor:pointer;opacity:.7;margin-left:1px}   /* the pill is pointer-events:none; the clear control opts back in. No underline — matches the global selchip's clear ✕ */
 .embsubset .x:hover{opacity:1}
 /* ORTHOGONAL-selection notice on a grouped panel (dotplot): a category of a different grouping is selected — name it + offer to subset (focus) */
-.orthpill{position:absolute;top:7px;left:50%;transform:translateX(-50%);display:none;align-items:center;gap:8px;font-size:11px;color:var(--amber,#e0a458);background:rgba(224,164,88,.13);border:1px solid var(--amber,#e0a458);border-radius:7px;padding:3px 10px;backdrop-filter:blur(3px);z-index:6;white-space:nowrap;max-width:94%}
+.orthpill{position:absolute;top:7px;left:50%;transform:translateX(-50%);display:none;align-items:center;gap:8px;font-size:11px;color:var(--cyan,#78e0ff);background:rgba(120,224,255,.13);border:1px solid var(--cyan,#78e0ff);border-radius:7px;padding:3px 10px;backdrop-filter:blur(3px);z-index:6;white-space:nowrap;max-width:94%}   /* cyan (selection colour) — amber would clash with the dotplot's amber ramp */
 .orthpill b{color:var(--text);font-weight:600}
 .orthpill .x{cursor:pointer;opacity:.85;text-decoration:underline;text-underline-offset:2px;flex:0 0 auto}
 .orthpill .x:hover{opacity:1}
