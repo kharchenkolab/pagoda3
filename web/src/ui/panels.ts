@@ -83,7 +83,7 @@ export interface PanelHooks {
 // A vocabulary-bound panel that reacts to the two tiers, distinctly: `setSelect` is the committed selection
 // (strong), `setHover` the ephemeral hint (light). `grouping` is the categorical it stacks/keys on; each set
 // holds the category values to lift (translated in via cells when vocabularies differ). null = clear that tier.
-export interface CompReactor { grouping: string; setSelect: (values: Set<string> | null) => void; setHover: (values: Set<string> | null) => void; }
+export interface CompReactor { grouping: string; setSelect: (values: Set<string> | null) => void; setHover: (values: Set<string> | null) => void; setOrthogonal?: (info: { grouping: string; value: string } | null) => void; }   // setOrthogonal: a category of a DIFFERENT grouping is selected (can't map to this panel's columns) — show a notice, not a false composition highlight
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
 
@@ -1329,6 +1329,19 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
     paintCols(); paintGeneRow();   // re-apply cross-panel highlights after the (re)layout
   };
 
+  // ORTHOGONAL-selection notice: when a category of a DIFFERENT grouping is selected (e.g. a sample, while this dotplot
+  // groups by cell_type), it can't map to columns — the App suppresses the false composition highlight and calls
+  // setOrthogonal(info). Show a pill naming it + a "subset to it" shortcut: focus = L3, which the dots DO recompute within.
+  const orthPill = mk("div", "orthpill"); const orthTxt = mk("span", "t"); const orthAct = mk("span", "x");
+  orthAct.textContent = "subset to it →"; orthAct.title = "restrict the whole workspace to these cells (focus) — then this dotplot recomputes within them";
+  orthPill.append(orthTxt, orthAct); orthPill.style.display = "none"; w.appendChild(orthPill);
+  const setOrthogonal = (info: { grouping: string; value: string } | null) => {
+    if (!info) { orthPill.style.display = "none"; return; }
+    orthTxt.innerHTML = `⊙ <b>${esc(info.grouping)} = ${esc(info.value)}</b> selected · not a column in this ${esc(grouping)} view`;
+    orthAct.onclick = (e) => { e.stopPropagation(); hooks.focusCategory(info.grouping, info.value); ctx.coord.setSelection(null); };   // promote to focus, drop the now-redundant selection (the focus chip carries it)
+    orthPill.style.display = "flex";
+  };
+
   const afterAttach = () => {
     const pb = w.parentElement as HTMLElement | null;
     // the heatmap fills a GIVEN box and (being absolute) can never grow it. Canvas bodies are sized by the
@@ -1337,7 +1350,7 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
     draw();
     // react to cross-panel selection + hover like the composition panel: the App translates the current
     // selection/hint into THIS panel's grouping and calls setSelect/setHover, which tint the matching columns.
-    hooks.registerComposition({ grouping, setSelect: (v) => { selGroups = v; paintCols(); }, setHover: (v) => { hovGroups = v; paintCols(); } });
+    hooks.registerComposition({ grouping, setSelect: (v) => { selGroups = v; paintCols(); }, setHover: (v) => { hovGroups = v; paintCols(); }, setOrthogonal });
     hooks.registerGeneHover((sym) => { hovGene = sym; paintGeneRow(); });   // another dotplot hovered a gene → highlight its row here
     let ro: ResizeObserver;
     ro = new ResizeObserver(() => { if (!w.isConnected) ro.disconnect(); else draw(); });   // re-fill on resize; self-cleans

@@ -690,7 +690,15 @@ export class App {
     // repaint leaves the selection untouched, so re-firing reactors would pointlessly re-render the card.
     const sel = this.coord.state.selection;
     if (this.reactorsStale || sel !== this.lastSel) {
-      for (const r of this.compReactors) r.setSelect(sel ? new Set(this.ctx.refToCategories(sel, r.grouping).filter((t) => t.frac >= 0.08).map((t) => t.value)) : null);
+      for (const r of this.compReactors) {
+        // ORTHOGONAL guard: a category selection of a DIFFERENT grouping (e.g. a sample, while this panel is grouped by
+        // cell_type) has no honest column mapping — refToCategories would return the selection's COMPOSITION (its top
+        // cell types), which reads as "those columns are selected" and confuses. Suppress the highlight and surface a
+        // pill notice instead. Same-grouping categories + cells/lasso selections keep the composition highlight.
+        const orth = sel?.kind === "category" && (sel as any).grouping !== r.grouping;
+        r.setSelect(sel && !orth ? new Set(this.ctx.refToCategories(sel, r.grouping).filter((t) => t.frac >= 0.08).map((t) => t.value)) : null);
+        r.setOrthogonal?.(orth ? { grouping: (sel as any).grouping, value: (sel as any).value } : null);
+      }
       this.lastSel = sel; this.reactorsStale = false;
     }
     this.$("railBtn").innerHTML = "Answers" + (this.rail.length ? ` <span class="badge">${this.rail.length}</span>` : "");
