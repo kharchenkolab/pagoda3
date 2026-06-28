@@ -1430,18 +1430,26 @@ export class App {
     const Aids = [...resolveCellSet(input.A, env)];
     if (!Aids.length) return { error: `A (${describeCellSet(input.A)}) resolves to no cells` };
     await ctx.view.genes();
+    // Human label that RESOLVES {selection}/{focus} to their LIVE identity — the chosen category's value (so a DE on the
+    // current selection reads "CD14 mono vs rest", not the generic "selection vs rest"), or a cell count for a manual
+    // selection. Categories / all / set ops fall through to describeCellSet.
+    const richLabel = (expr: any, ids: number[]): string => {
+      if (expr?.selection) { const s: any = ctx.coord.state.selection; return s?.kind === "category" ? String(s.value) : `selection · ${ids.length.toLocaleString()} cells`; }
+      if (expr?.focus) { const f: any = ctx.coord.state.focus; return f?.label ? String(f.label) : "focus"; }
+      return describeCellSet(expr);
+    };
     const place = (spec: Partial<Panel>) => { if (input.toCanvas) this.addPanel(spec); else this.agent.addRail(spec); };
 
     if (input.stat === "overdispersion") {
       const hv = await ctx.view.overdispersedGenes(Aids, 1e9);   // ALL scored genes (topN caps the return; scoring is over every gene) — the panel filters/searches the full list
       if (!hv.length) return { error: "no overdispersion (store has no cell-major counts panel)" };
-      const label = describeCellSet(input.A);
+      const label = richLabel(input.A, Aids);
       place({ type: "GeneList", title: input.title || `Variable genes · ${label}`, cap: "overdispersion", bind: "hvg:scope", rows: hv.map((h) => ({ symbol: h.symbol, score: h.resid })) });
       return { ok: `top variable genes in ${label} (${Aids.length} cells), recomputed for this scope: ${hv.slice(0, 10).map((h) => h.symbol).join(", ")}` };
     }
     const Bids = [...resolveCellSet(Bexpr!, env)];
     if (!Bids.length) return { error: `B (${describeCellSet(Bexpr!)}) resolves to no cells` };
-    const aL = describeCellSet(input.A), bL = input.B ? describeCellSet(Bexpr!) : "rest";
+    const aL = richLabel(input.A, Aids), bL = input.B ? richLabel(Bexpr!, Bids) : "rest";
 
     // CLUSTER vs REST → the store's PRECOMPUTED 1-vs-rest markers (markers_<grouping>). Instant, NO matrix read — these
     // ARE the cluster-vs-rest DE. Reading the whole matrix to compare a cluster against everything is bytes-bound (the
