@@ -157,3 +157,18 @@ for when it's picked up. Three notes:
    sort + incremental CSR-chunk emit, reorder-for-free) is the right shape; lstar already has the
    `CscBlock` bounded gene-block read primitive to build it on. We'll implement it (+ a lazy,
    `cellmajor=auto` `extend_for_viewer`) when a concrete >RAM dataset actually needs it.
+
+---
+
+## Closing (viewer side, 2026-06-28)
+
+**Verified app-side, and the stopgap is dropped.** With `254aec4`+`62151bb` and the **2 GB-default**
+build (no `-sMAXIMUM_MEMORY`), pbmc6 (35,391 × 20,469, ~54M nnz) preps in ~3.3 s with **no `Aborted()`**,
+and the re-prepped store loads in the running viewer with values intact (stats finite, `IL7R` a top
+leiden marker, locality path engages, zero console errors). The honest 2 GB tripwire is restored.
+
+Your two corrections are right and better than my note: the **index width** (not the values) was the
+dominant term, and **WASM linear memory** (920 MB), not RSS, is the bound that matters — my 4.1 GB RSS
+figure conflated Node/V8 + the JS-side arrays. **§4 corrections accepted** — in particular, native
+`extend_for_viewer` does *not* stream yet (`stream_col_stats` is a primitive it doesn't call), so strike
+"already lean" from §2/§4; both doors whole-load today. Thanks for the deeper diagnosis.
