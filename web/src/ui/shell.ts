@@ -430,6 +430,7 @@ export class App {
       onCellClick: (idx, anchor) => this.onCellClick(idx, anchor),
       registerComposition: (r) => this.compReactors.push(r),
       onCoord: (fn) => { const u = this.coord.subscribe(fn); this.coordSubs.push(u); },   // managed coord subscription — torn down on fullRender (no leak)
+      onTheme: (fn) => { const u = this.onTheme(fn); this.coordSubs.push(u); },   // managed theme-change subscription — torn down on fullRender alongside the coord subs
       focusCategory: (field, value) => { const r = this.focusFromOp({ dim: field, value }); if (!r.error) { this.fullRender(); this.checkpoint(`focus · ${field}=${value}`, "Restricted the workspace to a metadata value — release with the focus chip."); } },
       addPanel: (spec) => { this.addPanel(spec); this.fullRender(); },
       openSelectionMenu: (anchor) => { this.lastSelAnchor = anchor; this.openSelpop(); },   // ops menu for the current selection (facet/lasso/etc.)
@@ -690,7 +691,15 @@ export class App {
     // repaint leaves the selection untouched, so re-firing reactors would pointlessly re-render the card.
     const sel = this.coord.state.selection;
     if (this.reactorsStale || sel !== this.lastSel) {
-      for (const r of this.compReactors) r.setSelect(sel ? new Set(this.ctx.refToCategories(sel, r.grouping).filter((t) => t.frac >= 0.08).map((t) => t.value)) : null);
+      for (const r of this.compReactors) {
+        // ORTHOGONAL guard: a category selection of a DIFFERENT grouping (e.g. a sample, while this panel is grouped by
+        // cell_type) has no honest column mapping — refToCategories would return the selection's COMPOSITION (its top
+        // cell types), which reads as "those columns are selected" and confuses. Suppress the highlight and surface a
+        // pill notice instead. Same-grouping categories + cells/lasso selections keep the composition highlight.
+        const orth = sel?.kind === "category" && (sel as any).grouping !== r.grouping;
+        r.setSelect(sel && !orth ? new Set(this.ctx.refToCategories(sel, r.grouping).filter((t) => t.frac >= 0.08).map((t) => t.value)) : null);
+        r.setOrthogonal?.(orth ? { grouping: (sel as any).grouping, value: (sel as any).value } : null);
+      }
       this.lastSel = sel; this.reactorsStale = false;
     }
     this.$("railBtn").innerHTML = "Answers" + (this.rail.length ? ` <span class="badge">${this.rail.length}</span>` : "");

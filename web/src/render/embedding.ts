@@ -21,6 +21,7 @@ export class EmbeddingView {
   private style: EmbeddingStyle = defaultEmbeddingStyle(themeIsDark());
   private container: HTMLElement;
   private viewState: any;
+  private fitZoom = 0;   // the zoom at which the current frame fits — reference for fading the hint accent ring as you zoom OUT past it
   onSelect?: (ids: Int32Array) => void;
   onHover?: (index: number | null) => void;   // a cell under the cursor (or null) — emits the cross-panel hint
   onPick?: (index: number | null, x?: number, y?: number) => void;   // a plain click: a cell (→ select its cluster) or empty (→ deselect); x/y px for the selpop anchor
@@ -57,7 +58,13 @@ export class EmbeddingView {
       canvas,
       views: [new OrthographicView({ flipY: false })],
       viewState: this.viewState,
-      onViewStateChange: ({ viewState }: any) => { this.viewState = viewState; this.deck.setProps({ viewState }); },   // controlled: keeps pan/zoom while letting fitTo() reframe
+      onViewStateChange: ({ viewState }: any) => {
+        // AUTO-LIMIT zoom: don't zoom OUT past the fit (all points already visible), nor IN past ~2 points across the view
+        // (≈ fit + log2(√n / 2) levels — from "√n points across at the fit" down to 2). Keeps the cloud in frame both ways.
+        const maxZoom = this.fitZoom + Math.log2(Math.max(2, Math.sqrt(this.n) / 2));
+        viewState.zoom = Math.max(this.fitZoom, Math.min(maxZoom, viewState.zoom));
+        this.viewState = viewState; this.deck.setProps({ viewState });
+      },   // controlled: keeps pan/zoom while letting fitTo() reframe
       controller: { dragPan: true, scrollZoom: true, doubleClickZoom: false },
       layers: this.layers(),
       // hover IS available in pan mode — picking fires on move, not drag. Emit the picked cell (or null).
@@ -101,6 +108,35 @@ export class EmbeddingView {
 
   private layers() {
     const s = this.style;   // resolved style — geometry/typography/opacity read from here, not inline literals
+    // HINT presentation. DEFAULT 'lift' draws EVERY hinted cell as two stacked layers — and lets DRAW ORDER do the work:
+    //   • an accent RING just outside each cell (one consistent highlight colour), drawn UNDER,
+    //   • the cell's OWN-COLOUR FILL drawn ON TOP (the value "within").
+    // Spread out (zoom-in), each cell shows its value with an accent halo around it. As the cloud PACKS (zoom-out), the
+    // own-colour fills — drawn last — cover the rings, so the VALUES dominate and the accent recedes on its own. No cap
+    // (every cell is ringed when there's room), no zoom hack. 'ring' = hollow accent only; 'fill' = accent disc.
+    const nHint = this.highlightIds ? this.highlightIds.length : 0;
+    const hmode = s.hint.mode === "adaptive" ? (nHint && nHint <= s.hint.ringThreshold ? "ring" : "lift") : s.hint.mode;
+    const baseOpacity = (nHint && hmode === "lift") ? s.point.opacity * s.hint.dim : s.point.opacity;
+    const all = this.highlightIds;
+    const hintLayers: any[] = [];
+    if (all && nHint) {
+      const acc = accentRGB(), fillR = s.point.radius + s.hint.grow;
+      const pos = (_: any, { index }: any): [number, number] => { const c = all[index]; return [this.positions[c * 2], this.positions[c * 2 + 1]]; };
+      const accentLayer = (id: string, r: number, hollow: boolean) => new ScatterplotLayer({
+        id, data: { length: nHint }, getPosition: pos, radiusUnits: "pixels", getRadius: r, opacity: 1,
+        filled: !hollow, stroked: hollow, getFillColor: [...acc, s.hint.opacity],
+        lineWidthUnits: "pixels", getLineWidth: s.hint.ring, getLineColor: [...acc, s.hint.opacity],
+        updateTriggers: { getPosition: this.hintVersion },
+      }) as any;
+      const ownFill = new ScatterplotLayer({   // the VALUES — own colours, drawn LAST so the topmost cells always read clearly, even packed
+        id: "hl-fill", data: { length: nHint }, getPosition: pos, radiusUnits: "pixels", getRadius: fillR, stroked: false, opacity: 1,
+        getFillColor: (_: any, { index }: any) => { const c = all[index]; return [this.colors[c * 4], this.colors[c * 4 + 1], this.colors[c * 4 + 2], 255]; },
+        updateTriggers: { getPosition: this.hintVersion, getFillColor: [this.hintVersion, this.colorVersion] },
+      }) as any;
+      if (hmode === "lift") hintLayers.push(accentLayer("hl-ring", fillR + 1.2, true), ownFill);   // ring UNDER + own fill ON TOP
+      else if (hmode === "ring") hintLayers.push(accentLayer("hl-ring", fillR, true));             // hollow accent only
+      else hintLayers.push(accentLayer("hl-disc", fillR, false));                                  // accent disc
+    }
     return [
       new ScatterplotLayer({
         id: "cells",
@@ -116,7 +152,7 @@ export class EmbeddingView {
         radiusMinPixels: s.point.minPixels,
         stroked: false,
         pickable: true,
-        opacity: s.point.opacity,                 // <1 lets overlapping cells convey density
+        opacity: baseOpacity,                     // <1 lets overlapping cells convey density; dimmed further under a live hint
         updateTriggers: { all: this.colorVersion },
       }) as any,
       // SELECTION on TOP — the rest is receded toward the background (in the per-cell colours), so re-draw the selected
@@ -132,15 +168,10 @@ export class EmbeddingView {
             updateTriggers: { getPosition: this.selVersion, getFillColor: [this.selVersion, this.colorVersion] },
           }) as any
         : null,
-      // CATEGORY hint → a light overlay lifting that category's cells (honest even when they're not compact)
-      this.highlightIds && this.highlightIds.length
-        ? new ScatterplotLayer({
-            id: "hl", data: { length: this.highlightIds.length },
-            getPosition: (_: any, { index }: any) => { const c = this.highlightIds![index]; return [this.positions[c * 2], this.positions[c * 2 + 1]]; },
-            radiusUnits: "pixels", getRadius: s.point.radius + s.hint.grow, stroked: false, getFillColor: [...accentRGB(), s.hint.opacity],
-            updateTriggers: { getPosition: this.hintVersion },
-          }) as any
-        : null,
+      // CATEGORY hint (see hintLayers above): own-colour FILLS show the values "within" + a SPARSE accent-ring spray
+      // gives one consistent highlight colour that can't haze — both survive any zoom because the rings are capped and
+      // the fills are the cells' own colours (never occlude).
+      ...hintLayers,
       // CELL hint → full-panel crosshairs intersecting at the cell (precise "you are here", any zoom)
       this.crosshairXY
         ? new LineLayer({
@@ -215,7 +246,8 @@ export class EmbeddingView {
       if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y; }
     const spanX = maxX - minX || 1, spanY = maxY - minY || 1, rect = this.container.getBoundingClientRect();
     const ppu = Math.min((rect.width || 800) / spanX, (rect.height || 600) / spanY) * this.style.fit.pad;
-    return { target: [(minX + maxX) / 2, (minY + maxY) / 2, 0], zoom: Math.log2(Math.max(ppu, 1e-3)) };
+    this.fitZoom = Math.log2(Math.max(ppu, 1e-3));   // remember the fit scale → the hint ring fades when zoomed OUT past it
+    return { target: [(minX + maxX) / 2, (minY + maxY) / 2, 0], zoom: this.fitZoom };
   }
   /** Reframe the viewport to a cell set (the `scope` property / focus_view primitive); no ids = fit all. */
   fitTo(ids?: Int32Array) { this.viewState = this.computeView(ids); this.deck.setProps({ viewState: this.viewState }); }

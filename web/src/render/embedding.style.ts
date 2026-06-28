@@ -10,7 +10,7 @@ export type RGBA = [number, number, number, number];
 export interface EmbeddingStyle {
   point: { radius: number; minPixels: number; opacity: number };
   selection: { ringThreshold: number; ringGrow: number; ringWidth: number; ringOpacity: number; fillGrow: number; fillOpacity: number };
-  hint: { grow: number; opacity: number };
+  hint: { grow: number; opacity: number; ring: number; dim: number; maxMarks: number; ringThreshold: number; mode: "adaptive" | "ring" | "lift" | "fill" };
   crosshair: { width: number; opacity: number };
   label: { show: boolean; fontSize: number; minPixels: number; maxPixels: number; weight: number; fontFamily: string; textColor: RGBA; bgColor: RGBA; padding: [number, number]; atlasFontSize: number; collisionScale: number; collisionMaxPixels: number };
   legend: { show: boolean | null };
@@ -24,7 +24,7 @@ export function defaultEmbeddingStyle(dark: boolean): EmbeddingStyle {
   return {
     point: { radius: 2.4, minPixels: 1, opacity: 0.7 },
     selection: { ringThreshold: 250, ringGrow: 2.2, ringWidth: 1.6, ringOpacity: 255, fillGrow: 1.4, fillOpacity: 165 },
-    hint: { grow: 1.6, opacity: 200 },
+    hint: { grow: 0.7, opacity: 215, ring: 1.4, dim: 0.45, maxMarks: 600, ringThreshold: 400, mode: "lift" },
     crosshair: { width: 1, opacity: 150 },
     label: {
       show: true, fontSize: 12.5, minPixels: 10, maxPixels: 15, weight: 700, fontFamily: "-apple-system, BlinkMacSystemFont, system-ui, sans-serif",
@@ -41,7 +41,7 @@ export function defaultEmbeddingStyle(dark: boolean): EmbeddingStyle {
 export const EMBEDDING_RANGES: Record<string, [number, number]> = {
   "point.radius": [0.3, 20], "point.minPixels": [0, 10], "point.opacity": [0.02, 1],
   "selection.ringThreshold": [0, 1e9], "selection.ringGrow": [0, 24], "selection.ringWidth": [0.2, 8], "selection.ringOpacity": [0, 255],
-  "selection.fillGrow": [0, 24], "selection.fillOpacity": [0, 255], "hint.grow": [0, 24], "hint.opacity": [0, 255],
+  "selection.fillGrow": [0, 24], "selection.fillOpacity": [0, 255], "hint.grow": [0, 24], "hint.opacity": [0, 255], "hint.ring": [0, 6], "hint.dim": [0.05, 1], "hint.maxMarks": [0, 1e9], "hint.ringThreshold": [0, 1e9],
   "crosshair.width": [0.2, 8], "crosshair.opacity": [0, 255],
   "label.fontSize": [5, 48], "label.minPixels": [2, 48], "label.maxPixels": [4, 96], "label.weight": [100, 900],
   "label.atlasFontSize": [16, 256], "label.collisionScale": [0.5, 10], "label.collisionMaxPixels": [8, 256],
