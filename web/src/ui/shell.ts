@@ -129,6 +129,7 @@ export class App {
         <div class="wstabs" id="wstabs"></div>
         <div class="selchip" id="selchip" style="display:none"></div>
         <div class="focuschip" id="focuschip" style="display:none"></div>
+        <div class="fetchpill" id="fetchpill" style="display:none"></div>
         <div class="spacer"></div>
         <div class="tb pip" id="askBtn"><span class="dot"></span>Ask<span class="kbd">⌘K</span></div>
         <div class="tb" id="lockBtn">🔓 Layout</div>
@@ -154,6 +155,15 @@ export class App {
       `<div class="selpop" id="selpop"></div>`, `<div class="ctx" id="ctx"></div>`, `<div class="acmenu" id="acct"></div>`, `<div class="toasts" id="toasts"></div>`]) {
       const d = document.createElement("div"); d.innerHTML = html; document.body.appendChild(d.firstElementChild!);
     }
+    // GLOBAL data-fetch indicator: any csrRows read (agent DE/overdispersion, the live panels) surfaces a top-bar
+    // pill so a slow read is never a silent wait. Delay-gated at 250ms (no flash on cache hits / od_score / small reads).
+    let fetchTimer: any = null;
+    this.ctx.view.onFetchProgress((done, total) => {
+      const pill = this.$("fetchpill"); if (!pill) return;
+      if (done >= total) { if (fetchTimer) { clearTimeout(fetchTimer); fetchTimer = null; } pill.style.display = "none"; return; }
+      pill.textContent = `⟳ fetching ${total ? Math.round(done / total * 100) : 0}%`;
+      if (pill.style.display === "none" && !fetchTimer) fetchTimer = setTimeout(() => { pill.style.display = "inline-flex"; fetchTimer = null; }, 250);
+    });
     this.wire();
     this.setPip("idle");
     this.switchWS("Metadata", false);
@@ -1564,7 +1574,9 @@ export class App {
       if (p.q) d.appendChild(Object.assign(mk("div", "rq"), { textContent: "“" + p.q + "”" }));
       const H = this.ctx.handleOf(p.bind);
       if (H?.caveat) d.appendChild(this.caveatEl(p.bind, H.caveat));
-      const b = mk("div", "pbody"); const built = await bodyFor(p, this.ctx, this.hooks()); b.appendChild(built.el); d.appendChild(b);   // rail header stays uncluttered (no filter box); it appears when pinned to the canvas
+      const built = await bodyFor(p, this.ctx, this.hooks());
+      if (built.headerControls) { const ctrls = mk("div", "rctrls"); ctrls.appendChild(built.headerControls); d.appendChild(ctrls); }   // expose the gene-table filter in the disposable card too (was pin-only) — search/sort the FULL gene set without pinning first
+      const b = mk("div", "pbody"); b.appendChild(built.el); d.appendChild(b);
       if (H?.prov) d.appendChild(Object.assign(mk("div", "prov"), { textContent: "◆ " + H.prov }));
       rb.appendChild(d); if (built.afterAttach) built.afterAttach();
     }
