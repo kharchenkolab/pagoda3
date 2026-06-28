@@ -1171,6 +1171,15 @@ function splitHeatBody(p: Panel): BuiltBody {
   const w = mk("div"); w.appendChild(svg); return { el: w };
 }
 
+// Re-index per-group stats (mean/frac/n over group×gene) onto a TARGET group order, so a subset's dots align to the
+// dotplot's FROZEN columns instead of the subset's own group ordering. Groups missing from `raw` get n=0 (empty column).
+function reindexGroupStats(raw: { groups: string[]; nGenes: number; mean: Float32Array; frac: Float32Array; n: Int32Array }, order: string[]): { groups: string[]; nGenes: number; mean: Float32Array; frac: Float32Array; n: Int32Array } {
+  const ng = raw.nGenes, G = order.length, pos = new Map(raw.groups.map((g, i) => [g, i]));
+  const mean = new Float32Array(G * ng), frac = new Float32Array(G * ng), n = new Int32Array(G);
+  for (let i = 0; i < G; i++) { const j = pos.get(order[i]); if (j != null) { n[i] = raw.n[j]; mean.set(raw.mean.subarray(j * ng, (j + 1) * ng), i * ng); frac.set(raw.frac.subarray(j * ng, (j + 1) * ng), i * ng); } }
+  return { groups: order, nGenes: ng, mean, frac, n };
+}
+
 async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltBody> {
   const grouping = p.group || ctx.defaultGrouping();
   const markers = await ctx.markers(grouping);   // ROWS: all-cell markers — shared across scopes so two faceted panels align
@@ -1198,11 +1207,17 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
       statsKey = `subset${ctx.coord.state.focus?.ids.length}${statsKey ? "+" + statsKey : ""}`;
     }
     scoped = !!(scopeCells && scopeCells.length);
-    gs = scoped ? await ctx.groupStatsForCells(grouping, scopeCells!, statsKey) : await ctx.groupStatsCached(grouping);
+    // STRUCTURE is FROZEN to the WHOLE-dataset stats — the column order AND the rows (top markers per group) stay put as
+    // you subset; only the DOTS move. groupStatsForCells returns groups in category order, which differs from
+    // groupStatsCached's order → it would otherwise REORDER the columns (and re-derive the rows). So re-index the subset
+    // stats onto the frozen whole-dataset order; a group absent from the subset just gets empty (n=0) dots.
+    const baseGS = await ctx.groupStatsCached(grouping);
+    const raw = scoped ? await ctx.groupStatsForCells(grouping, scopeCells!, statsKey) : baseGS;
+    gs = (raw === baseGS || raw.groups.join("") === baseGS.groups.join("")) ? raw : reindexGroupStats(raw, baseGS.groups);
     const seen = new Set<number>(); const markerRows: { gene: number; symbol: string; pinned?: boolean }[] = [];
-    for (const grp of gs.groups) for (const m of (markers.get(grp) || []).slice(0, 3)) if (!seen.has(m.gene)) { seen.add(m.gene); markerRows.push({ gene: m.gene, symbol: m.symbol }); }
+    for (const grp of baseGS.groups) for (const m of (markers.get(grp) || []).slice(0, 3)) if (!seen.has(m.gene)) { seen.add(m.gene); markerRows.push({ gene: m.gene, symbol: m.symbol }); }
     rows = [...pinnedRows, ...markerRows.filter((r) => !pinnedSet.has(r.gene))];
-    nPinned = pinnedRows.length; G = gs.groups.length; R = rows.length; xLabMax = Math.max(1, ...gs.groups.map((g: string) => g.length));
+    nPinned = pinnedRows.length; G = baseGS.groups.length; R = rows.length; xLabMax = Math.max(1, ...baseGS.groups.map((g: string) => g.length));
   }
   await loadData();
   const x0 = 70, y0 = 6;
