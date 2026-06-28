@@ -267,10 +267,13 @@ function variableGenesBody(p: Panel, ctx: Ctx, hooks: PanelHooks): BuiltBody {
     { key: "score", label: "overdispersion", num: true, get: (r: any) => r.score ?? 0, fmt: (v: number) => v.toFixed(2), cls: () => "up" },
   ], hooks.onGeneClick);
   const w = mk("div"); w.style.cssText = "position:absolute;inset:0;display:flex;flex-direction:column;overflow:hidden";
-  const scope = mk("div", "vgscope"); w.appendChild(scope); w.appendChild(gt.el);
+  const scope = mk("div", "vgscope");
+  const bar = mk("div", "fetchbar");   // thin data-fetch progress bar — determinate (csrRows runs) or indeterminate (whole-matrix)
+  w.appendChild(scope); w.appendChild(bar); w.appendChild(gt.el);
   let busy = false, again = false;
   const recompute = async () => {
     if (busy) { again = true; return; } busy = true;
+    let off = () => {}, shownT: any = null;
     try {
       const sc = p.view?.scope ? ctx.refToCells(p.view.scope) : null;   // pinned panel scope > selection > global SUBSET > all
       const sel = ctx.coord.state.selection;
@@ -280,11 +283,21 @@ function variableGenesBody(p: Panel, ctx: Ctx, hooks: PanelHooks): BuiltBody {
       else if (sel) { ids = Array.from(ctx.refToCells(sel)); label = sel.kind === "category" ? (sel as any).value : "selection"; }
       else if (subset) { ids = Array.from(subset); label = String(ctx.coord.state.focus?.label || "subset"); }   // L3: a global subset scopes this live panel
       else { ids = Array.from({ length: ctx.n }, (_, i) => i); label = "all cells"; }
-      scope.textContent = `${label} · ${ids.length.toLocaleString()} cells · top overdispersed genes`;
+      const base = `${label} · ${ids.length.toLocaleString()} cells`;
+      scope.textContent = `${base} · top overdispersed genes`;
+      // surface a fetch bar ONLY if the read is actually slow (>220ms) — no flash on cache hits / od_score / small reads.
+      let determinate = false;
+      const showBar = () => { bar.classList.add("on"); if (!determinate) bar.classList.add("pulse"); scope.textContent = `${base} · fetching data…`; };
+      shownT = setTimeout(showBar, 220);
+      off = ctx.view.onFetchProgress((done, total) => { determinate = true; bar.classList.remove("pulse"); bar.style.width = total ? `${Math.round(done / total * 100)}%` : "0%"; });
       const hv = await ctx.view.overdispersedGenes(ids, 1e9);
       gt.setRows(hv.map((h: any) => ({ symbol: h.symbol, score: h.resid })));
-      if (!hv.length) scope.textContent = `${label} — no overdispersion (this store has no cell-major counts panel)`;
-    } finally { busy = false; if (again) { again = false; recompute(); } }
+      scope.textContent = hv.length ? `${base} · top overdispersed genes` : `${label} — no overdispersion (this store has no cell-major counts panel)`;
+    } finally {
+      off(); if (shownT) clearTimeout(shownT);
+      bar.classList.remove("on", "pulse"); bar.style.width = "0%";
+      busy = false; if (again) { again = false; recompute(); }
+    }
   };
   recompute();
   return { el: w, headerControls: gt.headerControls, afterAttach: () => {

@@ -389,3 +389,6 @@ select.inline{background:var(--inset);color:var(--text);border:1px solid var(--l
 .embsubset.sel{color:var(--cyan,#78e0ff);background:rgba(120,224,255,.12);border-color:var(--cyan,#78e0ff)}   /* SELECTION variant — mirrors the global selchip's cyan (subset stays amber) */
 .embsubset .x{pointer-events:auto;cursor:pointer;opacity:.7;margin-left:1px}   /* the pill is pointer-events:none; the clear control opts back in. No underline — matches the global selchip's clear ✕ */
 .embsubset .x:hover{opacity:1}
+.fetchbar{height:2px;flex:0 0 auto;width:0%;background:var(--cyan);opacity:0;transition:width .12s linear,opacity .2s}   /* data-fetch progress bar (live overdispersion/DE csrRows reads) */
+.fetchbar.on{opacity:1}
+.fetchbar.pulse{width:100%;animation:ppulse 1.1s ease-in-out infinite}   /* indeterminate: a whole-matrix read has no per-run progress — reuse the pip pulse keyframe */

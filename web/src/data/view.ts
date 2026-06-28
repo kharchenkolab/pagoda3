@@ -401,13 +401,19 @@ export class LstarView {
   // Read ONLY the given cells' rows of the cell-major counts as a re-based CSR sub-panel (byte-range reads via the
   // package reader's csrRows) — for compute on a small selection without pulling the whole matrix. pos = [0..k-1]
   // over the read rows (input order). null when not eligible (no csrRows, or no all-genes cell-major copy).
+  // FETCH progress — panels subscribe to surface a "fetching data" indicator while csrRows range reads stream in
+  // (done/total coalesced runs). A live binding, not a per-call param, so the view methods keep their signatures.
+  private fetchCbs = new Set<(done: number, total: number) => void>();
+  onFetchProgress(cb: (done: number, total: number) => void): () => void { this.fetchCbs.add(cb); return () => { this.fetchCbs.delete(cb); }; }
+  private emitFetch(done: number, total: number): void { for (const cb of this.fetchCbs) try { cb(done, total); } catch { /* a panel callback must never break a read */ } }
+
   private async subRowsPanel(cells: number[]): Promise<{ panel: { data: any; indices: any; indptr: any; nGenes: number; lognorm: boolean }; symbols: string[]; pos: number[]; rows: number[] } | null> {
     const name = this.ds.hasField("counts_cellmajor") ? "counts_cellmajor" : null;
     if (!name || typeof (this.ds as any).csrRows !== "function") return null;
     const fm = this.ds.field(name)!;
     if ((fm.span?.[1] ?? "genes") !== "genes") return null;   // need the ALL-genes cell-major copy (indices == global gene ids)
     const symbols = await this.genes();
-    const sub = await (this.ds as any).csrRows(name, cells);   // { data, indices, indptr, rows } — rows = the global cell id at each panel position
+    const sub = await (this.ds as any).csrRows(name, cells, 4096, (d: number, t: number) => this.emitFetch(d, t));   // { data, indices, indptr, rows } — rows = the global cell id at each panel position
     const rows = sub.rows as number[];
     return { panel: { data: sub.data, indices: sub.indices, indptr: sub.indptr, nGenes: symbols.length, lognorm: fm.state === "lognorm" }, symbols, pos: rows.map((_, i) => i), rows };
   }
