@@ -1215,12 +1215,18 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
     // groupStatsCached's order → it would otherwise REORDER the columns (and re-derive the rows). So re-index the subset
     // stats onto the frozen whole-dataset order; a group absent from the subset just gets empty (n=0) dots.
     const baseGS = await ctx.groupStatsCached(grouping);
-    const raw = scoped ? await ctx.groupStatsForCells(grouping, scopeCells!, statsKey) : baseGS;
-    gs = (raw === baseGS || raw.groups.join("") === baseGS.groups.join("")) ? raw : reindexGroupStats(raw, baseGS.groups);
     const seen = new Set<number>(); const markerRows: { gene: number; symbol: string; pinned?: boolean }[] = [];
     for (const grp of baseGS.groups) for (const m of (markers.get(grp) || []).slice(0, 3)) if (!seen.has(m.gene)) { seen.add(m.gene); markerRows.push({ gene: m.gene, symbol: m.symbol }); }
     rows = [...pinnedRows, ...markerRows.filter((r) => !pinnedSet.has(r.gene))];
     nPinned = pinnedRows.length; G = baseGS.groups.length; R = rows.length; xLabMax = Math.max(1, ...baseGS.groups.map((g: string) => g.length));
+    // DOTS within an L3 subset: recompute by reading ONLY these displayed gene columns (gene-slice -- a few MB,
+    // byte-range per gene), NOT the whole ~400MB cell-major matrix. Re-index onto the frozen whole-dataset order.
+    if (scoped) {
+      const geneCols = rows.map((r) => r.gene);
+      const raw = await ctx.groupStatsForGenes(grouping, geneCols, scopeCells!, statsKey);
+      const sameOrder = raw.groups.length === baseGS.groups.length && raw.groups.every((g: string, i: number) => g === baseGS.groups[i]);
+      gs = sameOrder ? raw : reindexGroupStats(raw, baseGS.groups);
+    } else gs = baseGS;
   }
   await loadData();
   const x0 = 70, y0 = 6;
@@ -1355,6 +1361,9 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
   // ORTHOGONAL-selection notice: when a category of a DIFFERENT grouping is selected (e.g. a sample, while this dotplot
   // groups by cell_type), it can't map to columns — the App suppresses the false composition highlight and calls
   // setOrthogonal(info). Show a pill naming it + a "subset to it" shortcut: focus = L3, which the dots DO recompute within.
+  // brief pulse on the dot layer after a (re)compute within a subset -- confirms the dots WERE recomputed, even
+  // when sample-invariant values land close (often only ~10% of dots move).
+  const flashChanged = () => { const svg = host.querySelector("svg"); if (svg) try { (svg as any).animate([{ opacity: 0.4 }, { opacity: 1 }], { duration: 420, easing: "ease-out" }); } catch { /* no WAAPI */ } };
   const orthPill = mk("div", "orthpill"); const orthTxt = mk("span", "t"); const orthAct = mk("span", "x");
   orthAct.textContent = "subset to it →"; orthAct.title = "restrict the whole workspace to these cells (focus) — then this dotplot recomputes within them";
   orthPill.append(orthTxt, orthAct); orthPill.style.display = "none"; w.appendChild(orthPill);
@@ -1374,15 +1383,17 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
     // grid; rail cards aren't, so give those a bounded height rather than letting the heatmap stretch them.
     if (pb) { pb.style.position = "relative"; if (pb.clientHeight < 80) pb.style.height = "300px"; }
     draw();
+    if (scoped) flashChanged();   // a scoped build: pulse so the within-subset recompute is visible
+    ctx.view.warmColumns(rows.map((r) => r.gene));   // background pre-read the marker columns → the first subset recompute is instant
     // react to cross-panel selection + hover like the composition panel: the App translates the current
     // selection/hint into THIS panel's grouping and calls setSelect/setHover, which tint the matching columns.
     hooks.registerComposition({ grouping, setSelect: (v) => { selGroups = v; paintCols(); }, setHover: (v) => { hovGroups = v; paintCols(); }, setOrthogonal });
     hooks.registerGeneHover((sym) => { hovGene = sym; paintGeneRow(); });   // another dotplot hovered a gene → highlight its row here
     hooks.onTheme(() => { s = resolvePanelStyleFor(ctx, "Heatmap", p.view); draw(); });   // theme toggled → re-resolve the (build-time-baked) ramp endpoints + redraw, so the dotplot follows the theme
-    // NOTE: live recompute-on-subset (hooks.onCoord focus → loadData + draw) is intentionally NOT wired here yet: it
-    // deadlocks because groupStatsForCells loads the whole cell-major matrix (dePanel) via the compute-pool worker, and
-    // that path races/hangs when triggered from the focus subscription. loadData() is factored out and ready; wire it
-    // once the pool path is made re-entrancy-safe (own task). For now the dots reflect the subset only on a fresh build.
+    // LIVE recompute-on-subset: when the L3 focus/subset changes, re-derive the dots. Safe now because the scoped
+    // path is the GENE-SLICE (groupStatsForGenes reads only the displayed columns inline -- no dePanel, no compute-
+    // pool, so no worker re-entrancy/deadlock). Re-layout + pulse so the within-subset recompute is visible.
+    hooks.onCoord(async (_s: any, changed: string[]) => { if (!changed.some((k) => k === "focus" || k === "subset")) return; await loadData(); draw(); flashChanged(); });
     let ro: ResizeObserver;
     ro = new ResizeObserver(() => { if (!w.isConnected) ro.disconnect(); else draw(); });   // re-fill on resize; self-cleans
     if (pb) ro.observe(pb);

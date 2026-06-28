@@ -248,6 +248,33 @@ export class LstarView {
     return inline();
   }
 
+  // GENE-SLICE subset stats — the dotplot's L3 recompute. Read ONLY the displayed gene columns from gene-major
+  // `counts` (byte-range, ~84KB each — the gene-colouring fast path) and accumulate per-(group,gene) mean(log1p)+frac
+  // over the subset cells. Cost ∝ #genes shown (≈few MB), NOT the whole ~400MB cell-major matrix; pure inline (no
+  // dePanel, no compute-pool) so it's safe to fire from a coord subscription. Returns FULL-width arrays (G×ng) with
+  // only `geneCols` populated — the dotplot reads gs.mean[c*ng+gene] for its rows only, and the ramp is per-row.
+  async groupStatsForGenesInSubset(codes: ArrayLike<number>, G: number, geneCols: number[], cellIds: ArrayLike<number>): Promise<{ mean: Float32Array; frac: Float32Array; n: Int32Array }> {
+    const ng = this.nGenes;
+    const inSub = new Uint8Array(this.nCells); const nPer = new Int32Array(G);
+    for (let i = 0; i < cellIds.length; i++) { const c = (cellIds as any)[i]; inSub[c] = 1; nPer[codes[c]]++; }
+    const sum = new Float32Array(G * ng), nz = new Float32Array(G * ng);
+    const uniq = [...new Set(geneCols)]; let gi = 0;
+    const work = async () => { while (gi < uniq.length) { const gcol = uniq[gi++]; const { rows, vals } = await (this.ds as any).cscColumn("counts", gcol); for (let k = 0; k < rows.length; k++) { const c = rows[k]; if (!inSub[c]) continue; const gr = codes[c]; sum[gr * ng + gcol] += Math.log1p(vals[k]); nz[gr * ng + gcol]++; } } };
+    await Promise.all(Array.from({ length: Math.min(16, uniq.length) }, work));   // bounded fan-out of byte-range reads
+    const mean = new Float32Array(G * ng), frac = new Float32Array(G * ng);
+    for (const gcol of uniq) for (let gr = 0; gr < G; gr++) { const denom = nPer[gr] || 1; mean[gr * ng + gcol] = sum[gr * ng + gcol] / denom; frac[gr * ng + gcol] = nz[gr * ng + gcol] / denom; }
+    return { mean, frac, n: nPer };
+  }
+
+  // Pre-warm the byte-range reads for a set of gene columns (background, best-effort) so the dotplot's FIRST subset
+  // recompute is instant instead of paying ~one round-trip per column on a remote link — the columns are the same for
+  // every subset, so once cached every later recompute is a cache hit. No-op when the store can't range-read.
+  warmColumns(geneCols: number[]): void {
+    const ds: any = this.ds;
+    if (typeof ds.cscColumn !== "function") return;
+    for (const g of [...new Set(geneCols)]) ds.cscColumn("counts", g).catch(() => { /* best-effort */ });
+  }
+
   // Ranked marker genes per group. Reads the precomputed table when present, else derives markers
   // (group mean(log1p) vs rest) from on-the-fly group stats — so a bare store still gets markers.
   async markers(grouping = "leiden", topN = 25): Promise<Map<string, { gene: number; symbol: string; lfc: number; padj: number }[]>> {

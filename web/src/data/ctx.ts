@@ -338,6 +338,18 @@ export class Ctx {
     return out;
   }
 
+  // GENE-SLICE subset stats (the dotplot's L3 recompute): per-(group,gene) mean/frac over `cellIds`, computed by
+  // reading ONLY `geneCols` from gene-major counts — same shape as groupStatsForCells, a few MB not the whole matrix.
+  async groupStatsForGenes(grouping: string, geneCols: number[], cellIds: ArrayLike<number>, key?: string): Promise<{ groups: string[]; nGenes: number; n: Int32Array; mean: Float32Array; frac: Float32Array }> {
+    const ck = key ? `${grouping}:${key}:g${geneCols.join(",")}` : "";
+    if (ck && this.gsfcCache.has(ck)) return this.gsfcCache.get(ck)!;
+    const m = await this.metaOf(grouping) as any;
+    const { mean, frac, n } = await this.view.groupStatsForGenesInSubset(m.codes, m.categories.length, geneCols, cellIds);
+    const out = { groups: m.categories as string[], nGenes: this.view.nGenes, n, mean, frac };
+    if (ck) this.gsfcCache.set(ck, out);
+    return out;
+  }
+
   // per-sample distribution of a gene within an optional cluster (the replicate view)
   async exprBySample(gene: string, clusterName?: string): Promise<{ sample: string; cond: string; vals: number[]; mean: number }[]> {
     const { values } = await this.view.geneExpression(gene);
