@@ -21,6 +21,7 @@ export class EmbeddingView {
   private style: EmbeddingStyle = defaultEmbeddingStyle(themeIsDark());
   private container: HTMLElement;
   private viewState: any;
+  private fitZoom = 0;   // the zoom at which the current frame fits — reference for fading the hint accent ring as you zoom OUT past it
   onSelect?: (ids: Int32Array) => void;
   onHover?: (index: number | null) => void;   // a cell under the cursor (or null) — emits the cross-panel hint
   onPick?: (index: number | null, x?: number, y?: number) => void;   // a plain click: a cell (→ select its cluster) or empty (→ deselect); x/y px for the selpop anchor
@@ -101,20 +102,50 @@ export class EmbeddingView {
 
   private layers() {
     const s = this.style;   // resolved style — geometry/typography/opacity read from here, not inline literals
-    // HINT presentation, chosen by what keeps the VALUES visible at any zoom:
-    //  'lift' (default) — DIM-OTHERS: redraw the hinted cells in their OWN colours on top of a dimmed cloud (exactly the
-    //   selection layer's trick). No accent ink ⇒ values are NEVER occluded, at any density/zoom; the highlight reads as
-    //   the bright region against the receded rest. 'ring'/'fill' — a consistent ACCENT overlay (outline / disc): easy to
-    //   read but it INHERENTLY covers values once cells pack on screen (zoom-out, fixed-px marks), so its marks are
-    //   sub-sampled to a spray (s.hint.maxMarks) to limit — not eliminate — the haze. 'adaptive' = ring small, lift large.
+    // HINT presentation. The DEFAULT 'lift' satisfies two things at once, at ANY zoom:
+    //  (1) a CONSISTENT highlight colour — a SPARSE accent-ring spray (capped to s.hint.maxMarks, so the rings can never
+    //      merge into a haze however tightly the cloud packs on zoom-out), and
+    //  (2) the cells' ACTUAL VALUES shown "within" — an own-colour FILL drawn for EVERY hinted cell (own colours never
+    //      occlude), on top of a dimmed cloud so the bright region reads as the highlight.
+    // 'ring' = sparse hollow accent rings only (no fill); 'fill' = sparse accent discs; 'adaptive' = ring small / lift large.
     const nHint = this.highlightIds ? this.highlightIds.length : 0;
     const hmode = s.hint.mode === "adaptive" ? (nHint && nHint <= s.hint.ringThreshold ? "ring" : "lift") : s.hint.mode;
-    const cap = s.hint.maxMarks;
-    const marks: ArrayLike<number> | null = (nHint && hmode !== "lift" && cap > 0 && nHint > cap)   // sparsify ACCENT modes only; lift draws ALL (own colours don't occlude)
-      ? (() => { const out = new Int32Array(cap), step = nHint / cap; for (let i = 0; i < cap; i++) out[i] = this.highlightIds![Math.floor(i * step)]; return out; })()
-      : this.highlightIds;
-    const nMarks = marks ? marks.length : 0;
     const baseOpacity = (nHint && hmode === "lift") ? s.point.opacity * s.hint.dim : s.point.opacity;
+    const all = this.highlightIds;
+    const cap = s.hint.maxMarks;
+    // ringMarks: even sub-sample for the accent rings (consistent-colour marker that can't haze). Fills use ALL of `all`.
+    const ringMarks: ArrayLike<number> = (all && cap > 0 && nHint > cap)
+      ? (() => { const out = new Int32Array(cap), step = nHint / cap; for (let i = 0; i < cap; i++) out[i] = all![Math.floor(i * step)]; return out; })()
+      : (all || new Int32Array(0));
+    const hintLayers: any[] = [];
+    if (all && nHint) {
+      const acc = accentRGB();
+      // The accent ring is pixel-sized, so it can't avoid overlapping once the cloud packs on zoom-out. FADE it as the
+      // current zoom drops below the fit: at/above the fit it's full (consistent highlight colour), zoomed out it recedes
+      // toward transparent so the always-full own-colour FILLS take over and the values stay visible at high density.
+      const ringFade = Math.max(0.05, Math.min(1, Math.pow(2, ((this.viewState?.zoom ?? this.fitZoom) - this.fitZoom) * 1.2)));
+      if (hmode !== "ring") {   // a FILL: lift = own colours for ALL hinted cells (values within); fill = accent disc (sparse)
+        const fillIds = hmode === "lift" ? all : ringMarks;
+        hintLayers.push(new ScatterplotLayer({
+          id: "hl-fill", data: { length: fillIds.length },
+          getPosition: (_: any, { index }: any) => { const c = fillIds[index]; return [this.positions[c * 2], this.positions[c * 2 + 1]]; },
+          radiusUnits: "pixels", getRadius: s.point.radius + s.hint.grow, stroked: false, opacity: 1,
+          getFillColor: hmode === "lift"
+            ? (_: any, { index }: any) => { const c = fillIds[index]; return [this.colors[c * 4], this.colors[c * 4 + 1], this.colors[c * 4 + 2], 255]; }
+            : [...acc, s.hint.opacity],
+          updateTriggers: { getPosition: this.hintVersion, getFillColor: [this.hintVersion, this.colorVersion, hmode] },
+        }) as any);
+      }
+      if (hmode !== "fill" && s.hint.ring > 0) {   // the SPARSE accent RING — one consistent highlight colour, never hazes
+        hintLayers.push(new ScatterplotLayer({
+          id: "hl-ring", data: { length: ringMarks.length },
+          getPosition: (_: any, { index }: any) => { const c = ringMarks[index]; return [this.positions[c * 2], this.positions[c * 2 + 1]]; },
+          radiusUnits: "pixels", getRadius: s.point.radius + s.hint.grow, filled: false, stroked: true, opacity: 1,
+          lineWidthUnits: "pixels", getLineWidth: s.hint.ring, getLineColor: [...acc, Math.round(s.hint.opacity * ringFade)],
+          updateTriggers: { getPosition: this.hintVersion, getLineColor: [this.hintVersion, this.colorVersion] },
+        }) as any);
+      }
+    }
     return [
       new ScatterplotLayer({
         id: "cells",
@@ -146,23 +177,10 @@ export class EmbeddingView {
             updateTriggers: { getPosition: this.selVersion, getFillColor: [this.selVersion, this.colorVersion] },
           }) as any
         : null,
-      // CATEGORY hint → lift that category's cells WITHOUT occluding what's under them. 'ring' = a hollow accent outline
-      // (the underlying colour shows through); 'lift' = redraw the cells in their OWN colours on top + a thin accent ring
-      // (like the selection layer — never an opaque blob, density-robust); 'fill' = the legacy accent disc. The fill disc
-      // hid the data under a mass of cells (you had to move the mouse to see beneath it); ring/lift don't.
-      marks && nMarks
-        ? new ScatterplotLayer({
-            id: "hl", data: { length: nMarks },
-            getPosition: (_: any, { index }: any) => { const c = marks[index]; return [this.positions[c * 2], this.positions[c * 2 + 1]]; },
-            radiusUnits: "pixels", getRadius: s.point.radius + s.hint.grow, opacity: 1,
-            stroked: hmode === "ring", filled: hmode !== "ring",   // ONLY 'ring' strokes; 'lift'/'fill' are filled (lift = own-colour dim-others, no accent ring → no haze at zoom-out)
-            lineWidthUnits: "pixels", getLineWidth: s.hint.ring, getLineColor: [...accentRGB(), s.hint.opacity],
-            getFillColor: hmode === "lift"
-              ? (_: any, { index }: any) => { const c = marks[index]; return [this.colors[c * 4], this.colors[c * 4 + 1], this.colors[c * 4 + 2], 255]; }
-              : [...accentRGB(), s.hint.opacity],
-            updateTriggers: { getPosition: this.hintVersion, getFillColor: [this.hintVersion, this.colorVersion, hmode] },
-          }) as any
-        : null,
+      // CATEGORY hint (see hintLayers above): own-colour FILLS show the values "within" + a SPARSE accent-ring spray
+      // gives one consistent highlight colour that can't haze — both survive any zoom because the rings are capped and
+      // the fills are the cells' own colours (never occlude).
+      ...hintLayers,
       // CELL hint → full-panel crosshairs intersecting at the cell (precise "you are here", any zoom)
       this.crosshairXY
         ? new LineLayer({
@@ -237,7 +255,8 @@ export class EmbeddingView {
       if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y; }
     const spanX = maxX - minX || 1, spanY = maxY - minY || 1, rect = this.container.getBoundingClientRect();
     const ppu = Math.min((rect.width || 800) / spanX, (rect.height || 600) / spanY) * this.style.fit.pad;
-    return { target: [(minX + maxX) / 2, (minY + maxY) / 2, 0], zoom: Math.log2(Math.max(ppu, 1e-3)) };
+    this.fitZoom = Math.log2(Math.max(ppu, 1e-3));   // remember the fit scale → the hint ring fades when zoomed OUT past it
+    return { target: [(minX + maxX) / 2, (minY + maxY) / 2, 0], zoom: this.fitZoom };
   }
   /** Reframe the viewport to a cell set (the `scope` property / focus_view primitive); no ids = fit all. */
   fitTo(ids?: Int32Array) { this.viewState = this.computeView(ids); this.deck.setProps({ viewState: this.viewState }); }
