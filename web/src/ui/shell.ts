@@ -696,7 +696,7 @@ export class App {
         // cell_type) has no honest column mapping — refToCategories would return the selection's COMPOSITION (its top
         // cell types), which reads as "those columns are selected" and confuses. Suppress the highlight and surface a
         // pill notice instead. Same-grouping categories + cells/lasso selections keep the composition highlight.
-        const orth = sel?.kind === "category" && (sel as any).grouping !== r.grouping;
+        const orth = sel?.kind === "category" && (sel as any).grouping !== r.grouping && !!r.setOrthogonal;   // OPT-IN: only reactors that registered setOrthogonal (the dotplot) suppress + show a pill; others (e.g. the reconcile panel's `annotation` reactor) NEED the cross-grouping translation — leiden→annotation is how a selected cluster opens its working-draft record
         r.setSelect(sel && !orth ? new Set(this.ctx.refToCategories(sel, r.grouping).filter((t) => t.frac >= 0.08).map((t) => t.value)) : null);
         r.setOrthogonal?.(orth ? { grouping: (sel as any).grouping, value: (sel as any).value } : null);
       }
@@ -1629,7 +1629,7 @@ export class App {
     // panel-LOCAL persisted UI state (facet expand-set/sort/brush, record collapse) must ride through the same
     // reconstruct — else a workspace switch (which JSON-clones the canvas, then rebuilds via newPanel) silently
     // resets it. Carried as ad-hoc (p as any) fields so they don't need to bloat the Panel type.
-    for (const k of ["facetOpen", "facetSort", "facetBrush", "recCollapsed"] as const) if ((p as any)[k] !== undefined) (np as any)[k] = (p as any)[k];
+    for (const k of ["facetOpen", "facetSort", "facetBrush"] as const) if ((p as any)[k] !== undefined) (np as any)[k] = (p as any)[k];
     return np;
   }
 
@@ -1706,7 +1706,7 @@ export class App {
   captureLayout(): Partial<Panel>[] { return this.canvas.map((p) => { const o: Partial<Panel> = { type: p.type, title: p.title, cap: p.cap, full: p.full, col: p.col, bind: p.bind, group: p.group, gene: p.gene, heatMode: p.heatMode, genes: p.genes, view: p.view ? JSON.parse(JSON.stringify(p.view)) : undefined, rows: this.capRows(p), source: p.source, controls: p.controls ? JSON.parse(JSON.stringify(p.controls)) : undefined, params: p.params ? JSON.parse(JSON.stringify(p.params)) : undefined, version: p.version, description: p.description, permissions: p.permissions ? JSON.parse(JSON.stringify(p.permissions)) : undefined, aLabel: p.aLabel, bLabel: p.bLabel, split: p.split ? JSON.parse(JSON.stringify(p.split)) : undefined };
     // same panel-local UI state newPanel carries — serialize it so a RELOAD (not just a workspace switch) restores
     // the facet expand-set/sort/brush + record collapse, instead of resetting to the default open category.
-    for (const k of ["facetOpen", "facetSort", "facetBrush", "recCollapsed"] as const) if ((p as any)[k] !== undefined) (o as any)[k] = (p as any)[k];
+    for (const k of ["facetOpen", "facetSort", "facetBrush"] as const) if ((p as any)[k] !== undefined) (o as any)[k] = (p as any)[k];
     return o; }); }   // aLabel/bLabel: a pinned DE table's A/B column names; split: a concordance SplitHeat's gene×donor matrix (it's its ONLY data + lives on the canvas, so it must persist or the panel reloads empty)
   // Result tables now hold the FULL ranked gene list (all tested genes) for live search; cap what we PERSIST so a
   // big-gene-set DE/overdispersion panel doesn't bloat the session doc (the tail is recomputable; live search keeps all).
