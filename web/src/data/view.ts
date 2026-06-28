@@ -309,11 +309,12 @@ export class LstarView {
       } catch { /* fall through */ }
     }
 
-    // SUBSET fast path: read ONLY the sampled rows (≤2·maxPerGroup, a few MB) by byte-range instead of the whole
-    // cell-major matrix. deCore runs over the re-based positions (classified A vs B by global cell id, robust to
-    // csrRows' row ordering); `sample()` is deterministic so the ranking is identical to the whole-matrix path.
-    // try/catch falls through to dePanel() on any failure (e.g. too many in-flight ranges) — pure optimization.
-    if (this.dePanelCache === undefined) {
+    // SUBSET fast path (CANONICAL store only): read ONLY the sampled rows (≤2·maxPerGroup, a few MB) by byte-range.
+    // SKIP on a reordered store — there the sampled cells scatter within their blocks (and for a-vs-REST, B spans every
+    // cluster) so this would fire hundreds of range reads; a large selection there falls through to dePanel instead (one
+    // whole-matrix read, un-permuted + cached — far cheaper at latency than the scatter). deCore runs over the re-based
+    // positions; `sample()` is deterministic so the ranking is identical to the whole-matrix path.
+    if (this.dePanelCache === undefined && !this.ds.hasField("counts_cellmajor_order")) {
       try {
         const sp = await this.subRowsPanel([...A, ...B]);
         if (sp) {
@@ -461,7 +462,7 @@ export class LstarView {
     // REORDERED store: the selection's rows are physically contiguous, so read the FULL selection via csrRows (1-few
     // coalesced reads — latency-cheap regardless of size) and let overdispersedCore subsample IN MEMORY. Pre-subsampling
     // would scatter within the contiguous block and forfeit the ordering. (Canonical store → the size-gated path below.)
-    if (this.dePanelCache === undefined && this.ds.hasField("counts_cellmajor_order")) {
+    if (this.dePanelCache === undefined && this.ds.hasField("counts_cellmajor_order") && cellIds.length <= this.nCells * 0.5) {
       try {
         const sp = await this.subRowsPanel(cellIds);
         if (sp) return overdispersedCore(sp.panel, sp.pos, topN, maxCells)
@@ -475,7 +476,7 @@ export class LstarView {
     // connection — the whole-matrix panel is better there. The try/catch makes it a safe optimization: any failure
     // (too many in-flight ranges) falls through to the whole-matrix path, which is correct, just slower.
     const SUBSET_MAX = 1500;
-    if (this.dePanelCache === undefined && cellIds.length <= SUBSET_MAX) {
+    if (this.dePanelCache === undefined && !this.ds.hasField("counts_cellmajor_order") && cellIds.length <= SUBSET_MAX) {
       try {
         const sp = await this.subRowsPanel(sample(cellIds, maxCells));
         if (sp) return overdispersedCore(sp.panel, sp.pos, topN, sp.pos.length)

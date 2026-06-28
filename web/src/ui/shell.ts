@@ -1443,6 +1443,23 @@ export class App {
     if (!Bids.length) return { error: `B (${describeCellSet(Bexpr!)}) resolves to no cells` };
     const aL = describeCellSet(input.A), bL = input.B ? describeCellSet(Bexpr!) : "rest";
 
+    // CLUSTER vs REST → the store's PRECOMPUTED 1-vs-rest markers (markers_<grouping>). Instant, NO matrix read — these
+    // ARE the cluster-vs-rest DE. Reading the whole matrix to compare a cluster against everything is bytes-bound (the
+    // 456MB cell-major copy); the precomputed markers exist exactly so this is free. Fires only when A is a single
+    // grouping value, B is unspecified (= rest), and the store carries that grouping's markers.
+    if (input.stat === "de" && !input.B && (input.A as any)?.category?.grouping) {
+      const g = (input.A as any).category.grouping, val = (input.A as any).category.value;
+      if (ctx.view.ds.hasField(`markers_${g}_lfc`)) {
+        const rows0 = (await ctx.view.markers(g, 1e9)).get(val);
+        if (rows0?.length) {
+          const rows = rows0.map((r: any) => ({ gene: r.gene, symbol: r.symbol, lfc: r.lfc, p: r.padj }));
+          place({ type: "DeTable", title: input.title || `DE · ${aL} vs rest`, cap: `${aL} vs rest · precomputed markers`, bind: "de:markers", aLabel: aL, bLabel: "rest", rows });
+          const up = rows.filter((r: any) => r.lfc > 0).slice(0, 8).map((r: any) => r.symbol).join(", ");
+          return { ok: `DE ${aL} vs rest from the store's precomputed 1-vs-rest markers — instant, no recompute. Up in ${aL}: ${up}. (To recompute at the cell level, compare ${aL} against a SPECIFIC other group instead of rest.)` };
+        }
+      }
+    }
+
     // PSEUDOBULK (donor-level): aggregate A and B to per-REPLICATE means, t-test ACROSS replicates → REAL p-values.
     if (input.stat === "pseudobulk") {
       const rep = String(input.replicate || "").trim();
