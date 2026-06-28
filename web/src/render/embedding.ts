@@ -101,6 +101,12 @@ export class EmbeddingView {
 
   private layers() {
     const s = this.style;   // resolved style — geometry/typography/opacity read from here, not inline literals
+    // HINT presentation: 'adaptive' picks a hollow RING for a small/sparse hinted set (crisp, precise) and the own-colour
+    // LIFT for a large/dense one (rings would merge into a haze). While a hint is up, the base cloud is dimmed by s.hint.dim
+    // so the lifted/ringed cells (drawn on top at full alpha) stand out by CONTRAST — pop without an occluding overlay.
+    const nHint = this.highlightIds ? this.highlightIds.length : 0;
+    const hmode = s.hint.mode === "adaptive" ? (nHint && nHint <= s.hint.ringThreshold ? "ring" : "lift") : s.hint.mode;
+    const baseOpacity = nHint ? s.point.opacity * s.hint.dim : s.point.opacity;
     return [
       new ScatterplotLayer({
         id: "cells",
@@ -116,7 +122,7 @@ export class EmbeddingView {
         radiusMinPixels: s.point.minPixels,
         stroked: false,
         pickable: true,
-        opacity: s.point.opacity,                 // <1 lets overlapping cells convey density
+        opacity: baseOpacity,                     // <1 lets overlapping cells convey density; dimmed further under a live hint
         updateTriggers: { all: this.colorVersion },
       }) as any,
       // SELECTION on TOP — the rest is receded toward the background (in the per-cell colours), so re-draw the selected
@@ -141,12 +147,12 @@ export class EmbeddingView {
             id: "hl", data: { length: this.highlightIds.length },
             getPosition: (_: any, { index }: any) => { const c = this.highlightIds![index]; return [this.positions[c * 2], this.positions[c * 2 + 1]]; },
             radiusUnits: "pixels", getRadius: s.point.radius + s.hint.grow, opacity: 1,
-            stroked: s.hint.mode !== "fill", filled: s.hint.mode !== "ring",
+            stroked: hmode !== "fill", filled: hmode !== "ring",
             lineWidthUnits: "pixels", getLineWidth: s.hint.ring, getLineColor: [...accentRGB(), s.hint.opacity],
-            getFillColor: s.hint.mode === "lift"
+            getFillColor: hmode === "lift"
               ? (_: any, { index }: any) => { const c = this.highlightIds![index]; return [this.colors[c * 4], this.colors[c * 4 + 1], this.colors[c * 4 + 2], 255]; }
               : [...accentRGB(), s.hint.opacity],
-            updateTriggers: { getPosition: this.hintVersion, getFillColor: [this.hintVersion, this.colorVersion, s.hint.mode] },
+            updateTriggers: { getPosition: this.hintVersion, getFillColor: [this.hintVersion, this.colorVersion, hmode] },
           }) as any
         : null,
       // CELL hint → full-panel crosshairs intersecting at the cell (precise "you are here", any zoom)
