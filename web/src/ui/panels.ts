@@ -53,6 +53,7 @@ export interface PanelHooks {
   onCellClick: (index: number | null, anchor?: { left: number; top: number }) => void;   // embedding click → select cluster (+ selpop), or deselect (empty)
   registerComposition: (r: CompReactor) => void;               // a panel that reacts to selection + hint
   onCoord: (fn: (s: any, changed: string[]) => void) => void;  // managed coord subscription (colorBy/selection/focus reactivity); cleaned up on fullRender
+  onTheme: (fn: () => void) => void;                           // managed theme-change subscription (re-resolve build-time-baked theme colours + redraw); cleaned up on fullRender
   focusCategory: (field: string, value: string) => void;       // restrict the workspace to a metadata value (focus + chip)
   addPanel: (spec: any) => void;                               // add a panel to the workbench (e.g. → composition hand-off)
   openSelectionMenu: (anchor: { left: number; top: number; right?: number }) => void;   // open the selection ops menu (DE/label/ask); `right` right-aligns it to a right-side trigger
@@ -1201,7 +1202,7 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
   const rows = [...pinnedRows, ...markerRows.filter((r) => !pinnedSet.has(r.gene))];
   const nPinned = pinnedRows.length;
   const G = gs.groups.length, R = rows.length, x0 = 70, y0 = 6;
-  const s = resolvePanelStyleFor(ctx, "Heatmap", p.view);   // the panel's resolved style (dot/cell/font/ramp/highlight)
+  let s = resolvePanelStyleFor(ctx, "Heatmap", p.view);   // the panel's resolved style (dot/cell/font/ramp/highlight); the ramp endpoints are theme-baked → re-resolve on theme change (afterAttach)
   const xLabMax = Math.max(1, ...gs.groups.map((s) => s.length));   // longest column label — drives rotate vs horizontal
   const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
   let mode: "heat" | "dot" = p.heatMode === "heat" ? "heat" : "dot";   // dotplot is the default; "heat" only when explicitly set
@@ -1352,6 +1353,7 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
     // selection/hint into THIS panel's grouping and calls setSelect/setHover, which tint the matching columns.
     hooks.registerComposition({ grouping, setSelect: (v) => { selGroups = v; paintCols(); }, setHover: (v) => { hovGroups = v; paintCols(); }, setOrthogonal });
     hooks.registerGeneHover((sym) => { hovGene = sym; paintGeneRow(); });   // another dotplot hovered a gene → highlight its row here
+    hooks.onTheme(() => { s = resolvePanelStyleFor(ctx, "Heatmap", p.view); draw(); });   // theme toggled → re-resolve the (build-time-baked) ramp endpoints + redraw, so the dotplot follows the theme
     let ro: ResizeObserver;
     ro = new ResizeObserver(() => { if (!w.isConnected) ro.disconnect(); else draw(); });   // re-fill on resize; self-cleans
     if (pb) ro.observe(pb);
