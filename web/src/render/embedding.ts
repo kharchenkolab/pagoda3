@@ -22,6 +22,7 @@ export class EmbeddingView {
   private container: HTMLElement;
   private viewState: any;
   private fitZoom = 0;   // the zoom at which the current frame fits — reference for fading the hint accent ring as you zoom OUT past it
+  private frameN = 0;    // cells in the current frame (whole dataset, or the focused subset) — sizes the zoom-IN limit
   onSelect?: (ids: Int32Array) => void;
   onHover?: (index: number | null) => void;   // a cell under the cursor (or null) — emits the cross-panel hint
   onPick?: (index: number | null, x?: number, y?: number) => void;   // a plain click: a cell (→ select its cluster) or empty (→ deselect); x/y px for the selpop anchor
@@ -61,7 +62,7 @@ export class EmbeddingView {
       onViewStateChange: ({ viewState }: any) => {
         // AUTO-LIMIT zoom: don't zoom OUT past the fit (all points already visible), nor IN past ~2 points across the view
         // (≈ fit + log2(√n / 2) levels — from "√n points across at the fit" down to 2). Keeps the cloud in frame both ways.
-        const maxZoom = this.fitZoom + Math.log2(Math.max(2, Math.sqrt(this.n) / 2));
+        const maxZoom = this.fitZoom + Math.log2(Math.max(2, Math.sqrt(this.frameN || this.n) / 2));
         viewState.zoom = Math.max(this.fitZoom, Math.min(maxZoom, viewState.zoom));
         this.viewState = viewState; this.deck.setProps({ viewState });
       },   // controlled: keeps pan/zoom while letting fitTo() reframe
@@ -246,6 +247,7 @@ export class EmbeddingView {
       if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y; }
     const spanX = maxX - minX || 1, spanY = maxY - minY || 1, rect = this.container.getBoundingClientRect();
     const ppu = Math.min((rect.width || 800) / spanX, (rect.height || 600) / spanY) * this.style.fit.pad;
+    this.frameN = count;   // cells in THIS frame (the subset when scoped) — sizes the zoom-IN limit so a focused subpopulation can't zoom past ~2 points
     this.fitZoom = Math.log2(Math.max(ppu, 1e-3));   // remember the fit scale → the hint ring fades when zoomed OUT past it
     return { target: [(minX + maxX) / 2, (minY + maxY) / 2, 0], zoom: this.fitZoom };
   }
