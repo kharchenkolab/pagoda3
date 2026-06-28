@@ -464,8 +464,10 @@ async function facetsBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltB
   const host = mk("div"); host.style.cssText = "flex:1 1 auto;min-height:0;overflow:auto"; w.appendChild(host);
   const brush = (p as any).facetBrush || ((p as any).facetBrush = { field: "", lo: 0, hi: 0, mn: 0, mx: -1 });   // persisted histogram brush
 
-  // expanded fields persist on the panel (instanceof guard: a workspace-switch JSON round-trip turns a Set into {})
-  let open: Set<string> = (p as any).facetOpen instanceof Set ? (p as any).facetOpen : ((p as any).facetOpen = new Set<string>());
+  // expanded fields persist on the panel as an ARRAY under facetOpen — a Set is lost on the workspace-switch JSON
+  // round-trip (serializes to {}), which silently reset the open categories to just the default. Reconstruct the
+  // Set on (re)build; render() writes it back as an array. (Nothing else reads facetOpen.)
+  const open = new Set<string>(Array.isArray((p as any).facetOpen) ? (p as any).facetOpen : []);
   if (!open.size) { const cb = ctx.coord.state.colorBy; const m = cb.startsWith("meta:") ? cb.slice(5) : ""; const def = (meta.has(m) && m) || fields.find((f) => ["annotation", "cell_type", "leiden"].includes(f.name))?.name; if (def) open.add(def); }
 
   const activeField = () => { const cb = ctx.coord.state.colorBy; return cb.startsWith("meta:") ? cb.slice(5) : cb.startsWith("qc:") ? cb.slice(3) : ""; };
@@ -578,6 +580,7 @@ async function facetsBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltB
   };
 
   const render = () => {
+    (p as any).facetOpen = [...open];   // persist as an array so the open set survives the workspace-switch JSON round-trip
     const q = search.value.trim().toLowerCase();
     const top = host.scrollTop; host.innerHTML = "";
     const act = activeField(); const sel = ctx.coord.state.selection; const selCells = sel ? ctx.refToCells(sel) : null;

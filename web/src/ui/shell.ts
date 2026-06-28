@@ -1624,7 +1624,14 @@ export class App {
     return cv;
   }
 
-  newPanel(p: Partial<Panel>): Panel { return { id: ++this.uid, type: p.type!, title: p.title || p.type!, cap: p.cap, full: p.full, col: p.col, bind: p.bind, text: p.text, q: p.q, group: p.group, gene: p.gene, aLabel: p.aLabel, bLabel: p.bLabel, heatMode: p.heatMode, genes: p.genes, view: p.view, split: p.split, rows: p.rows, source: p.source, controls: p.controls, params: p.params, version: p.version, description: p.description, permissions: p.permissions }; }   // widget module fields (P2 params, P4 version/description/permissions) MUST ride through restore — captureLayout serializes them, so newPanel (the reconstruct path for session/workspace restore) has to carry them or a reload silently drops a widget's knobs + its declared-permissions consent gate
+  newPanel(p: Partial<Panel>): Panel {
+    const np: Panel = { id: ++this.uid, type: p.type!, title: p.title || p.type!, cap: p.cap, full: p.full, col: p.col, bind: p.bind, text: p.text, q: p.q, group: p.group, gene: p.gene, aLabel: p.aLabel, bLabel: p.bLabel, heatMode: p.heatMode, genes: p.genes, view: p.view, split: p.split, rows: p.rows, source: p.source, controls: p.controls, params: p.params, version: p.version, description: p.description, permissions: p.permissions };   // widget module fields (P2 params, P4 version/description/permissions) MUST ride through restore — captureLayout serializes them, so newPanel (the reconstruct path for session/workspace restore) has to carry them or a reload silently drops a widget's knobs + its declared-permissions consent gate
+    // panel-LOCAL persisted UI state (facet expand-set/sort/brush, record collapse) must ride through the same
+    // reconstruct — else a workspace switch (which JSON-clones the canvas, then rebuilds via newPanel) silently
+    // resets it. Carried as ad-hoc (p as any) fields so they don't need to bloat the Panel type.
+    for (const k of ["facetOpen", "facetSort", "facetBrush", "recCollapsed"] as const) if ((p as any)[k] !== undefined) (np as any)[k] = (p as any)[k];
+    return np;
+  }
 
   // Add a configured panel to the canvas — the composition atom (the agent's add_panel). Additive and
   // checkpointed (so it's non-disorienting and reversible); returns the new id so it can be configure_panel'd.
@@ -1696,7 +1703,11 @@ export class App {
     if (user) { this.toast("Switched to " + name, "A workspace is a named, reversible layout — your previous one is a step back in History."); this.checkpoint("workspace → " + name, "Deliberate workspace switch."); }
   }
 
-  captureLayout(): Partial<Panel>[] { return this.canvas.map((p) => ({ type: p.type, title: p.title, cap: p.cap, full: p.full, col: p.col, bind: p.bind, group: p.group, gene: p.gene, heatMode: p.heatMode, genes: p.genes, view: p.view ? JSON.parse(JSON.stringify(p.view)) : undefined, rows: this.capRows(p), source: p.source, controls: p.controls ? JSON.parse(JSON.stringify(p.controls)) : undefined, params: p.params ? JSON.parse(JSON.stringify(p.params)) : undefined, version: p.version, description: p.description, permissions: p.permissions ? JSON.parse(JSON.stringify(p.permissions)) : undefined, aLabel: p.aLabel, bLabel: p.bLabel, split: p.split ? JSON.parse(JSON.stringify(p.split)) : undefined })); }   // aLabel/bLabel: a pinned DE table's A/B column names; split: a concordance SplitHeat's gene×donor matrix (it's its ONLY data + lives on the canvas, so it must persist or the panel reloads empty)
+  captureLayout(): Partial<Panel>[] { return this.canvas.map((p) => { const o: Partial<Panel> = { type: p.type, title: p.title, cap: p.cap, full: p.full, col: p.col, bind: p.bind, group: p.group, gene: p.gene, heatMode: p.heatMode, genes: p.genes, view: p.view ? JSON.parse(JSON.stringify(p.view)) : undefined, rows: this.capRows(p), source: p.source, controls: p.controls ? JSON.parse(JSON.stringify(p.controls)) : undefined, params: p.params ? JSON.parse(JSON.stringify(p.params)) : undefined, version: p.version, description: p.description, permissions: p.permissions ? JSON.parse(JSON.stringify(p.permissions)) : undefined, aLabel: p.aLabel, bLabel: p.bLabel, split: p.split ? JSON.parse(JSON.stringify(p.split)) : undefined };
+    // same panel-local UI state newPanel carries — serialize it so a RELOAD (not just a workspace switch) restores
+    // the facet expand-set/sort/brush + record collapse, instead of resetting to the default open category.
+    for (const k of ["facetOpen", "facetSort", "facetBrush", "recCollapsed"] as const) if ((p as any)[k] !== undefined) (o as any)[k] = (p as any)[k];
+    return o; }); }   // aLabel/bLabel: a pinned DE table's A/B column names; split: a concordance SplitHeat's gene×donor matrix (it's its ONLY data + lives on the canvas, so it must persist or the panel reloads empty)
   // Result tables now hold the FULL ranked gene list (all tested genes) for live search; cap what we PERSIST so a
   // big-gene-set DE/overdispersion panel doesn't bloat the session doc (the tail is recomputable; live search keeps all).
   private capRows(p: Panel): any[] | undefined { const r = p.rows; if (!r) return undefined; return (p.type === "DeTable" || p.type === "GeneList") && r.length > 500 ? r.slice(0, 500) : r; }
