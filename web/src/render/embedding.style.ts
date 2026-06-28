@@ -24,7 +24,7 @@ export function defaultEmbeddingStyle(dark: boolean): EmbeddingStyle {
   return {
     point: { radius: 2.4, minPixels: 1, opacity: 0.7 },
     selection: { ringThreshold: 250, ringGrow: 2.2, ringWidth: 1.6, ringOpacity: 255, fillGrow: 1.4, fillOpacity: 165 },
-    hint: { grow: 0.7, opacity: 215, ring: 1.4, dim: 0.5, ringThreshold: 400, mode: "adaptive" },
+    hint: { grow: 0.7, opacity: 215, ring: 1.4, dim: 0.5, ringThreshold: 400, mode: "ring" },
     crosshair: { width: 1, opacity: 150 },
     label: {
       show: true, fontSize: 12.5, minPixels: 10, maxPixels: 15, weight: 700, fontFamily: "-apple-system, BlinkMacSystemFont, system-ui, sans-serif",
