@@ -25,7 +25,7 @@ def test_fields_stats_and_navigators():
     pagoda3.write_viewer(ds, "leiden", also=["cell_type"])
     assert "viewer@0.1" in ds.profiles
     for f in ["stats_leiden_sum", "markers_leiden_lfc", "markers_cell_type_lfc",
-              "od_score", "cell_order", "counts_cellmajor"]:
+              "od_score", "counts_cellmajor_order", "counts_cellmajor"]:
         assert f in ds.fields, f
     assert "groups_cell_type" in ds.axes and "od_genes" not in ds.axes
     # cluster stats == numpy per-group colSums(log1p)
@@ -33,10 +33,16 @@ def test_fields_stats_and_navigators():
     groups = sorted(set(leiden.tolist())); code = np.array([groups.index(l) for l in leiden])
     S = np.array([np.asarray(Xlr[code == g].sum(0)).ravel() for g in range(len(groups))])
     assert np.max(np.abs(np.asarray(ds.field("stats_leiden_sum").values) - S)) < 1e-4
-    # counts_cellmajor == counts re-oriented (cell-major CSR, raw)
+    # counts_cellmajor is cell-major CSR, PHYSICALLY reordered cluster-contiguous; reading physical
+    # row counts_cellmajor_order[cell] recovers that cell's counts (the locality-reorder convention).
     dp = ds.field("counts_cellmajor")
     assert tuple(dp.values.shape) == X.shape and dp.encoding == "csr"
-    assert np.max(np.abs(np.asarray(dp.values.tocsc().todense()) - np.asarray(X.todense()))) == 0
+    pos = np.asarray(ds.field("counts_cellmajor_order").values).astype(int)
+    assert np.array_equal(np.sort(pos), np.arange(X.shape[0]))            # a valid permutation
+    cm = dp.values.tocsr(); Xr = X.tocsr()
+    for c in range(X.shape[0]):
+        assert np.array_equal(np.asarray(cm.getrow(int(pos[c])).todense()).ravel(),
+                              np.asarray(Xr.getrow(c).todense()).ravel())
 
 
 def test_engine_agnostic_and_no_stale():
