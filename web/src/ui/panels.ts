@@ -1352,7 +1352,7 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
     svg.querySelectorAll<SVGElement>(".hgrp").forEach((el) => {
       const c = +el.getAttribute("data-c")!, grp = gs.groups[c]; el.style.cursor = "pointer";
       el.addEventListener("pointermove", (e) => { colg.setAttribute("x", String(x0 + c * cw)); colg.style.display = "block"; rowg.style.display = "none"; showTip(e as PointerEvent, `<b>${esc(grp)}</b>`); ctx.coord.setHint({ kind: "category", grouping, value: grp }); });
-      el.addEventListener("click", () => ctx.coord.setSelection({ kind: "category", grouping, value: grp }));   // commit a selection (clusters/cell types coordinate everywhere)
+      el.addEventListener("click", () => { const c = ctx.coord.state.selection; const same = !!c && c.kind === "category" && (c as any).grouping === grouping && (c as any).value === grp; ctx.coord.setSelection(same ? null : { kind: "category", grouping, value: grp }); });   // toggle: re-clicking the selected group clears it (like the Metadata facets); else commit the selection (coordinates everywhere)
     });
     paintCols(); paintGeneRow();   // re-apply cross-panel highlights after the (re)layout
     if (scoped) { scopeTag.textContent = `▸ within ${scopeLabel}`; scopeTag.title = `dots computed within ${scopeLabel} (genes are the dataset-wide markers)`; scopeTag.style.display = "flex"; } else scopeTag.style.display = "none";
