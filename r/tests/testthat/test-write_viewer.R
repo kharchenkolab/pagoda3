@@ -18,7 +18,7 @@ test_that("write_viewer adds navigators; stats kernel-exact; panel = counts re-o
   ds <- pagoda3::write_viewer(ds, grouping = "leiden", also = "cell_type")
   expect_true("viewer@0.1" %in% ds$profiles)
   expect_true(all(c("stats_leiden_sum", "markers_leiden_lfc", "markers_cell_type_lfc",
-                    "od_score", "cell_order", "counts_cellmajor") %in% names(ds$fields)))
+                    "od_score", "counts_cellmajor_order", "counts_cellmajor") %in% names(ds$fields)))
   expect_true("groups_cell_type" %in% names(ds$axes))
   expect_false("od_genes" %in% names(ds$axes))
 
@@ -26,8 +26,13 @@ test_that("write_viewer adds navigators; stats kernel-exact; panel = counts re-o
   ref <- t(sapply(groups, function(g) Matrix::colSums(Xl[lab == g, , drop = FALSE])))
   expect_lt(max(abs(ds$fields$stats_leiden_sum$values - ref)), 1e-6)
 
+  # counts_cellmajor is cell-major CSR, PHYSICALLY reordered cluster-contiguous; reading physical row
+  # counts_cellmajor_order[cell] recovers that cell's counts (the locality-reorder convention).
   expect_equal(ds$fields$counts_cellmajor$encoding, "csr")
-  expect_equal(max(abs(as.matrix(ds$fields$counts_cellmajor$values) - as.matrix(cnt))), 0)
+  pos <- as.integer(ds$fields$counts_cellmajor_order$values) + 1L     # cell -> physical row (1-based)
+  expect_setequal(pos, seq_len(nc))                                   # a valid permutation
+  cm <- as.matrix(ds$fields$counts_cellmajor$values)
+  expect_equal(max(abs(cm[pos, , drop = FALSE] - as.matrix(cnt))), 0)
 
   p <- file.path(tempdir(), "p3.lstar.zarr"); if (dir.exists(p)) unlink(p, recursive = TRUE)
   lstar::lstar_write(ds, p); ds2 <- lstar::lstar_read(p)
