@@ -87,7 +87,7 @@ export class App {
   colorChoices: [string, string][] = [...COLOR_OPTS];   // colour-by dropdown options, capped per class (see noteColor)
   caveatsCollapsed = new Set<string>();   // caveat handles the user clicked to collapse (stay collapsed across renders)
   // presence
-  thread: any = null; threadDocked = false; nudgePending: any = null; apTimer: any = null; apIndex = 0;
+  thread: any = null; threadDocked = false; nudgePending: any = null; apTimer: any = null; apIndex = 0; restoredSession = false;
   scope: Scope | null = null; askScope: Scope | null = null; hot = 0; filtered: any[] = []; lastSelAnchor: { left: number; top: number; right?: number } = { left: 0, top: 0 };
   private selpopOutside?: (e: Event) => void;   // the selection popover's OWN outside-dismiss listener (armed on open, removed on close) — see showSelpop/hideSelpop
   lastSaveCategory?: string;   // remember the Save-selection target so repeated saves default to the same custom category
@@ -207,8 +207,8 @@ export class App {
         ? "A LOCAL OpenAI-compatible model (vLLM) is driving the agent — switch back with p2.setProvider('anthropic')."
         : "The agent is the real Anthropic planner now — it drives the coordination space through tools, at the lowest sufficient rung.");
     } });
-    // boot nudge (Mode 5) from a real confound in the data
-    setTimeout(() => this.agent.armBootNudge(), 2600);
+    // first-run greeting — a shine on the Ask button inviting the user to try it (only for a FRESH session, not a restore)
+    setTimeout(() => { if (!this.restoredSession) this.agent.armIntro(); }, 2600);
   }
 
   $(id: string) { return document.getElementById(id)!; }
@@ -272,6 +272,7 @@ export class App {
     if (doc.annotation && !fingerprintMismatch(doc.fingerprint, this.datasetFingerprint())) this.restoreAnnotation(doc.annotation);   // cell-indexed → only when the dataset still aligns
     this.results.restore((doc as any).results);   // gene-indexed rows + a re-runnable spec — safe to restore for the same store (re-run is guarded if a referenced set no longer resolves)
     this.restoreConversation(doc.conversation);   // the chat log survives a reload (not cell-indexed → no fingerprint gate)
+    this.restoredSession = true;   // a prior session was restored → this is NOT a fresh start, so skip the first-run intro shine
     this.fullRender();
   }
   // Apply the VIEW layer of a session doc (workspaces + current WS + colour + canvas). Shared by localStorage restore
@@ -2045,7 +2046,7 @@ export class App {
     if (this.agent?.running) { b.className = "tb pip working stop"; b.title = "stop the agent"; b.innerHTML = `<span class="stopsq"></span>Stop${this.pipLabel ? ` · ${this.pipLabel}` : ""}`; return; }
     b.title = ""; b.className = "tb pip" + (this.pipState && this.pipState !== "idle" ? " " + this.pipState : "");
     const main = this.pipState === "working" ? "Working" + (this.pipLabel ? " · " + this.pipLabel : "") : this.pipState === "listening" ? "Listening…" : "Ask";
-    const right = this.pipState === "nudge" ? `<span class="nbadge">${this.pipLabel || "!"}</span>` : (!this.pipState || this.pipState === "idle" || this.pipState === "listening") ? `<span class="kbd">⌘K</span>` : "";
+    const right = this.pipState === "nudge" ? `<span class="nbadge">${this.pipLabel || "!"}</span>` : (!this.pipState || this.pipState === "idle" || this.pipState === "listening" || this.pipState === "intro") ? `<span class="kbd">⌘K</span>` : "";
     b.innerHTML = `<span class="dot"></span>${main}${right}`;
   }
 
