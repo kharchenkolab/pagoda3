@@ -16,6 +16,7 @@ import type { EntityRef } from "../data/coord.ts";
 import { reconcile, crosstab, ReconRow, AnnotationLayer, CapRecord, labelChain } from "../anno/model.ts";
 import { olsLookup } from "../anno/ols.ts";
 import { mountWidget, WidgetHost, WidgetHandle } from "../widget/runtime.ts";
+import type { SessionEntity } from "./results.ts";
 
 // Paint-droplet glyph for the facet "colour by this field" button — an inline SVG (not an emoji) so fill follows
 // the button's currentColor and themes with it (faint → cyan on hover → on-accent when active).
@@ -76,6 +77,10 @@ export interface PanelHooks {
     proposeAllNames: (layerName: string) => void;               // ask the agent to name+explain all working clusters
     splitLabel: (label: string) => void;                        // isolate a working label's cells to split it (brush a subset)
     manageCategory: (input: any) => { ok?: string; error?: string };   // create/edit/delete a CUSTOM categorical field — rename/merge/delete value, rename/delete field, set_cells (the manage_category verbs)
+  };
+  ledger: {   // the session ledger panel's data + row actions
+    entities: () => SessionEntity[];
+    act: (ent: SessionEntity, op: "open" | "rename" | "delete" | "rerun" | "export", arg?: string) => void;
   };
   widgetHost: () => WidgetHost;                                // the coord/ctx/theme bridge a Widget panel's iframe talks to
   onTeardown: (fn: () => void) => void;                        // register cleanup (e.g. destroy a widget iframe) run on the next fullRender
@@ -1496,6 +1501,56 @@ function ramp(t: number, override?: { lo: number[]; hi: number[] }): string {
   return `rgb(${a.map((x, i) => Math.round(x + (b[i] - x) * t)).join(",")})`;
 }
 
+// SESSION LEDGER panel — a typed, searchable manager of everything made this session (categories, results, annotation,
+// apps) with per-row open / re-run / rename / export / delete. Reads hooks.ledger.entities(); data actions fullRender
+// so the panel rebuilds. Chrome (chips + search) is stable; only the list re-renders on filter/search → no focus loss.
+function sessionLedgerBody(p: Panel, _ctx: Ctx, hooks: PanelHooks): BuiltBody {
+  const el = mk("div", "ledger");
+  el.innerHTML = `<div class="lgchips"></div><input class="lgsearch wsinput" placeholder="search…"><div class="lglist"></div>`;
+  const chipsC = el.querySelector(".lgchips") as HTMLElement, searchI = el.querySelector(".lgsearch") as HTMLInputElement, listC = el.querySelector(".lglist") as HTMLElement;
+  const types: [string, string][] = [["all", "all"], ["category", "categories"], ["result", "results"], ["annotation", "annotation"], ["app", "apps"]];
+  let filter: string = (p as any).ledgerFilter || "all";
+  const esc = (s: string) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
+  const ago = (t: number) => { if (!t) return ""; const s = Math.floor((Date.now() - t) / 1000); return s < 60 ? "now" : s < 3600 ? Math.floor(s / 60) + "m" : s < 86400 ? Math.floor(s / 3600) + "h" : Math.floor(s / 86400) + "d"; };
+  const renameInline = (rowEl: HTMLElement, ent: SessionEntity) => {
+    const nameEl = rowEl.querySelector(".lgname") as HTMLElement;
+    nameEl.innerHTML = `<input class="wsinput" value="${esc(ent.name)}" style="width:96%;height:22px">`;
+    const inp = nameEl.querySelector("input") as HTMLInputElement; inp.focus(); inp.select();
+    let done = false; const apply = () => { if (done) return; done = true; const to = inp.value.trim(); if (to && to !== ent.name) hooks.ledger.act(ent, "rename", to); else renderList(); };
+    inp.onkeydown = (e) => { if (e.key === "Enter") apply(); else if (e.key === "Escape") { done = true; renderList(); } };
+    inp.onblur = apply;
+  };
+  const renderChips = () => {
+    const ents = hooks.ledger.entities(); const c: any = { all: 0 }; ents.forEach((e) => { c[e.type] = (c[e.type] || 0) + 1; c.all++; });
+    chipsC.innerHTML = types.map(([k, l]) => `<button class="lgchip${filter === k ? " on" : ""}" data-f="${k}">${l} ${c[k] || 0}</button>`).join("");
+    chipsC.querySelectorAll<HTMLElement>(".lgchip").forEach((b) => b.onclick = () => { filter = b.dataset.f!; (p as any).ledgerFilter = filter; renderChips(); renderList(); });
+  };
+  const renderList = () => {
+    const ents = hooks.ledger.entities(), q = searchI.value.toLowerCase();
+    const groups = filter === "all" ? ["category", "result", "annotation", "app"] : [filter];
+    let html = "", any = false;
+    for (const t of groups) {
+      const rows = ents.filter((e) => e.type === t && (!q || (e.name + " " + e.summary).toLowerCase().includes(q)));
+      if (!rows.length) continue; any = true;
+      if (filter === "all") html += `<div class="lgsec">${t === "category" ? "categories" : t === "result" ? "results" : t}</div>`;
+      for (const e of rows) {
+        const rerun = e.type === "result" ? `<button data-op="rerun" title="re-run">↻</button>` : "";
+        html += `<div class="lgrow" data-id="${esc(e.id)}"><span class="lgdot ${e.who}" title="${e.who}"></span><span class="lgname" title="${esc(e.name)}">${esc(e.name)}</span><span class="lgright"><span class="lgmeta"><span class="lgspec">${esc(e.summary)}</span>${ago(e.when)}</span><span class="lgact"><button data-op="open" title="open">↗</button>${rerun}<button data-op="rename" title="rename">✎</button><button data-op="export" title="export CSV">⤓</button><button class="del" data-op="delete" title="delete">✕</button></span></span></div>`;
+      }
+    }
+    listC.innerHTML = any ? html : `<div style="padding:14px;color:var(--faint);font-size:12px">nothing here yet</div>`;
+    const byId: Record<string, SessionEntity> = {}; ents.forEach((e) => byId[e.id] = e);
+    listC.querySelectorAll<HTMLElement>(".lgrow").forEach((rowEl) => {
+      const ent = byId[rowEl.dataset.id!]; if (!ent) return;
+      (rowEl.querySelector(".lgname") as HTMLElement).onclick = () => hooks.ledger.act(ent, "open");
+      rowEl.querySelectorAll<HTMLElement>(".lgact button").forEach((b) => b.onclick = (ev) => { ev.stopPropagation(); const op = b.dataset.op!; if (op === "rename") { renameInline(rowEl, ent); return; } hooks.ledger.act(ent, op as any); });
+    });
+  };
+  searchI.oninput = renderList;
+  renderChips(); renderList();
+  return { el };
+}
+
 // ── Built-in panel-type registrations ── (the old hardcoded `bodyFor` switch + agent.ts REGISTRY, now a registry the
 // core looks up; `agent:true` = the model may add/reference it. An EXTERNAL module registers itself the same way —
 // zero edits here. Body signatures are normalized to (p, ctx, hooks).)
@@ -1508,6 +1563,7 @@ registerPanelType({ type: "BoxBySample", body: (p, ctx) => boxBody(p, ctx), agen
 registerPanelType({ type: "Overdispersion", body: (_p, ctx, hooks) => overdispBody(ctx, hooks), agent: true });
 registerPanelType({ type: "Heatmap", body: heatmapBody, agent: true });
 registerPanelType({ type: "Reconcile", body: reconcileBody, agent: true });
+registerPanelType({ type: "SessionLedger", body: sessionLedgerBody, agent: true, title: "Session" });
 registerPanelType({ type: "AnnoRecord", body: annoRecordBody, agent: true });
 registerPanelType({ type: "GeneList", body: (p, _ctx, hooks) => geneListBody(p, hooks), agent: true });
 registerPanelType({ type: "VariableGenes", body: variableGenesBody, agent: true });

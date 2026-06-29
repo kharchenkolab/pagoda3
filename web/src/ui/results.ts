@@ -14,6 +14,7 @@ export interface SessionResult {
   when: number;                 // epoch ms
   summary: string;              // "cell-level · 20,469 genes", "pseudobulk paired · sample · 6 reps", …
   bind: string;                 // the panel bind tag (de:between / pseudobulk:paired / de:markers / hvg:scope)
+  aLabel?: string; bLabel?: string;   // DE column headers (so a re-opened table is faithful)
   rows: any[];                  // the DeTable / GeneList rows (so a result re-opens without recompute)
 }
 
@@ -37,7 +38,7 @@ export function buildSessionEntities(inp: {
 }): SessionEntity[] {
   const out: SessionEntity[] = [];
   if (inp.annotation) out.push({ id: "ann", type: "annotation", name: "working resolution", who: "user", when: 0, summary: `${inp.annotation.labels} labels` + (inp.annotation.records ? ` · ${inp.annotation.records} records` : ""), ref: { kind: "annotation", name: "annotation" } });
-  for (const c of inp.categories) out.push({ id: "cat:" + c.name, type: "category", name: c.name, who: c.who, when: c.when, summary: `${c.values} values` + (c.derived ? " · derived" : ""), ref: { kind: "category", name: c.name } });
+  for (const c of inp.categories) out.push({ id: "cat:" + c.name, type: "category", name: c.name, who: c.who, when: c.when, summary: `${c.values} value${c.values === 1 ? "" : "s"}` + (c.derived ? " · derived" : ""), ref: { kind: "category", name: c.name } });
   for (const r of inp.results) out.push({ id: "res:" + r.id, type: "result", name: r.name, who: r.who, when: r.when, summary: r.summary, ref: { kind: "result", id: r.id } });
   for (const a of inp.apps) out.push({ id: "app:" + a.id, type: "app", name: a.name, who: a.origin === "imported" ? "agent" : "user", when: a.when, summary: a.origin === "imported" ? "imported widget" : "authored widget", ref: { kind: "app", id: a.id } });
   return out;

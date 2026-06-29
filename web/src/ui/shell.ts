@@ -451,6 +451,7 @@ export class App {
         splitLabel: (label) => { this.splitLabel(label); },
         manageCategory: (input) => this.manageCategory(input),   // Metadata-panel manage card → the same verbs the agent uses
       },
+      ledger: { entities: () => this.sessionEntities(), act: (ent, op, arg) => this.ledgerDo(ent, op, arg) },
       widgetHost: () => this.widgetHost(),
       onTeardown: (fn) => { this.teardowns.push(fn); },   // run + cleared each fullRender (like coordSubs) — no iframe leak
       registerWidget: (id, handle) => { this.widgetHandles.set(id, handle); },   // so inspect_widget can read a live widget's state
@@ -1485,8 +1486,8 @@ export class App {
     const place = (spec: Partial<Panel>) => { if (input.toCanvas) this.addPanel(spec); else this.agent.addRail(spec); };
     // record EVERY result in the session registry (auto-accrue) — the spec makes it re-runnable, provenance + rows make
     // it browsable/exportable from the session ledger, regardless of whether the panel went to the canvas or the rail.
-    const record = (kind: "de" | "pseudobulk" | "markers" | "hvg", name: string, summary: string, bind: string, rows: any[]) =>
-      this.results.add({ name, kind, spec: { stat: input.stat!, A: input.A, B: input.B, replicate: input.replicate, paired: input.paired }, who: input.source || "user", when: Date.now(), summary, bind, rows });
+    const record = (kind: "de" | "pseudobulk" | "markers" | "hvg", name: string, summary: string, bind: string, rows: any[], aLabel?: string, bLabel?: string) =>
+      this.results.add({ name, kind, spec: { stat: input.stat!, A: input.A, B: input.B, replicate: input.replicate, paired: input.paired }, who: input.source || "user", when: Date.now(), summary, bind, aLabel, bLabel, rows });
 
     if (input.stat === "overdispersion") {
       const hv = await ctx.view.overdispersedGenes(Aids, 1e9);   // ALL scored genes (topN caps the return; scoring is over every gene) — the panel filters/searches the full list
@@ -1525,7 +1526,7 @@ export class App {
         if (rows0?.length) {
           const rows = rows0.map((r: any) => ({ gene: r.gene, symbol: r.symbol, lfc: r.lfc, p: r.padj }));
           place({ type: "DeTable", title: titleOf(`${aL} vs rest`), cap: "1-vs-rest markers", bind: "de:markers", aLabel: aL, bLabel: "rest", rows });
-          record("markers", titleOf(`${aL} vs rest`), "1-vs-rest markers", "de:markers", rows);
+          record("markers", titleOf(`${aL} vs rest`), "1-vs-rest markers", "de:markers", rows, aL, "rest");
           const up = rows.filter((r: any) => r.lfc > 0).slice(0, 8).map((r: any) => r.symbol).join(", ");
           return { ok: `DE ${aL} vs rest from the store's precomputed 1-vs-rest markers — instant, no recompute. Up in ${aL}: ${up}. (To recompute at the cell level, compare ${aL} against a SPECIFIC other group instead of rest.)` };
         }
@@ -1549,7 +1550,7 @@ export class App {
         const genes = await ctx.view.genes();
         const rows = pr.map((r) => ({ gene: r.g, symbol: genes[r.g], lfc: r.lfc, p: r.p, meanA: r.meanA, meanB: r.meanB }));
         place({ type: "DeTable", title: titleOf(`${aL} vs ${bL}`), cap: `pseudobulk · paired across ${reps.length} ${rep}s${sharedNote}`, bind: "pseudobulk:paired", aLabel: aL, bLabel: bL, rows });
-        record("pseudobulk", titleOf(`${aL} vs ${bL}`), `pseudobulk paired · ${rep} · ${reps.length} reps`, "pseudobulk:paired", rows);
+        record("pseudobulk", titleOf(`${aL} vs ${bL}`), `pseudobulk paired · ${rep} · ${reps.length} reps`, "pseudobulk:paired", rows, aL, bL);
         const sig = rows.filter((r) => r.p < 0.05).length;
         const top = rows.slice(0, 8).map((r) => `${r.symbol}${r.p < 0.05 ? "*" : ""}`).join(", ");
         return { ok: `paired pseudobulk DE ${aL} vs ${bL} across ${reps.length} ${rep}(s): ${sig} gene(s) at p<0.05 (paired t-test on the per-${rep} A−B difference — each ${rep} is its own control). Top by p: ${top}.` };
@@ -1559,7 +1560,7 @@ export class App {
       const genes = await ctx.view.genes();
       const rows = pr.map((r) => ({ gene: r.g, symbol: genes[r.g], lfc: r.lfc, p: r.p, meanA: r.meanA, meanB: r.meanB }));
       place({ type: "DeTable", title: titleOf(`${aL} vs ${bL}`), cap: `donor-level · ${repsA.length} vs ${repsB.length} ${rep}s${sharedNote}`, bind: "pseudobulk:donor", aLabel: aL, bLabel: bL, rows });
-      record("pseudobulk", titleOf(`${aL} vs ${bL}`), `pseudobulk · ${rep} · ${repsA.length} vs ${repsB.length}`, "pseudobulk:donor", rows);
+      record("pseudobulk", titleOf(`${aL} vs ${bL}`), `pseudobulk · ${rep} · ${repsA.length} vs ${repsB.length}`, "pseudobulk:donor", rows, aL, bL);
       const sig = rows.filter((r) => r.p < 0.05).length;
       const top = rows.slice(0, 8).map((r) => `${r.symbol}${r.p < 0.05 ? "*" : ""}`).join(", ");
       return { ok: `pseudobulk DE ${aL} vs ${bL} across ${rep}, ${repsA.length} vs ${repsB.length} replicates: ${sig} gene(s) at p<0.05 (Welch t-test on per-replicate mean log-expression). Top by p: ${top}. The replicate is the unit here, so unlike cell-level de this carries a real p-value and supports a population-level claim — but with few replicates power is limited; treat marginal hits cautiously.` };
@@ -1569,7 +1570,7 @@ export class App {
     const { ranked, panel } = await ctx.view.subsampleDE(Aids, Bids);
     const rows = ranked.map((r: any) => ({ gene: r.gene, symbol: r.symbol, lfc: r.lfc, meanA: r.meanA, meanB: r.meanB }));   // ALL tested genes — the panel filters/searches the full list (render is capped)
     place({ type: "DeTable", title: titleOf(`${aL} vs ${bL}`), cap: "cell-level DE" + sharedNote, bind: "de:between", aLabel: aL, bLabel: bL, rows });   // title = the contrast (the identity); cap = the test TYPE (secondary, non-redundant) — the approx/ranking nature lives in the caveat
-    record("de", titleOf(`${aL} vs ${bL}`), "cell-level DE" + sharedNote, "de:between", rows);
+    record("de", titleOf(`${aL} vs ${bL}`), "cell-level DE" + sharedNote, "de:between", rows, aL, bL);
     const up = rows.filter((r: any) => r.lfc > 0).slice(0, 6).map((r: any) => r.symbol).join(", ");
     const dn = rows.filter((r: any) => r.lfc < 0).slice(0, 6).map((r: any) => r.symbol).join(", ");
     return { ok: `DE ${aL} (${Aids.length}) vs ${bL} (${Bids.length}), compared directly. Higher in ${aL}: ${up || "—"}. Higher in ${bL}: ${dn || "—"}.` };
@@ -1813,6 +1814,7 @@ export class App {
       { name: "Composition", about: "stacked cluster proportions per sample", spec: { type: "CompositionBars", title: "Composition", cap: "by sample", bind: "composition:bySample" } },
       { name: "Variable genes", about: "top overdispersed genes for the current selection (live)", spec: { type: "VariableGenes", title: "Variable genes", cap: "overdispersion" } },
       { name: "Metadata facets", about: "browse / filter / cross-filter metadata", spec: { type: "MetadataFacets", title: "Metadata", cap: "browse facets", bind: "facets:all" } },
+      { name: "Session", about: "ledger of everything you've made — categories, results, annotation, apps", spec: { type: "SessionLedger", title: "Session", cap: "session ledger" } },
     ];
     const row = (key: string, name: string, kind: string, add: string, del?: string) =>
       `<div class="acwrow" data-search="${esc(key.toLowerCase())}"><span class="acwname" title="${esc(name)}">${esc(name)}</span><span class="acwkind">${kind}</span><span class="acwadd" ${add} title="add to workbench">add</span>${del ? `<span class="acwdel" ${del} title="delete from library">✕</span>` : ""}</div>`;
@@ -2094,6 +2096,36 @@ export class App {
     const apps = this.widgetLib.map((w) => ({ id: w.id, name: w.name, origin: w.origin || "authored", when: w.createdAt || 0 }));
     return buildSessionEntities({ categories, annotation, results: this.results.list(), apps });
   }
+
+  // The session-ledger row action dispatcher — open / re-run / rename / delete / export, routed by entity type. Data
+  // mutations end with a fullRender so the ledger panel (and anything keyed on the changed entity) rebuilds.
+  ledgerDo(ent: SessionEntity, op: "open" | "rename" | "delete" | "rerun" | "export", arg?: string): void {
+    const ref = ent.ref;
+    if (op === "open") {
+      if (ref.kind === "category") { this.noteColor("meta:" + ref.name); this.coord.setColor("meta:" + ref.name); this.switchWS("Metadata", true); }
+      else if (ref.kind === "annotation") this.switchWS("Annotate", true);
+      else if (ref.kind === "result") { const r = this.results.get(ref.id!); if (r) { this.addPanel({ type: r.kind === "hvg" ? "GeneList" : "DeTable", title: r.name, cap: r.summary, bind: r.bind, aLabel: r.aLabel, bLabel: r.bLabel, rows: r.rows }); this.fullRender(); } }
+      else if (ref.kind === "app") { const w = this.widgetLib.find((x) => x.id === ref.id); if (w) { this.addWidgetPanel(w.source, w.name, w.controls, w.origin === "imported" ? "imported" : "authored"); this.fullRender(); } }
+      return;
+    }
+    if (op === "rerun") { if (ref.kind === "result") this.rerunResult(ref.id!); return; }
+    if (op === "rename") {
+      const to = (arg || "").trim(); if (!to) return;
+      if (ref.kind === "category") { if (this.annoLayers.has(ref.name!)) { const r = this.renameField(ref.name!, to); if (r.error) { this.toast(r.error, null); return; } } else { this.toast("derived categories are renamed from the Metadata panel", null); return; } }
+      else if (ref.kind === "result") this.results.rename(ref.id!, to);
+      else { this.toast("rename it from its own panel", null); return; }
+      this.fullRender(); return;
+    }
+    if (op === "delete") {
+      if (ref.kind === "category") { if (this.annoLayers.has(ref.name!)) { const r = this.deleteCategory(ref.name!); if (r.error) this.toast(r.error, null); } else { this.ctx.removeDerivedGrouping(ref.name!); this.fullRender(); } }
+      else if (ref.kind === "result") { this.results.remove(ref.id!); this.fullRender(); }
+      else if (ref.kind === "annotation") { this.annoLayers.delete("annotation"); this.ctx.removeAnnotationLayer("annotation"); this.fullRender(); }
+      else if (ref.kind === "app") { this.deleteWidgetFromLibrary(ref.id!); this.fullRender(); }
+      return;
+    }
+    if (op === "export") this.exportEntityCSV(ent);
+  }
+  exportEntityCSV(_ent: SessionEntity): void { this.toast("CSV export lands in the next step", null); }   // S4 fills this in
 
   // Re-run a stored result from its spec (e.g. after editing a category it depends on) → a fresh result + panel.
   async rerunResult(id: string): Promise<void> {

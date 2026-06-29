@@ -270,6 +270,7 @@ export class Ctx {
     this.gsCache.delete(name); this.markerCache.delete(name); this.xlateCache.clear();
   }
   clearDerivedGroupings(): void { for (const n of this.derivedNames) { this.view.removeOverlay(n); this.meta.delete(n); } this.derivedNames.clear(); }
+  removeDerivedGrouping(name: string): void { if (this.derivedNames.has(name)) { this.view.removeOverlay(name); this.meta.delete(name); this.derivedNames.delete(name); } }
   derivedGroupings(): string[] { return [...this.derivedNames]; }
   annotationLayers(): string[] { return [...this.annoNames]; }
   isAnnotationLayer(name: string): boolean { return this.annoNames.has(name); }
