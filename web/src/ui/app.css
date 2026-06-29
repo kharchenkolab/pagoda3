@@ -299,6 +299,11 @@ button{font-family:inherit}
 .selpop .head{padding:8px 11px;font-family:var(--mono);font-size:11px;color:var(--cyan);border-bottom:1px solid var(--line2)}
 .selpop .it,.ctx .it{padding:8px 11px;font-size:12.5px;cursor:pointer;display:flex;gap:8px;align-items:center}
 .selpop .it:hover,.ctx .it:hover{background:var(--inset)} .selpop .it .ic{color:var(--faint);font-family:var(--mono);width:14px;text-align:center}
+/* themed form controls inside the selection popover + the create/manage cards (otherwise browser-default white, off-theme) */
+.selpop input,.selpop select,.facetcreate input,.facetcreate select{background:var(--inset);border:1px solid var(--line);color:var(--text);border-radius:6px;padding:4px 7px;font-family:var(--sans);font-size:12px;outline:none}
+.selpop select,.facetcreate select{cursor:pointer}
+.selpop input:focus,.selpop select:focus,.facetcreate input:focus,.facetcreate select:focus{border-color:var(--cyan)}
+.selpop input::placeholder,.facetcreate input::placeholder{color:var(--faint)}
 /* account / session menu (top-bar avatar) */
 .tb.acct{padding:5px 7px}
 .acdot{display:inline-flex;width:20px;height:20px;border-radius:50%;background:var(--cyan);color:var(--on-accent);align-items:center;justify-content:center;font-size:11px;font-weight:700;line-height:1}

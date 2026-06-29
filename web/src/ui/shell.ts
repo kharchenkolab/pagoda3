@@ -2086,11 +2086,16 @@ export class App {
       const target = cat.value === "__new__" ? newcat.value.trim() : cat.value;
       if (!target) { newcat.focus(); return; }
       if (cat.value === "__new__" && this.ctx.groupings().includes(target) && !this.annoLayers.has(target)) { this.toast(`“${target}” is an existing stored field — pick another name`, null); return; }
+      const idsArr = Int32Array.from(ids), n = ids.length;
       this.hideSelpop();
-      this.labelCells(Int32Array.from(ids), value, target);
-      this.noteColor("meta:" + target); this.coord.setColor("meta:" + target);   // make the just-saved value visible
-      this.coord.setSelection(null); this.scope = null;
-      this.toast(`saved ${ids.length} cells as “${value}” in ${target === "annotation" ? "the working draft" : `“${target}”`}`, "Edit it in the Metadata panel · see the Annotate workspace.");
+      // Defer the commit + recolor (a full re-render) OFF this input's keydown handler — running a synchronous
+      // fullRender inside event dispatch is the classic re-entrant-render hazard; let the key event unwind first.
+      setTimeout(() => {
+        this.labelCells(idsArr, value, target);
+        this.noteColor("meta:" + target); this.coord.setColor("meta:" + target);   // make the just-saved value visible
+        this.coord.setSelection(null); this.scope = null;
+        this.toast(`saved ${n} cells as “${value}” in ${target === "annotation" ? "the working draft" : `“${target}”`}`, "Edit it in the Metadata panel · see the Annotate workspace.");
+      }, 0);
     };
     val.onkeydown = (e) => { if (e.key === "Enter") apply(); else if (e.key === "Escape") this.hideSelpop(); };
     newcat.onkeydown = (e) => { if (e.key === "Enter") apply(); else if (e.key === "Escape") this.hideSelpop(); };
