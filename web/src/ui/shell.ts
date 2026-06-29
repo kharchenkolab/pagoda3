@@ -451,7 +451,7 @@ export class App {
         splitLabel: (label) => { this.splitLabel(label); },
         manageCategory: (input) => this.manageCategory(input),   // Metadata-panel manage card → the same verbs the agent uses
       },
-      ledger: { entities: () => this.sessionEntities(), act: (ent, op, arg) => this.ledgerDo(ent, op, arg) },
+      ledger: { entities: () => this.sessionEntities(), act: (ent, op, arg) => this.ledgerDo(ent, op, arg), exportSession: () => void this.exportSessionToFile(), importSession: () => void this.importSessionFromFile() },
       widgetHost: () => this.widgetHost(),
       onTeardown: (fn) => { this.teardowns.push(fn); },   // run + cleared each fullRender (like coordSubs) — no iframe leak
       registerWidget: (id, handle) => { this.widgetHandles.set(id, handle); },   // so inspect_widget can read a live widget's state
@@ -2125,7 +2125,35 @@ export class App {
     }
     if (op === "export") this.exportEntityCSV(ent);
   }
-  exportEntityCSV(_ent: SessionEntity): void { this.toast("CSV export lands in the next step", null); }   // S4 fills this in
+  // Per-item ONE-WAY export (write-only side-files, for taking an artifact into other tools): a result → gene table CSV;
+  // a category / the annotation → cell→value CSV; an app → its widget source .js. The whole-session round-trip stays JSON.
+  async exportEntityCSV(ent: SessionEntity): Promise<void> {
+    const ref = ent.ref;
+    const dl = (name: string, text: string, mime = "text/csv") => { const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([text], { type: mime })); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000); };
+    const cell = (s: any) => { const v = String(s ?? ""); return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v; };
+    const safe = (s: string) => s.replace(/[^\w.-]+/g, "_");
+    try {
+      if (ref.kind === "result") {
+        const r = this.results.get(ref.id!); if (!r) return;
+        const hasMeans = r.rows.some((x: any) => x.meanA != null), hasP = r.rows.some((x: any) => x.p != null), isHvg = r.kind === "hvg";
+        const cols = isHvg ? ["symbol", "score"] : (["symbol", "lfc"] as string[]).concat(hasP ? ["p"] : []).concat(hasMeans ? ["meanA", "meanB"] : []);
+        const head = isHvg ? ["gene", "score"] : (["gene", "logFC"] as string[]).concat(hasP ? ["p"] : []).concat(hasMeans ? [r.aLabel || "A", r.bLabel || "B"] : []);
+        dl(safe(r.name) + ".csv", [head.join(",")].concat(r.rows.map((x: any) => cols.map((c) => cell(x[c])).join(","))).join("\n"));
+      } else if (ref.kind === "category" || ref.kind === "annotation") {
+        const field = ref.name!;
+        const m: any = await this.ctx.metaOf(field); if (!m || !m.codes) { this.toast("nothing to export", null); return; }
+        const cells = await this.ctx.view.ds.axisLabels("cells");
+        const records: any = ref.kind === "annotation" ? (this.annoLayers.get("annotation")?.records || {}) : {};
+        const isAnn = ref.kind === "annotation";
+        const lines = [isAnn ? "cell,label,parent" : "cell,value"];
+        for (let i = 0; i < m.codes.length; i++) { const c = m.codes[i]; if (c < 0) continue; const v = m.categories[c]; lines.push(isAnn ? `${cell(cells[i])},${cell(v)},${cell(records[v]?.category || "")}` : `${cell(cells[i])},${cell(v)}`); }
+        dl(safe(field) + ".csv", lines.join("\n"));
+      } else if (ref.kind === "app") {
+        const w = this.widgetLib.find((x) => x.id === ref.id); if (w) dl(safe(w.name) + ".js", w.source, "text/javascript");
+      }
+      this.toast(`exported ${ent.name}`, null);
+    } catch (e) { this.toast(`export failed: ${(e as Error).message}`, null); }
+  }
 
   // Re-run a stored result from its spec (e.g. after editing a category it depends on) → a fresh result + panel.
   async rerunResult(id: string): Promise<void> {

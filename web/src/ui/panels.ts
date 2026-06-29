@@ -81,6 +81,8 @@ export interface PanelHooks {
   ledger: {   // the session ledger panel's data + row actions
     entities: () => SessionEntity[];
     act: (ent: SessionEntity, op: "open" | "rename" | "delete" | "rerun" | "export", arg?: string) => void;
+    exportSession: () => void;   // whole-session JSON (round-trip)
+    importSession: () => void;
   };
   widgetHost: () => WidgetHost;                                // the coord/ctx/theme bridge a Widget panel's iframe talks to
   onTeardown: (fn: () => void) => void;                        // register cleanup (e.g. destroy a widget iframe) run on the next fullRender
@@ -1506,7 +1508,9 @@ function ramp(t: number, override?: { lo: number[]; hi: number[] }): string {
 // so the panel rebuilds. Chrome (chips + search) is stable; only the list re-renders on filter/search → no focus loss.
 function sessionLedgerBody(p: Panel, _ctx: Ctx, hooks: PanelHooks): BuiltBody {
   const el = mk("div", "ledger");
-  el.innerHTML = `<div class="lgchips"></div><input class="lgsearch wsinput" placeholder="search…"><div class="lglist"></div>`;
+  el.innerHTML = `<div class="lgtools"><button class="lgimport mini" title="open a session file">⤒ import</button><button class="lgexportall mini" title="save the whole session to a file (.json)">⤓ export all</button></div><div class="lgchips"></div><input class="lgsearch wsinput" placeholder="search…"><div class="lglist"></div>`;
+  (el.querySelector(".lgimport") as HTMLElement).onclick = () => hooks.ledger.importSession();
+  (el.querySelector(".lgexportall") as HTMLElement).onclick = () => hooks.ledger.exportSession();
   const chipsC = el.querySelector(".lgchips") as HTMLElement, searchI = el.querySelector(".lgsearch") as HTMLInputElement, listC = el.querySelector(".lglist") as HTMLElement;
   const types: [string, string][] = [["all", "all"], ["category", "categories"], ["result", "results"], ["annotation", "annotation"], ["app", "apps"]];
   let filter: string = (p as any).ledgerFilter || "all";
