@@ -26,21 +26,24 @@ export interface SessionEntity {
   who: "user" | "agent";
   when: number;                                     // epoch ms (0 = unknown / not timestamped yet)
   summary: string;                                  // "3 values", "cell-level · 20,469 genes", "18 labels · 12 records", …
+  detail?: string[];                                // richer facts for the click-through info card
   ref: { kind: string; id?: string; name?: string };   // what an action targets (a field name, a result id, …)
 }
 
 // Pure normalizer (no app state) so the row-building is node-testable. The shell gathers the live inputs and calls this.
 export function buildSessionEntities(inp: {
-  categories: { name: string; values: number; who: "user" | "agent"; when: number; derived?: boolean }[];
+  categories: { name: string; values: number; who: "user" | "agent"; when: number; derived?: boolean; valuesList?: string[] }[];
   annotation?: { labels: number; records: number } | null;
   results: SessionResult[];
   apps: { id: string; name: string; origin: string; when: number }[];
 }): SessionEntity[] {
   const out: SessionEntity[] = [];
-  if (inp.annotation) out.push({ id: "ann", type: "annotation", name: "working resolution", who: "user", when: 0, summary: `${inp.annotation.labels} labels` + (inp.annotation.records ? ` · ${inp.annotation.records} records` : ""), ref: { kind: "annotation", name: "annotation" } });
-  for (const c of inp.categories) out.push({ id: "cat:" + c.name, type: "category", name: c.name, who: c.who, when: c.when, summary: `${c.values} value${c.values === 1 ? "" : "s"}` + (c.derived ? " · derived" : ""), ref: { kind: "category", name: c.name } });
-  for (const r of inp.results) out.push({ id: "res:" + r.id, type: "result", name: r.name, who: r.who, when: r.when, summary: r.summary, ref: { kind: "result", id: r.id } });
-  for (const a of inp.apps) out.push({ id: "app:" + a.id, type: "app", name: a.name, who: a.origin === "imported" ? "agent" : "user", when: a.when, summary: a.origin === "imported" ? "imported widget" : "authored widget", ref: { kind: "app", id: a.id } });
+  const vals = (list?: string[], n?: number) => (list && list.length) ? [list.length <= 14 ? list.join(", ") : list.slice(0, 14).join(", ") + ` +${list.length - 14} more`] : [`${n} value${n === 1 ? "" : "s"}`];
+  const resultMethod = (r: SessionResult) => r.kind === "hvg" ? "overdispersion (variable genes)" : r.kind === "markers" ? "1-vs-rest markers" : r.kind === "pseudobulk" ? (r.spec.paired ? "pseudobulk · paired" : "pseudobulk") : "cell-level (ranking)";
+  if (inp.annotation) out.push({ id: "ann", type: "annotation", name: "working resolution", who: "user", when: 0, summary: `${inp.annotation.labels} labels` + (inp.annotation.records ? ` · ${inp.annotation.records} records` : ""), detail: [`${inp.annotation.labels} labels`].concat(inp.annotation.records ? [`${inp.annotation.records} with CAP records`] : []), ref: { kind: "annotation", name: "annotation" } });
+  for (const c of inp.categories) out.push({ id: "cat:" + c.name, type: "category", name: c.name, who: c.who, when: c.when, summary: `${c.values} value${c.values === 1 ? "" : "s"}` + (c.derived ? " · derived" : ""), detail: vals(c.valuesList, c.values).concat(c.derived ? ["derived grouping"] : []), ref: { kind: "category", name: c.name } });
+  for (const r of inp.results) out.push({ id: "res:" + r.id, type: "result", name: r.name, who: r.who, when: r.when, summary: r.summary, detail: (r.kind === "hvg" ? [] : [`${r.aLabel || "group A"}  vs  ${r.bLabel || "group B"}`]).concat([`${resultMethod(r)} · ${r.rows.length.toLocaleString()} genes`]).concat(r.kind === "pseudobulk" && r.spec.replicate ? [`replicate: ${r.spec.replicate}`] : []), ref: { kind: "result", id: r.id } });
+  for (const a of inp.apps) out.push({ id: "app:" + a.id, type: "app", name: a.name, who: a.origin === "imported" ? "agent" : "user", when: a.when, summary: a.origin === "imported" ? "imported widget" : "authored widget", detail: [a.origin === "imported" ? "imported widget" : "authored widget"], ref: { kind: "app", id: a.id } });
   return out;
 }
 

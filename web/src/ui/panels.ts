@@ -1508,12 +1508,21 @@ function ramp(t: number, override?: { lo: number[]; hi: number[] }): string {
 // so the panel rebuilds. Chrome (chips + search) is stable; only the list re-renders on filter/search → no focus loss.
 function sessionLedgerBody(p: Panel, _ctx: Ctx, hooks: PanelHooks): BuiltBody {
   const el = mk("div", "ledger");
-  el.innerHTML = `<div class="lgtools"><button class="lgimport mini" title="open a session file">⤒ import</button><button class="lgexportall mini" title="save the whole session to a file (.json)">⤓ export all</button></div><div class="lgchips"></div><input class="lgsearch wsinput" placeholder="search…"><div class="lglist"></div>`;
+  el.innerHTML = `<div class="lgtools"><button class="lgimport mini" title="open a session file">⤒ import</button><button class="lgexportall mini" title="save the whole session to a file (.json)">⤓ export all</button></div><div class="lgchips"></div><input class="lgsearch wsinput" placeholder="search…"><div class="lglist"></div><div class="lgdetail"></div>`;
   (el.querySelector(".lgimport") as HTMLElement).onclick = () => hooks.ledger.importSession();
   (el.querySelector(".lgexportall") as HTMLElement).onclick = () => hooks.ledger.exportSession();
-  const chipsC = el.querySelector(".lgchips") as HTMLElement, searchI = el.querySelector(".lgsearch") as HTMLInputElement, listC = el.querySelector(".lglist") as HTMLElement;
+  const chipsC = el.querySelector(".lgchips") as HTMLElement, searchI = el.querySelector(".lgsearch") as HTMLInputElement, listC = el.querySelector(".lglist") as HTMLElement, detailC = el.querySelector(".lgdetail") as HTMLElement;
   const types: [string, string][] = [["all", "all"], ["category", "categories"], ["result", "results"], ["annotation", "annotation"], ["app", "apps"]];
   let filter: string = (p as any).ledgerFilter || "all";
+  let selectedId: string | null = null;
+  const renderDetail = (ent: SessionEntity | null) => {
+    if (!ent) { detailC.innerHTML = ""; return; }
+    const when = ent.when ? new Date(ent.when).toLocaleString() : "";
+    detailC.innerHTML = `<div class="lgdhd"><span class="lgdtitle">${esc(ent.name)}</span><span class="lgx" title="close">✕</span></div>` +
+      `<div class="lgdmeta"><span class="lgdot ${ent.who}"></span>by ${ent.who}${when ? ` · ${esc(when)}` : ""} · ${ent.type}</div>` +
+      (ent.detail || []).map((d) => `<div class="lgdline">${esc(d)}</div>`).join("");
+    (detailC.querySelector(".lgx") as HTMLElement).onclick = () => { selectedId = null; renderList(); };
+  };
   const esc = (s: string) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
   const ago = (t: number) => { if (!t) return ""; const s = Math.floor((Date.now() - t) / 1000); return s < 60 ? "now" : s < 3600 ? Math.floor(s / 60) + "m" : s < 86400 ? Math.floor(s / 3600) + "h" : Math.floor(s / 86400) + "d"; };
   const renameInline = (rowEl: HTMLElement, ent: SessionEntity) => {
@@ -1544,11 +1553,15 @@ function sessionLedgerBody(p: Panel, _ctx: Ctx, hooks: PanelHooks): BuiltBody {
     }
     listC.innerHTML = any ? html : `<div style="padding:14px;color:var(--faint);font-size:12px">nothing here yet</div>`;
     const byId: Record<string, SessionEntity> = {}; ents.forEach((e) => byId[e.id] = e);
+    if (selectedId && !byId[selectedId]) selectedId = null;   // selection deleted → drop it
+    const markSel = () => listC.querySelectorAll<HTMLElement>(".lgrow").forEach((r) => r.classList.toggle("sel", r.dataset.id === selectedId));
     listC.querySelectorAll<HTMLElement>(".lgrow").forEach((rowEl) => {
       const ent = byId[rowEl.dataset.id!]; if (!ent) return;
-      (rowEl.querySelector(".lgname") as HTMLElement).onclick = () => hooks.ledger.act(ent, "open");
+      (rowEl.querySelector(".lgname") as HTMLElement).onclick = () => { selectedId = ent.id; markSel(); renderDetail(ent); };   // click INSPECTS (shows the detail card); open is the ↗ action
       rowEl.querySelectorAll<HTMLElement>(".lgact button").forEach((b) => b.onclick = (ev) => { ev.stopPropagation(); const op = b.dataset.op!; if (op === "rename") { renameInline(rowEl, ent); return; } hooks.ledger.act(ent, op as any); });
     });
+    markSel();
+    renderDetail(selectedId ? byId[selectedId] : null);
   };
   searchI.oninput = renderList;
   renderChips(); renderList();

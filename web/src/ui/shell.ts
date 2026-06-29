@@ -2095,9 +2095,9 @@ export class App {
   // The unified SESSION LEDGER list — categories (editable annoLayers + derived groupings), the annotation, results,
   // and apps, normalized to one row shape. Gathers live state and hands it to the pure builder (node-tested).
   sessionEntities(): SessionEntity[] {
-    const categories: { name: string; values: number; who: "user" | "agent"; when: number; derived?: boolean }[] = [];
-    for (const L of this.annoLayers.values()) if (L.name !== "annotation") categories.push({ name: L.name, values: L.categories.length, who: (L.provenance as any)?.who === "agent" ? "agent" : "user", when: 0 });
-    for (const name of this.ctx.derivedGroupings()) categories.push({ name, values: this.ctx.categoricalValues(name).length, who: "user", when: 0, derived: true });
+    const categories: { name: string; values: number; who: "user" | "agent"; when: number; derived?: boolean; valuesList?: string[] }[] = [];
+    for (const L of this.annoLayers.values()) if (L.name !== "annotation") categories.push({ name: L.name, values: L.categories.length, who: (L.provenance as any)?.who === "agent" ? "agent" : "user", when: 0, valuesList: L.categories.slice() });
+    for (const name of this.ctx.derivedGroupings()) categories.push({ name, values: this.ctx.categoricalValues(name).length, who: "user", when: 0, derived: true, valuesList: this.ctx.categoricalValues(name) });
     const ann = this.annoLayers.get("annotation");
     const annotation = ann ? { labels: ann.categories.length, records: ann.records ? Object.keys(ann.records).length : 0 } : null;
     const apps = this.widgetLib.map((w) => ({ id: w.id, name: w.name, origin: w.origin || "authored", when: w.createdAt || 0 }));
@@ -2134,10 +2134,13 @@ export class App {
       this.fullRender(); return;
     }
     if (op === "delete") {
-      if (ref.kind === "category") { if (this.annoLayers.has(ref.name!)) { const r = this.deleteCategory(ref.name!); if (r.error) this.toast(r.error, null); } else { this.ctx.removeDerivedGrouping(ref.name!); this.fullRender(); } }
-      else if (ref.kind === "result") { this.results.remove(ref.id!); this.fullRender(); }
-      else if (ref.kind === "annotation") { this.annoLayers.delete("annotation"); this.ctx.removeAnnotationLayer("annotation"); this.fullRender(); }
-      else if (ref.kind === "app") { this.deleteWidgetFromLibrary(ref.id!); this.fullRender(); }
+      const note = ref.kind === "category" ? "The cells aren't changed — only the grouping is removed." : ref.kind === "result" ? "Removes it from the ledger (its rows + spec). Files you've exported are unaffected." : ref.kind === "app" ? "Removes it from your library; any copy already on the workbench stays." : "Clears the working annotation draft.";
+      this.confirmModal({ title: `Delete “${ent.name}”?`, body: `This removes the ${ent.type === "annotation" ? "working annotation" : ent.type} from your session. ${note}`, ok: "Delete", onConfirm: () => {
+        if (ref.kind === "category") { if (this.annoLayers.has(ref.name!)) { const r = this.deleteCategory(ref.name!); if (r.error) this.toast(r.error, null); } else { this.ctx.removeDerivedGrouping(ref.name!); this.fullRender(); } }
+        else if (ref.kind === "result") { this.results.remove(ref.id!); this.fullRender(); }
+        else if (ref.kind === "annotation") { this.annoLayers.delete("annotation"); this.ctx.removeAnnotationLayer("annotation"); this.fullRender(); }
+        else if (ref.kind === "app") { this.deleteWidgetFromLibrary(ref.id!); this.fullRender(); }
+      } });
       return;
     }
     if (op === "export") this.exportEntityCSV(ent);
