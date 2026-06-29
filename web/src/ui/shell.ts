@@ -251,7 +251,7 @@ export class App {
   }
   persistSession() {
     const userWS = this.wsOrder.filter((n) => !this.builtinWS.has(n) && this.WS[n]).map((n) => ({ name: n, ws: this.WS[n] }));
-    const base = { store: this.currentStore(), fingerprint: this.datasetFingerprint(), currentWS: this.currentWS, colorBy: this.coord.state.colorBy, canvas: this.captureLayout(), userWS, annotation: this.serializeAnnotation(), catColors: serializeCategoryColors(), style: (this.coord.state as any).style, customPalette: serializeCustomPalette() };
+    const base = { store: this.currentStore(), fingerprint: this.datasetFingerprint(), currentWS: this.currentWS, colorBy: this.coord.state.colorBy, canvas: this.captureLayout(), userWS, annotation: this.serializeAnnotation(), catColors: serializeCategoryColors(), style: (this.coord.state as any).style, customPalette: serializeCustomPalette(), results: this.results.serialize() };
     // Try the full doc (incl. the chat log); if it busts the ~5MB quota, retry WITHOUT the conversation so views +
     // annotation still persist (the chat is the biggest + most droppable part — it's also in the exportable file).
     try { localStorage.setItem(SESSION_KEY, serializeSession({ ...base, conversation: this.serializeConversation() })); }
@@ -267,6 +267,7 @@ export class App {
     (this.coord.state as any).style = (doc as any).style;   // global style overrides (view layer, not cell-indexed)
     restoreCustomPalette((doc as any).customPalette);   // a user-defined numeric gradient (view layer)
     if (doc.annotation && !fingerprintMismatch(doc.fingerprint, this.datasetFingerprint())) this.restoreAnnotation(doc.annotation);   // cell-indexed → only when the dataset still aligns
+    this.results.restore((doc as any).results);   // gene-indexed rows + a re-runnable spec — safe to restore for the same store (re-run is guarded if a referenced set no longer resolves)
     this.restoreConversation(doc.conversation);   // the chat log survives a reload (not cell-indexed → no fingerprint gate)
     this.fullRender();
   }
@@ -282,7 +283,7 @@ export class App {
   // ---- the portable session DOCUMENT (file) — see persist.ts. A bundle = the session + the widget library it uses.
   buildBundle(): string {
     const userWS = this.wsOrder.filter((n) => !this.builtinWS.has(n) && this.WS[n]).map((n) => ({ name: n, ws: this.WS[n] }));
-    const session = parseSession(serializeSession({ store: this.currentStore(), fingerprint: this.datasetFingerprint(), currentWS: this.currentWS, colorBy: this.coord.state.colorBy, canvas: this.captureLayout(), userWS, annotation: this.serializeAnnotation(), conversation: this.serializeConversation(), catColors: serializeCategoryColors(), style: (this.coord.state as any).style, customPalette: serializeCustomPalette() }))!;
+    const session = parseSession(serializeSession({ store: this.currentStore(), fingerprint: this.datasetFingerprint(), currentWS: this.currentWS, colorBy: this.coord.state.colorBy, canvas: this.captureLayout(), userWS, annotation: this.serializeAnnotation(), conversation: this.serializeConversation(), catColors: serializeCategoryColors(), style: (this.coord.state as any).style, customPalette: serializeCustomPalette(), results: this.results.serialize() }))!;
     return serializeBundle({ session, widgets: this.widgetLib, savedAt: Date.now() });
   }
   applyBundle(raw: string): { ok: boolean; msg: string } {
@@ -300,6 +301,7 @@ export class App {
     (this.coord.state as any).style = (b.session as any).style;   // style overrides travel with the file
     restoreCustomPalette((b.session as any).customPalette);   // the custom palette travels with the file
     if (b.session.annotation && !mism) this.restoreAnnotation(b.session.annotation);
+    this.results.restore((b.session as any).results);
     this.restoreConversation(b.session.conversation);   // chat log travels with the file (not cell-indexed)
     this.fullRender(); this.renderWS(); this.scheduleSave();
     const parts = [`opened — ${b.session.canvas.length} panel(s)`];
