@@ -89,6 +89,7 @@ export class App {
   scope: Scope | null = null; askScope: Scope | null = null; hot = 0; filtered: any[] = []; lastSelAnchor: { left: number; top: number; right?: number } = { left: 0, top: 0 };
   private selpopOutside?: (e: Event) => void;   // the selection popover's OWN outside-dismiss listener (armed on open, removed on close) — see showSelpop/hideSelpop
   groupB: { set: CellSet; label: string; n: number } | null = null;   // pinned comparison group B for agent-free A-vs-B DE (set from a selection; see openSelpop)
+  lastSaveCategory?: string;   // remember the Save-selection target so repeated saves default to the same custom category
   proposalWhy = "";
 
   constructor(ctx: Ctx) {
@@ -2066,15 +2067,19 @@ export class App {
   selpopLabelInput(ids: number[]) {
     const sp = this.$("selpop");
     const esc = (s: string) => String(s).replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]!));
-    const layers = this.ctx.annotationLayers();   // editable session categories (the working draft, once it exists, is among them)
-    const opts = [`<option value="annotation">working draft</option>`]
-      .concat(layers.filter((n) => n !== "annotation").map((n) => `<option value="${esc(n)}">${esc(n)}</option>`))
-      .concat([`<option value="__new__">＋ new category…</option>`]);
+    // Save targets CUSTOM Metadata categories only — the cell-type annotation draft (layer "annotation") is the
+    // Annotate panel's domain, NOT a save target here. Default to the last category you saved into, else the first
+    // existing custom category, else new-category mode.
+    const customCats = this.ctx.annotationLayers().filter((n) => n !== "annotation");
+    const def = this.lastSaveCategory && customCats.includes(this.lastSaveCategory) ? this.lastSaveCategory : (customCats[0] || "__new__");
+    const startNew = def === "__new__";
+    const opts = customCats.map((n) => `<option value="${esc(n)}"${n === def ? " selected" : ""}>${esc(n)}</option>`)
+      .concat([`<option value="__new__"${startNew ? " selected" : ""}>＋ new category…</option>`]);
     sp.innerHTML =
       `<div class="head">save ${ids.length} cells</div>` +
       `<input id="splabel" placeholder="value name (e.g. ‘activated’)…" style="width:90%;margin:5px 6px 3px;font-size:12px">` +
       `<div style="display:flex;align-items:center;gap:5px;margin:0 6px 4px"><span style="font-size:10px;color:var(--faint)">in</span><select id="spcat" style="flex:1;font-size:11px">${opts.join("")}</select></div>` +
-      `<input id="spnewcat" placeholder="new category name…" style="display:none;width:90%;margin:0 6px 5px;font-size:12px">` +
+      `<input id="spnewcat" placeholder="new category name…" style="display:${startNew ? "block" : "none"};width:90%;margin:0 6px 5px;font-size:12px">` +
       `<div class="it" data-a="apply"><span class="ic">✓</span>save</div>`;
     const val = sp.querySelector<HTMLInputElement>("#splabel")!;
     const cat = sp.querySelector<HTMLSelectElement>("#spcat")!;
@@ -2093,8 +2098,8 @@ export class App {
       setTimeout(() => {
         this.labelCells(idsArr, value, target);
         this.noteColor("meta:" + target); this.coord.setColor("meta:" + target);   // make the just-saved value visible
-        this.coord.setSelection(null); this.scope = null;
-        this.toast(`saved ${n} cells as “${value}” in ${target === "annotation" ? "the working draft" : `“${target}”`}`, "Edit it in the Metadata panel · see the Annotate workspace.");
+        this.coord.setSelection(null); this.scope = null; this.lastSaveCategory = target;
+        this.toast(`saved ${n} cells as “${value}” in category “${target}”`, "A custom category — colour, facet, DE, or edit it (✎) in the Metadata panel.");
       }, 0);
     };
     val.onkeydown = (e) => { if (e.key === "Enter") apply(); else if (e.key === "Escape") this.hideSelpop(); };
