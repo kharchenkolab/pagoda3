@@ -87,7 +87,7 @@ export class App {
   // presence
   thread: any = null; threadDocked = false; nudgePending: any = null; apTimer: any = null; apIndex = 0;
   scope: Scope | null = null; askScope: Scope | null = null; hot = 0; filtered: any[] = []; lastSelAnchor: { left: number; top: number; right?: number } = { left: 0, top: 0 };
-  skipDocClick = false;   // a lasso's setPointerCapture fires a trailing `click` on mouseup — swallow that ONE click in the document dismiss handler so it can't close the just-opened selpop
+  private selpopOutside?: (e: Event) => void;   // the selection popover's OWN outside-dismiss listener (armed on open, removed on close) — see showSelpop/hideSelpop
   proposalWhy = "";
 
   constructor(ctx: Ctx) {
@@ -425,7 +425,7 @@ export class App {
   hooks(): PanelHooks {
     return {
       onGeneClick: (sym) => this.agent.coordinateGene(sym),
-      onSelect: (ids, anchor) => { this.coord.setSelection({ kind: "cells", ids }); this.lastSelAnchor = anchor; this.openSelpop(); this.skipDocClick = true; },   // brush has no category — raw cells; skip the lasso's trailing click so it doesn't dismiss the selpop
+      onSelect: (ids, anchor) => { this.coord.setSelection({ kind: "cells", ids }); this.lastSelAnchor = anchor; this.openSelpop(); },   // brush has no category — raw cells
       registerEmbedding: (ev) => this.embeddings.push(ev),
       onCellHover: (idx) => this.onCellHover(idx),
       onCellClick: (idx, anchor) => this.onCellClick(idx, anchor),
@@ -1996,13 +1996,7 @@ export class App {
         `<div class="it" data-a="subset"><span class="ic">⊙</span>Subset to these <span style="opacity:.5;margin-left:auto;font-size:10px">hide the rest</span></div>` +
         `<div class="it" data-a="label"><span class="ic">✎</span>Label as…</div>` +
         `<div class="it" data-a="clear"><span class="ic">✕</span>Clear selection</div>`;
-      sp.classList.add("show");
-      // position with the menu's REAL width: if the anchor carries a `right` (a right-aligned trigger like the facet
-      // "actions" button), align the menu's right edge to it so it stays inside the panel; else open to the right of
-      // the anchor. Clamp within the window with an 8px margin either way (never bleed to the very edge).
-      const a = this.lastSelAnchor || { left: 8, top: 8 }; const wpx = sp.offsetWidth || 210;
-      const left = a.right != null ? a.right - wpx : a.left + 8;
-      sp.style.left = Math.max(8, Math.min(left, innerWidth - wpx - 8)) + "px"; sp.style.top = a.top + "px";
+      this.showSelpop();   // reveal at lastSelAnchor + arm the popover's own outside-dismiss listener
       sp.querySelectorAll<HTMLElement>(".it").forEach((it) => it.onclick = () => { const a = it.dataset.a;
         if (a === "label") { this.selpopLabelInput(Array.from(ids)); return; }   // sub-state — keep the popover open
         this.hideSelpop();
@@ -2028,7 +2022,26 @@ export class App {
     inp.onkeydown = (e) => { if (e.key === "Enter") apply(); else if (e.key === "Escape") this.hideSelpop(); };
     sp.querySelector<HTMLElement>('[data-a="apply"]')!.onclick = apply;
   }
-  hideSelpop() { this.$("selpop").classList.remove("show"); }
+  // Reveal the popover at lastSelAnchor and ARM its outside-dismiss listener (idempotent — content re-renders reuse it).
+  // Dismissal is OUTSIDE pointerdown (capture phase): it fires before any content swap and ignores the lasso's trailing
+  // click, so the menu → label-input transition (and future pickers) can never dismiss themselves.
+  private showSelpop() {
+    const sp = this.$("selpop");
+    sp.classList.add("show");
+    // position with the menu's REAL width: a `right` anchor (a right-aligned trigger like the facet "actions" button)
+    // aligns the menu's right edge to it so it stays inside the panel; else open to the right of the anchor. Clamp.
+    const a = this.lastSelAnchor || { left: 8, top: 8 }; const wpx = sp.offsetWidth || 210;
+    const left = a.right != null ? a.right - wpx : a.left + 8;
+    sp.style.left = Math.max(8, Math.min(left, innerWidth - wpx - 8)) + "px"; sp.style.top = a.top + "px";
+    if (!this.selpopOutside) {
+      this.selpopOutside = (e: Event) => { if (!this.$("selpop").contains(e.target as Node)) this.hideSelpop(); };
+      document.addEventListener("pointerdown", this.selpopOutside, true);
+    }
+  }
+  hideSelpop() {
+    this.$("selpop").classList.remove("show");
+    if (this.selpopOutside) { document.removeEventListener("pointerdown", this.selpopOutside, true); this.selpopOutside = undefined; }
+  }
 
   // ---------- context menu on panel ----------
   openCtx(x: number, y: number, p: Panel) {
@@ -2119,7 +2132,9 @@ export class App {
       else if (e.key === "ArrowUp") { this.hot = Math.max(this.hot - 1, 0); this.renderSugs(); e.preventDefault(); }
       else if (e.key === "Enter") { const s = this.filtered[this.hot]; if (s) { this.closePalette(); this.agent.ask(s.q, this.scope); } }
     });
-    document.addEventListener("click", (e) => { const skip = this.skipDocClick; this.skipDocClick = false; if (!skip && !this.$("selpop").contains(e.target as Node)) this.hideSelpop(); if (!this.$("ctx").contains(e.target as Node)) this.$("ctx").classList.remove("show"); const ac = this.$("acct"); if (!ac.contains(e.target as Node) && (e.target as HTMLElement).id !== "acctBtn" && !this.$("acctBtn").contains(e.target as Node)) ac.classList.remove("show"); });
+    // ctx + account menus dismiss on document click; the selection popover owns its OWN outside-dismiss listener
+    // (pointerdown-based, in showSelpop/hideSelpop) so it isn't entangled here.
+    document.addEventListener("click", (e) => { if (!this.$("ctx").contains(e.target as Node)) this.$("ctx").classList.remove("show"); const ac = this.$("acct"); if (!ac.contains(e.target as Node) && (e.target as HTMLElement).id !== "acctBtn" && !this.$("acctBtn").contains(e.target as Node)) ac.classList.remove("show"); });
     document.addEventListener("keydown", (e) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); this.openPalette(); }
       else if (e.key === "Escape") { this.closePalette(); this.hideSelpop(); this.$("ctx").classList.remove("show"); }
