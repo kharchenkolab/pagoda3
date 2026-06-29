@@ -1829,6 +1829,7 @@ export class App {
       <div class="acsec"><div class="aclabel">ACCOUNT</div>
         <div class="acrow"><span class="acava">G</span><div><div class="acname">Guest</div><div class="acsub">Local session · not signed in</div></div></div>
         <button class="acbtn" data-a="signin">Sign in</button>
+        <button class="acbtn" data-a="ledger" style="margin-top:6px">▤ &nbsp;Session ledger</button>
         <div class="acicons">
           <button data-a="theme" title="${light ? "Light theme · switch to dark" : "Dark theme · switch to light"}">${light ? "☀" : "☾"}</button>
           <button data-a="export" title="Save session to a file (.json)">⤓</button>
@@ -1848,6 +1849,7 @@ export class App {
       else if (a === "theme") { this.applyTheme(document.documentElement.classList.contains("light") ? "dark" : "light"); this.openAccountMenu(); }   // toggle + re-render the icon
       else if (a === "export") { c.classList.remove("show"); void this.exportSessionToFile(); }
       else if (a === "import") { c.classList.remove("show"); void this.importSessionFromFile(); }
+      else if (a === "ledger") { c.classList.remove("show"); this.openSessionLedger(); }
       else if (a === "reset") { c.classList.remove("show"); this.confirmReset(); } });   // confirm first — reset wipes the saved session
     c.querySelectorAll<HTMLElement>("[data-std]").forEach((el) => el.onclick = () => { const s = standard[Number(el.dataset.std)]; if (s) { this.addPanel({ ...s.spec }); this.toast(`Added ${s.name}`, null); } c.classList.remove("show"); });
     c.querySelectorAll<HTMLElement>("[data-add]").forEach((el) => el.onclick = () => { const w = this.widgetLib.find((x) => x.id === el.dataset.add); if (w) { this.addWidgetPanel(w.source, w.name, w.controls, w.origin === "imported" ? "imported" : "authored"); this.toast(`Added widget “${w.name}”`, null); } c.classList.remove("show"); });
@@ -2100,6 +2102,16 @@ export class App {
     const annotation = ann ? { labels: ann.categories.length, records: ann.records ? Object.keys(ann.records).length : 0 } : null;
     const apps = this.widgetLib.map((w) => ({ id: w.id, name: w.name, origin: w.origin || "authored", when: w.createdAt || 0 }));
     return buildSessionEntities({ categories, annotation, results: this.results.list(), apps });
+  }
+
+  // Open the session ledger: bring an existing one into view (scroll), else add it to the workbench.
+  openSessionLedger(): void {
+    const onCanvas = this.canvas.find((p) => p.type === "SessionLedger");
+    if (onCanvas) { document.querySelector(`[data-pid="${onCanvas.id}"]`)?.scrollIntoView({ behavior: "smooth", block: "nearest" }); this.toast("Session ledger is on your workbench", null); return; }
+    const inRail = this.rail.find((p) => p.type === "SessionLedger");
+    if (inRail) { this.rail = this.rail.filter((p) => p.id !== inRail.id); this.canvas.push(this.newPanel(inRail)); }   // promote a railed one to the board
+    else this.addPanel({ type: "SessionLedger", title: "Session", cap: "session ledger" });
+    this.fullRender();
   }
 
   // The session-ledger row action dispatcher — open / re-run / rename / delete / export, routed by entity type. Data
