@@ -321,6 +321,7 @@ button{font-family:inherit}
 /* session ledger panel */
 .ledger{font-size:13px}
 .lghdr{display:inline-flex;gap:4px}   /* session import/export, in the panel header */
+.lghdr button{font-size:17px;line-height:1;padding:0 7px}   /* the ⤒/⤓ glyphs are thin sticks at the .mini 11px — enlarge so the arrowheads read */
 .ledger .lgchips{display:flex;gap:5px;flex-wrap:wrap;padding:8px 8px 4px}
 .ledger .lgchip{font-size:11.5px;padding:2px 9px;border-radius:999px;border:1px solid var(--line);background:var(--inset);color:var(--dim);cursor:pointer}
 .ledger .lgchip:hover{color:var(--text)}
