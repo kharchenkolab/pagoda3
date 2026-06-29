@@ -2036,17 +2036,22 @@ export class App {
   // ---------- selection popover ----------
   openSelpop() {
     const ids = this.ctx.selectedCells(); if (!ids.length) return;
-    this.ctx.metaOf("cell_type").then((m: any) => {
+    // Summarise the selection in terms of the CURRENTLY-PAINTED category when the embedding is coloured by one — paint
+    // by sample and the breakdown is "mostly <sample>", not "mostly CD14 mono" (which would just echo the most abundant
+    // cell type, ignoring what the user is looking at). Gene / numeric / other colourings have no category → cell_type.
+    const field = this.ctx.keyGrouping();   // the painted categorical (sample / patient / leiden / a session category) — else cell_type/leiden for gene/qc colourings. keyGrouping uses cachedCat, so it sees ALL categoricals, not just the marker-precomputed groupings().
+    this.ctx.metaOf(field).then((m: any) => {
       const cts: Record<string, number> = {}; for (const i of ids) cts[m.categories[m.codes[i]]] = (cts[m.categories[m.codes[i]]] || 0) + 1;
       const top = Object.entries(cts).sort((a, b) => b[1] - a[1])[0];
       const sel = this.coord.state.selection as any;
-      this.scope = { type: "selection", ids: Array.from(ids), summary: `${ids.length} cells (mostly ${top?.[0] || "?"})`, sel } as any;
+      const byField = field !== "cell_type" ? ` by ${field}` : "";
+      this.scope = { type: "selection", ids: Array.from(ids), summary: `${ids.length} cells (mostly ${top?.[0] || "?"}${byField})`, sel } as any;
       const esc = (s: string) => String(s).replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]!));
       const sp = this.$("selpop");
       // DE is direct (no agent). "Run DE" is the one-click selection-vs-rest; "Compare A vs B…" opens the composer
       // (prefilled with this selection as A) for the general case — two groups, unions, cross-field, cell-level or
       // paired pseudobulk. The composer replaced the old stateful group-B pin.
-      sp.innerHTML = `<div class="head">${ids.length} cells · mostly ${top?.[0] || "?"}</div>` +
+      sp.innerHTML = `<div class="head">${ids.length} cells · mostly ${top?.[0] || "?"}${byField}</div>` +
         `<div class="it" data-a="ask"><span class="ic">⌘K</span>Ask about these…</div>` +
         `<div class="it" data-a="de"><span class="ic">≢</span>Run DE <span style="opacity:.5;margin-left:auto;font-size:10px">vs rest</span></div>` +
         `<div class="it" data-a="compare"><span class="ic">⇄</span>Compare A vs B…</div>` +
