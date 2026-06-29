@@ -253,18 +253,20 @@ const GTABLE_CAP = 200;   // max ROWS rendered at once — the table holds the F
 // rows: the sort IS the query (background coupled to the same test = the tested+detected genes ∩ annotated). `getRows`
 // returns the live ordered rows when the user flips to this view; `rankedByFn` names the active sort (shown prominently).
 // Clicking a pathway scores cells by its overlap-gene signature. Lazy-loads the bundled Reactome asset once.
-interface EnrichCap { ctx: Ctx; aLabel?: string; bLabel?: string; defaultRank?: string; record?: (r: any) => void; sourceName?: string; }
-function enrichView(cap: EnrichCap, getRows: () => RankedGene[], rankedByFn: () => string, st: { topN: number; dir: "ranked" | "up" | "down" | "both" }): { el: HTMLElement; ctrls: HTMLElement; ensure: () => void } {
+interface EnrichCap { ctx: Ctx; aLabel?: string; bLabel?: string; defaultRank?: string; record?: (r: any) => void; sourceName?: string; persist?: any; }   // persist = the Panel, so the view mode + top-N/dir ride through a re-render
+function enrichView(cap: EnrichCap, getRows: () => RankedGene[], rankedByFn: () => string, st: { topN: number; dir: "ranked" | "up" | "down" | "both" }): { el: HTMLElement; ensure: () => void } {
   const ctx = cap.ctx, aL = cap.aLabel || "A", bL = cap.bLabel || "B", FDR_SHOW = 0.1;
   const esc = (s: string) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]!));
   const el = mk("div", "enrich");
-  const body = mk("div", "enrbody"); body.innerHTML = `<div class="enrempty">loading gene sets…</div>`; el.appendChild(body);
-  const ctrls = mk("div", "enrctrls");
+  // the pathways-specific controls (top-N / direction / keep) live in the CARD BODY, not the panel header — the header
+  // keeps only the genes⇄pathways toggle (common to both views), so switching back is always one click away.
+  const ctrls = mk("div", "enrctrls"); el.appendChild(ctrls);
   const nsel = mk("select", "mini") as HTMLSelectElement; for (const v of [50, 100, 150, 200, 300]) { const o = document.createElement("option"); o.value = String(v); o.textContent = "top " + v; nsel.appendChild(o); } nsel.value = String(st.topN);
   const dsel = mk("select", "mini") as HTMLSelectElement; for (const [v, l] of [["ranked", "as ranked"], ["both", "up + down"], ["up", "up only"], ["down", "down only"]]) { const o = document.createElement("option"); o.value = v; o.textContent = l; dsel.appendChild(o); } dsel.value = st.dir;
   ctrls.append(nsel, dsel);
-  nsel.onchange = () => { st.topN = +nsel.value; render(); };
-  dsel.onchange = () => { st.dir = dsel.value as any; render(); };
+  const body = mk("div", "enrbody"); body.innerHTML = `<div class="enrempty">loading gene sets…</div>`; el.appendChild(body);
+  nsel.onchange = () => { st.topN = +nsel.value; if (cap.persist) cap.persist.enrTopN = st.topN; render(); };
+  dsel.onchange = () => { st.dir = dsel.value as any; if (cap.persist) cap.persist.enrDir = st.dir; render(); };
   const dirLabel = (d: string) => d === "up" ? `▲ up in ${esc(aL)}` : d === "down" ? `▲ up in ${esc(bL)}` : d === "ranked" ? `ranked by ${esc(rankedByFn())}` : "enriched";
   let db: GeneSetDB | null = null, last: EnrichResult[] = [];
   // "keep" the current enrichment as a first-class session result (shows in the ledger; re-openable + CSV-exportable).
@@ -298,7 +300,7 @@ function enrichView(cap: EnrichCap, getRows: () => RankedGene[], rankedByFn: () 
     if (acc && cnt) { for (let i = 0; i < acc.length; i++) acc[i] /= cnt; const label = "sig: " + name.slice(0, 32); setCodeValues(label, acc); ctx.coord.setColor("code:" + label); }
   }
   const ensure = () => { if (db) { render(); return; } loadGeneSets("human").then((d) => { db = d; render(); }).catch((e) => { body.innerHTML = `<div class="enrempty">Couldn't load gene sets: ${esc(e.message)}.<br>Build them with <code>node server/build_genesets.mjs</code>.</div>`; }); };
-  return { el, ctrls, ensure };
+  return { el, ensure };
 }
 
 function geneTable(initial: any[], cols: GCol[], onPick: (symbol: string) => void, enrich?: EnrichCap): BuiltBody & { setRows: (r: any[]) => void; ordered: () => any[]; rankInfo: () => { key: string | null; dir: number; label: string | null } } {
@@ -337,19 +339,22 @@ function geneTable(initial: any[], cols: GCol[], onPick: (symbol: string) => voi
 
   // ENRICH-capable: a Genes ⇄ Pathways toggle in the header; the Pathways side enriches the CURRENT order (the sort the
   // user staged here). Both faces live in `wrap`; the toggle swaps which is shown + which controls sit in the header.
-  const st = { topN: 150, dir: "ranked" as "ranked" | "up" | "down" | "both" };
+  const pp = enrich.persist || {};
+  const st = { topN: pp.enrTopN ?? 150, dir: (pp.enrDir ?? "ranked") as "ranked" | "up" | "down" | "both" };
   const ev = enrichView(enrich, ordered, () => rankInfo().label || enrich.defaultRank || "the source order", st);
   ev.el.style.display = "none"; ev.el.style.cssText += ";overflow:auto;max-height:min(60vh,480px)"; wrap.appendChild(ev.el);
   const hdr = mk("div", "gthdr");
-  const toggle = mk("div", "segtog"); const gBtn = mk("button", "mini on", "genes") as HTMLButtonElement; const pBtn = mk("button", "mini", "pathways") as HTMLButtonElement; toggle.append(gBtn, pBtn);
-  ev.ctrls.style.display = "none"; hdr.append(toggle, search, ev.ctrls);
+  const toggle = mk("div", "segtog"); const gBtn = mk("button", "mini", "genes") as HTMLButtonElement; const pBtn = mk("button", "mini", "pathways") as HTMLButtonElement; toggle.append(gBtn, pBtn);
+  hdr.append(toggle, search);   // header = the toggle (always there → always a way back) + the genes-mode search
   const setMode = (m: "genes" | "pathways") => {
+    if (enrich.persist) enrich.persist.enrMode = m;   // ride through a re-render so "keep" / any fullRender doesn't snap back to genes
     const g = m === "genes"; gBtn.classList.toggle("on", g); pBtn.classList.toggle("on", !g);
     scroll.style.display = g ? "" : "none"; more.style.display = g ? "" : "none"; ev.el.style.display = g ? "none" : "";
-    search.style.display = g ? "" : "none"; ev.ctrls.style.display = g ? "none" : "";
+    search.style.display = g ? "" : "none";
     if (!g) ev.ensure();
   };
   gBtn.onclick = () => setMode("genes"); pBtn.onclick = () => setMode("pathways");
+  setMode(pp.enrMode === "pathways" ? "pathways" : "genes");   // restore the staged view after a rebuild
   return { el: wrap, headerControls: hdr, setRows, ordered, rankInfo };
 }
 
@@ -360,7 +365,7 @@ function variableGenesBody(p: Panel, ctx: Ctx, hooks: PanelHooks): BuiltBody {
   const gt = geneTable([], [
     { key: "symbol", label: "gene", get: (r: any) => r.symbol },
     { key: "score", label: "overdispersion", num: true, get: (r: any) => r.score ?? 0, fmt: (v: number) => v.toFixed(2), cls: () => "up" },
-  ], hooks.onGeneClick, { ctx, defaultRank: "overdispersion ↓", record: hooks.recordResult, sourceName: p.title || "variable genes" });
+  ], hooks.onGeneClick, { ctx, defaultRank: "overdispersion ↓", record: hooks.recordResult, sourceName: p.title || "variable genes", persist: p });
   const w = mk("div"); w.style.cssText = "position:absolute;inset:0;display:flex;flex-direction:column;overflow:hidden";
   const scope = mk("div", "vgscope");
   const bar = mk("div", "fetchbar");   // thin data-fetch progress bar — determinate (csrRows runs) or indeterminate (whole-matrix)
@@ -422,7 +427,7 @@ function deBody(p: Panel, ctx: Ctx, hooks: PanelHooks): BuiltBody {
   }
   // The gene table IS the query-staging surface: sort it (logFC ↑/↓, p, a group mean), then flip the header's
   // Genes ⇄ Pathways toggle to enrich that exact order. Enrichment is the other face of the same table.
-  return geneTable(rows, cols, hooks.onGeneClick, { ctx, aLabel: p.aLabel, bLabel: p.bLabel, defaultRank: "logFC ↓", record: hooks.recordResult, sourceName: p.title });
+  return geneTable(rows, cols, hooks.onGeneClick, { ctx, aLabel: p.aLabel, bLabel: p.bLabel, defaultRank: "logFC ↓", record: hooks.recordResult, sourceName: p.title, persist: p });
 }
 
 // A ranked gene list with a single score column (e.g. scope-aware overdispersion).
@@ -430,7 +435,7 @@ function geneListBody(p: Panel, ctx: Ctx, hooks: PanelHooks): BuiltBody {
   return geneTable(p.rows || [], [
     { key: "symbol", label: "gene", get: (r) => r.symbol },
     { key: "score", label: p.cap || "score", num: true, get: (r) => r.score ?? 0, fmt: (v) => v.toFixed(2), cls: () => "up" },
-  ], hooks.onGeneClick, { ctx, defaultRank: (p.cap || "score") + " ↓", record: hooks.recordResult, sourceName: p.title });
+  ], hooks.onGeneClick, { ctx, defaultRank: (p.cap || "score") + " ↓", record: hooks.recordResult, sourceName: p.title, persist: p });
 }
 
 async function compositionBody(panel: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltBody> {
