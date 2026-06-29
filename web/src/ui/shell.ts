@@ -21,6 +21,7 @@ import { makeWidgetHost } from "../widget/apphost.ts";
 import type { WidgetHost, WidgetHandle } from "../widget/runtime.ts";
 import { widgetLint } from "../widget/contract.ts";
 import { pseudobulkDECore, pseudobulkPairedDECore } from "../compute/odcore.ts";
+import { ResultRegistry } from "./results.ts";
 import { fieldBuckets } from "../data/fieldroles.ts";
 import { SESSION_KEY, WIDGETS_KEY, SavedWidget, SerAnnoLayer, Fingerprint, serializeSession, parseSession, serializeBundle, parseBundle, fingerprintMismatch, upsertWidget, loadWidgets, widgetHash } from "./persist.ts";
 
@@ -68,6 +69,7 @@ export class App {
   renderToken = 0;         // guards fullRender against concurrent re-entry (async panel build → stale double-append)
   liveMessages: any[] = [];   // the running Anthropic conversation (persists across asks so follow-ups keep context)
   annoLayers = new Map<string, AnnotationLayer>();   // rich annotation layers (records/provenance); codes also mirrored into ctx as categoricals
+  results = new ResultRegistry();   // session RESULTS (DE / pseudobulk / markers / HVG) as first-class re-runnable artifacts — the session ledger lists these
   embeddings: EmbeddingView[] = [];
   compReactors: CompReactor[] = [];   // vocabulary-bound panels that highlight a category on a coord hint
   coordSubs: (() => void)[] = [];     // managed coord subscriptions (panels' onCoord) — unsubscribed each fullRender
@@ -1447,7 +1449,7 @@ export class App {
     return (s?.type === "selection" && s.ids && s.ids.length) ? s.ids : live;
   }
 
-  async runCompute(input: { stat?: string; A?: CellSet; B?: CellSet; replicate?: string; paired?: boolean; toCanvas?: boolean; title?: string }): Promise<{ ok?: string; error?: string }> {
+  async runCompute(input: { stat?: string; A?: CellSet; B?: CellSet; replicate?: string; paired?: boolean; toCanvas?: boolean; title?: string; source?: "user" | "agent" }): Promise<{ ok?: string; error?: string }> {
     const ctx = this.ctx;
     if (input.stat !== "de" && input.stat !== "overdispersion" && input.stat !== "pseudobulk") return { error: `unknown stat "${input.stat}" — use "de", "pseudobulk", or "overdispersion"` };
     if (!input.A) { if (input.stat === "overdispersion") input.A = { all: true } as CellSet; else return { error: "A (a cell set) is required" }; }   // global variable genes when no scope given
@@ -1481,12 +1483,19 @@ export class App {
     };
     const namedA = !!catRefOf(input.A);   // A is an authoritative category → the SYSTEM names the card (a generic agent `title` is ignored)
     const place = (spec: Partial<Panel>) => { if (input.toCanvas) this.addPanel(spec); else this.agent.addRail(spec); };
+    // record EVERY result in the session registry (auto-accrue) — the spec makes it re-runnable, provenance + rows make
+    // it browsable/exportable from the session ledger, regardless of whether the panel went to the canvas or the rail.
+    const record = (kind: "de" | "pseudobulk" | "markers" | "hvg", name: string, summary: string, bind: string, rows: any[]) =>
+      this.results.add({ name, kind, spec: { stat: input.stat!, A: input.A, B: input.B, replicate: input.replicate, paired: input.paired }, who: input.source || "user", when: Date.now(), summary, bind, rows });
 
     if (input.stat === "overdispersion") {
       const hv = await ctx.view.overdispersedGenes(Aids, 1e9);   // ALL scored genes (topN caps the return; scoring is over every gene) — the panel filters/searches the full list
       if (!hv.length) return { error: "no overdispersion (store has no cell-major counts panel)" };
       const label = richLabel(input.A, Aids);
-      place({ type: "GeneList", title: namedA ? `Variable genes · ${label}` : (input.title || `Variable genes · ${label}`), cap: "overdispersion", bind: "hvg:scope", rows: hv.map((h) => ({ symbol: h.symbol, score: h.resid })) });
+      const hvRows = hv.map((h) => ({ symbol: h.symbol, score: h.resid }));
+      const hvName = namedA ? `Variable genes · ${label}` : (input.title || `Variable genes · ${label}`);
+      place({ type: "GeneList", title: hvName, cap: "overdispersion", bind: "hvg:scope", rows: hvRows });
+      record("hvg", hvName, `overdispersion · ${Aids.length.toLocaleString()} cells`, "hvg:scope", hvRows);
       return { ok: `top variable genes in ${label} (${Aids.length} cells), recomputed for this scope: ${hv.slice(0, 10).map((h) => h.symbol).join(", ")}` };
     }
     let Bids = [...resolveCellSet(Bexpr!, env)];
@@ -1516,6 +1525,7 @@ export class App {
         if (rows0?.length) {
           const rows = rows0.map((r: any) => ({ gene: r.gene, symbol: r.symbol, lfc: r.lfc, p: r.padj }));
           place({ type: "DeTable", title: titleOf(`${aL} vs rest`), cap: "1-vs-rest markers", bind: "de:markers", aLabel: aL, bLabel: "rest", rows });
+          record("markers", titleOf(`${aL} vs rest`), "1-vs-rest markers", "de:markers", rows);
           const up = rows.filter((r: any) => r.lfc > 0).slice(0, 8).map((r: any) => r.symbol).join(", ");
           return { ok: `DE ${aL} vs rest from the store's precomputed 1-vs-rest markers — instant, no recompute. Up in ${aL}: ${up}. (To recompute at the cell level, compare ${aL} against a SPECIFIC other group instead of rest.)` };
         }
@@ -1539,6 +1549,7 @@ export class App {
         const genes = await ctx.view.genes();
         const rows = pr.map((r) => ({ gene: r.g, symbol: genes[r.g], lfc: r.lfc, p: r.p, meanA: r.meanA, meanB: r.meanB }));
         place({ type: "DeTable", title: titleOf(`${aL} vs ${bL}`), cap: `pseudobulk · paired across ${reps.length} ${rep}s${sharedNote}`, bind: "pseudobulk:paired", aLabel: aL, bLabel: bL, rows });
+        record("pseudobulk", titleOf(`${aL} vs ${bL}`), `pseudobulk paired · ${rep} · ${reps.length} reps`, "pseudobulk:paired", rows);
         const sig = rows.filter((r) => r.p < 0.05).length;
         const top = rows.slice(0, 8).map((r) => `${r.symbol}${r.p < 0.05 ? "*" : ""}`).join(", ");
         return { ok: `paired pseudobulk DE ${aL} vs ${bL} across ${reps.length} ${rep}(s): ${sig} gene(s) at p<0.05 (paired t-test on the per-${rep} A−B difference — each ${rep} is its own control). Top by p: ${top}.` };
@@ -1548,6 +1559,7 @@ export class App {
       const genes = await ctx.view.genes();
       const rows = pr.map((r) => ({ gene: r.g, symbol: genes[r.g], lfc: r.lfc, p: r.p, meanA: r.meanA, meanB: r.meanB }));
       place({ type: "DeTable", title: titleOf(`${aL} vs ${bL}`), cap: `donor-level · ${repsA.length} vs ${repsB.length} ${rep}s${sharedNote}`, bind: "pseudobulk:donor", aLabel: aL, bLabel: bL, rows });
+      record("pseudobulk", titleOf(`${aL} vs ${bL}`), `pseudobulk · ${rep} · ${repsA.length} vs ${repsB.length}`, "pseudobulk:donor", rows);
       const sig = rows.filter((r) => r.p < 0.05).length;
       const top = rows.slice(0, 8).map((r) => `${r.symbol}${r.p < 0.05 ? "*" : ""}`).join(", ");
       return { ok: `pseudobulk DE ${aL} vs ${bL} across ${rep}, ${repsA.length} vs ${repsB.length} replicates: ${sig} gene(s) at p<0.05 (Welch t-test on per-replicate mean log-expression). Top by p: ${top}. The replicate is the unit here, so unlike cell-level de this carries a real p-value and supports a population-level claim — but with few replicates power is limited; treat marginal hits cautiously.` };
@@ -1557,6 +1569,7 @@ export class App {
     const { ranked, panel } = await ctx.view.subsampleDE(Aids, Bids);
     const rows = ranked.map((r: any) => ({ gene: r.gene, symbol: r.symbol, lfc: r.lfc, meanA: r.meanA, meanB: r.meanB }));   // ALL tested genes — the panel filters/searches the full list (render is capped)
     place({ type: "DeTable", title: titleOf(`${aL} vs ${bL}`), cap: "cell-level DE" + sharedNote, bind: "de:between", aLabel: aL, bLabel: bL, rows });   // title = the contrast (the identity); cap = the test TYPE (secondary, non-redundant) — the approx/ranking nature lives in the caveat
+    record("de", titleOf(`${aL} vs ${bL}`), "cell-level DE" + sharedNote, "de:between", rows);
     const up = rows.filter((r: any) => r.lfc > 0).slice(0, 6).map((r: any) => r.symbol).join(", ");
     const dn = rows.filter((r: any) => r.lfc < 0).slice(0, 6).map((r: any) => r.symbol).join(", ");
     return { ok: `DE ${aL} (${Aids.length}) vs ${bL} (${Bids.length}), compared directly. Higher in ${aL}: ${up || "—"}. Higher in ${bL}: ${dn || "—"}.` };
@@ -2067,8 +2080,15 @@ export class App {
   // run DE straight to the canvas (no agent). B omitted ⇒ vs rest; replicate set ⇒ donor-level pseudobulk.
   private async runDEdirect(A: CellSet, aLabel: string, B: CellSet | undefined, bLabel: string, replicate?: string) {
     this.toast(`computing ${replicate ? "donor-level " : ""}DE — ${aLabel} vs ${bLabel}…`, null);
-    const r = await this.runCompute({ stat: replicate ? "pseudobulk" : "de", A, B, replicate, toCanvas: true });
+    const r = await this.runCompute({ stat: replicate ? "pseudobulk" : "de", A, B, replicate, toCanvas: true, source: "user" });
     if (r.error) this.toast(`DE failed: ${r.error}`, null);
+  }
+  // Re-run a stored result from its spec (e.g. after editing a category it depends on) → a fresh result + panel.
+  async rerunResult(id: string): Promise<void> {
+    const r = this.results.get(id); if (!r) { this.toast("result no longer available", null); return; }
+    this.toast(`re-running ${r.name}…`, null);
+    const res = await this.runCompute({ ...r.spec, toCanvas: true, source: "user" });
+    if (res.error) this.toast(`re-run failed: ${res.error}`, null);
   }
 
   // The DE composer — build group A and B from any field's values (+ the current selection), drag chips between them,
@@ -2150,7 +2170,7 @@ export class App {
       (card.querySelector(".derun") as HTMLButtonElement).onclick = async () => {
         const aCS = sideCS(A); if (!aCS) return; close();
         this.toast(`computing ${method === "pseudobulk" ? "paired pseudobulk" : "cell-level"} DE…`, null);
-        const r = await this.runCompute({ stat: method, A: aCS, B: sideCS(B) || undefined, replicate: method === "pseudobulk" ? replicate : undefined, paired: method === "pseudobulk" ? true : undefined, toCanvas: true });
+        const r = await this.runCompute({ stat: method, A: aCS, B: sideCS(B) || undefined, replicate: method === "pseudobulk" ? replicate : undefined, paired: method === "pseudobulk" ? true : undefined, toCanvas: true, source: "user" });
         if (r.error) this.toast(`DE failed: ${r.error}`, null);
       };
     };

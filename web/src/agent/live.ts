@@ -223,7 +223,7 @@ async function execTool(app: App, name: string, input: any): Promise<string> {
       ag.addRail({ type: "DeTable", title: `Markers · ${input.cluster}`, cap: `${grouping} vs rest`, bind: `de:${grouping}:${input.cluster}`, group: input.cluster, rows });
       return `added marker table for ${grouping}=${input.cluster}; top genes: ${rows.slice(0, 8).map((r) => r.symbol).join(", ")}`;
     }
-    case "compute": { const { ok, error } = await app.runCompute(input); return error ? `error: ${error}` : ok!; }
+    case "compute": { const { ok, error } = await app.runCompute({ ...input, source: "agent" }); return error ? `error: ${error}` : ok!; }
     case "compute_code": { const { ok, error } = await app.runComputeCode(input); return error ? `error: ${error}` : ok!; }
     case "read_widget_contract": return WIDGET_API_DOC;
     case "list_widget_capabilities": return JSON.stringify(capabilityMenu());
