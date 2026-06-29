@@ -1994,7 +1994,7 @@ export class App {
         `<div class="it" data-a="ask"><span class="ic">⌘K</span>Ask about these…</div>` +
         `<div class="it" data-a="de"><span class="ic">≢</span>Run DE on selection</div>` +
         `<div class="it" data-a="subset"><span class="ic">⊙</span>Subset to these <span style="opacity:.5;margin-left:auto;font-size:10px">hide the rest</span></div>` +
-        `<div class="it" data-a="label"><span class="ic">✎</span>Label as…</div>` +
+        `<div class="it" data-a="label"><span class="ic">✎</span>Save selection…</div>` +
         `<div class="it" data-a="clear"><span class="ic">✕</span>Clear selection</div>`;
       this.showSelpop();   // reveal at lastSelAnchor + arm the popover's own outside-dismiss listener
       sp.querySelectorAll<HTMLElement>(".it").forEach((it) => it.onclick = () => { const a = it.dataset.a;
@@ -2012,14 +2012,41 @@ export class App {
         else { this.coord.setSelection(null); this.scope = null; } });
     });
   }
-  // brush → "Label as…": type a label, applied to the selected cells in the working annotation draft
-  // (auto-creates it, non-destructive). The free-form manual entry point that complements the agent + reconcile.
+  // selection → "Save selection…": name a VALUE and choose the target CATEGORY — the working draft, another editable
+  // category you made, or a brand-new one. Writes via labelCells into ANY annotation layer (auto-creates it), then
+  // colours by it. The free-form manual capture path that complements the agent + reconcile. A content-only re-render
+  // of the OPEN popover — the dismiss listener stays armed and the position is unchanged (a sub-view, not a re-open).
   selpopLabelInput(ids: number[]) {
     const sp = this.$("selpop");
-    sp.innerHTML = `<div class="head">label ${ids.length} cells</div><input id="splabel" placeholder="cell-type label…" style="width:90%;margin:5px 6px;font-size:12px"><div class="it" data-a="apply"><span class="ic">✓</span>add to working annotation</div>`;
-    const inp = sp.querySelector<HTMLInputElement>("#splabel")!; inp.focus();
-    const apply = () => { const v = inp.value.trim(); this.hideSelpop(); if (v) { this.labelCells(Int32Array.from(ids), v); this.coord.setSelection(null); this.scope = null; this.toast(`labeled ${ids.length} cells “${v}”`, "Added to the working annotation draft — see the Annotate workspace."); } };
-    inp.onkeydown = (e) => { if (e.key === "Enter") apply(); else if (e.key === "Escape") this.hideSelpop(); };
+    const esc = (s: string) => String(s).replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]!));
+    const layers = this.ctx.annotationLayers();   // editable session categories (the working draft, once it exists, is among them)
+    const opts = [`<option value="annotation">working draft</option>`]
+      .concat(layers.filter((n) => n !== "annotation").map((n) => `<option value="${esc(n)}">${esc(n)}</option>`))
+      .concat([`<option value="__new__">＋ new category…</option>`]);
+    sp.innerHTML =
+      `<div class="head">save ${ids.length} cells</div>` +
+      `<input id="splabel" placeholder="value name (e.g. ‘activated’)…" style="width:90%;margin:5px 6px 3px;font-size:12px">` +
+      `<div style="display:flex;align-items:center;gap:5px;margin:0 6px 4px"><span style="font-size:10px;color:var(--faint)">in</span><select id="spcat" style="flex:1;font-size:11px">${opts.join("")}</select></div>` +
+      `<input id="spnewcat" placeholder="new category name…" style="display:none;width:90%;margin:0 6px 5px;font-size:12px">` +
+      `<div class="it" data-a="apply"><span class="ic">✓</span>save</div>`;
+    const val = sp.querySelector<HTMLInputElement>("#splabel")!;
+    const cat = sp.querySelector<HTMLSelectElement>("#spcat")!;
+    const newcat = sp.querySelector<HTMLInputElement>("#spnewcat")!;
+    val.focus();
+    cat.onchange = () => { const isNew = cat.value === "__new__"; newcat.style.display = isNew ? "block" : "none"; if (isNew) newcat.focus(); };
+    const apply = () => {
+      const value = val.value.trim(); if (!value) { val.focus(); return; }
+      const target = cat.value === "__new__" ? newcat.value.trim() : cat.value;
+      if (!target) { newcat.focus(); return; }
+      if (cat.value === "__new__" && this.ctx.groupings().includes(target) && !this.annoLayers.has(target)) { this.toast(`“${target}” is an existing stored field — pick another name`, null); return; }
+      this.hideSelpop();
+      this.labelCells(Int32Array.from(ids), value, target);
+      this.noteColor("meta:" + target); this.coord.setColor("meta:" + target);   // make the just-saved value visible
+      this.coord.setSelection(null); this.scope = null;
+      this.toast(`saved ${ids.length} cells as “${value}” in ${target === "annotation" ? "the working draft" : `“${target}”`}`, "Edit it in the Metadata panel · see the Annotate workspace.");
+    };
+    val.onkeydown = (e) => { if (e.key === "Enter") apply(); else if (e.key === "Escape") this.hideSelpop(); };
+    newcat.onkeydown = (e) => { if (e.key === "Enter") apply(); else if (e.key === "Escape") this.hideSelpop(); };
     sp.querySelector<HTMLElement>('[data-a="apply"]')!.onclick = apply;
   }
   // Reveal the popover at lastSelAnchor and ARM its outside-dismiss listener (idempotent — content re-renders reuse it).
