@@ -666,6 +666,7 @@ export const CAT_PALETTE_LIGHT: [number, number, number][] = [
 export function catColor(code: number): [number, number, number] {
   const dark = themeIsDark();
   const pal = dark ? CAT_PALETTE : CAT_PALETTE_LIGHT;
+  if (code < 0) return [DIM_RGB[0], DIM_RGB[1], DIM_RGB[2]];   // unassigned (-1) → theme grey; MUST guard before the index or `pal[-1]` is undefined → c[0] throws → the whole paint rejects (grey/frozen embedding)
   if (code < pal.length) return pal[code];
   const k = code - pal.length;                    // overflow: golden-angle hue walk, never collides
   const hue = (k * 137.508 + 25) % 360;
