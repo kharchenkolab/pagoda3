@@ -348,8 +348,8 @@ button{font-family:inherit}
 .ledger .lgdline{font-size:12px;color:var(--dim);line-height:1.6}
 /* enrichment (gene-set over-representation) */
 .gthdr{display:inline-flex;gap:6px;align-items:center}   /* gene table header: Genes⇄Pathways toggle + the active mode's controls */
-.enrich{font-size:13px} .enrctrls{display:inline-flex;gap:5px;flex-wrap:wrap}
-.enrich>.enrctrls{padding:8px 10px 2px}   /* pathways-specific controls now live at the top of the card body */
+.enrich{font-size:13px;overflow:auto;max-height:min(60vh,480px)} .enrctrls{display:inline-flex;gap:5px;flex-wrap:wrap}
+.enrich>.enrctrls{padding:8px 10px 4px;position:sticky;top:0;background:var(--panel);z-index:1}   /* controls pinned as the rows scroll */
 .enrbody{padding:4px 10px 10px}
 .enrmeta{font-size:11px;color:var(--faint);padding:4px 2px 6px}
 .enrsec{display:flex;align-items:baseline;justify-content:space-between;margin:9px 2px 6px}
@@ -434,6 +434,12 @@ tr.gene{cursor:pointer} tr.gene:hover{background:var(--inset)} tr.gene.on{backgr
 .gsearch::placeholder{color:var(--faint)}
 .gsearch:focus{border-color:var(--cyan)}
 .gscroll{overflow:auto;max-height:min(60vh,480px)}
+/* in a workbench (canvas) panel the body fills its cell, so make the gene table a flex column that FILLS it and let the
+   scroll area (gscroll / enrich, both overflow:auto) grow to the panel height instead of stopping at 480px. Direct-child
+   selectors so VariableGenes (absolute-positioned) is unaffected. */
+.workbench .pbody:has(>.gtable){display:flex;flex-direction:column}   /* make ONLY gene-table bodies a flex column (other panels untouched) so flex:1 fills definite OR full-panel heights */
+.workbench .pbody>.gtable{flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
+.workbench .pbody>.gtable>.gscroll,.workbench .pbody>.gtable>.enrich{max-height:none;flex:1 1 auto}
 .gmore{font-size:10px;color:var(--faint);padding:4px 8px 2px;font-family:var(--mono)} .gmore:empty{display:none}
 .gtable thead th{position:sticky;top:0;background:var(--panel)}
 th.sortable{cursor:pointer;user-select:none} th.sortable:hover{color:var(--text)} th.sorted{color:var(--cyan)}

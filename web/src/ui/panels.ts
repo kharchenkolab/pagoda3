@@ -270,7 +270,7 @@ function enrichView(cap: EnrichCap, getRows: () => RankedGene[], rankedByFn: () 
   const dirLabel = (d: string) => d === "up" ? `▲ up in ${esc(aL)}` : d === "down" ? `▲ up in ${esc(bL)}` : d === "ranked" ? `ranked by ${esc(rankedByFn())}` : "enriched";
   let db: GeneSetDB | null = null, last: EnrichResult[] = [];
   // "keep" the current enrichment as a first-class session result (shows in the ledger; re-openable + CSV-exportable).
-  if (cap.record) { const keep = mk("button", "mini", "＋ results") as HTMLButtonElement; keep.title = "keep this enrichment in the session results"; ctrls.append(keep);
+  if (cap.record) { const keep = mk("button", "mini", "save to results") as HTMLButtonElement; keep.title = "save this enrichment to the session results (ledger) — re-openable + CSV-exportable"; ctrls.append(keep);
     keep.onclick = () => { const rows = last.flatMap((r) => r.rows.filter((x) => x.fdr < FDR_SHOW).map((x) => ({ ...x, direction: r.direction }))); if (!rows.length) return; cap.record!({ name: `Pathways · ${cap.sourceName || "genes"}`, kind: "enrich", summary: `${rows.length} pathway${rows.length === 1 ? "" : "s"} · ranked by ${rankedByFn()}`, bind: "enrich:pathways", rows }); }; }
   const render = () => {
     if (!db) return;
@@ -344,7 +344,7 @@ function geneTable(initial: any[], cols: GCol[], onPick: (symbol: string) => voi
   const st = { topN: pp.enrTopN ?? 150, dir: (pp.enrDir ?? "ranked") as "ranked" | "up" | "down" | "both" };
   let mode: "genes" | "pathways" = "genes";
   const ev = enrichView(enrich, () => ordered(false), () => rankInfo().label || enrich.defaultRank || "the source order", st, () => mode === "pathways" ? search.value.trim() : "");
-  ev.el.style.display = "none"; ev.el.style.cssText += ";overflow:auto;max-height:min(60vh,480px)"; wrap.appendChild(ev.el);
+  ev.el.style.display = "none"; wrap.appendChild(ev.el);   // sizing (fill / scroll) is CSS — .enrich + the .workbench fill rule
   const hdr = mk("div", "gthdr");
   const toggle = mk("div", "segtog"); const gBtn = mk("button", "mini", "genes") as HTMLButtonElement; const pBtn = mk("button", "mini", "pathways") as HTMLButtonElement; toggle.append(gBtn, pBtn);
   hdr.append(search, toggle);   // search to the LEFT of the toggle → the toggle keeps a fixed position across modes; the box stays visible and filters genes, or pathway NAMES in pathways mode
