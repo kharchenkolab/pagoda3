@@ -17,6 +17,32 @@ export interface SessionResult {
   rows: any[];                  // the DeTable / GeneList rows (so a result re-opens without recompute)
 }
 
+// ----- the unified SESSION LEDGER row: categories, results, the annotation, and apps, normalized to one shape -----
+export interface SessionEntity {
+  id: string;                                       // ledger-unique (type-prefixed)
+  type: "category" | "result" | "annotation" | "app";
+  name: string;
+  who: "user" | "agent";
+  when: number;                                     // epoch ms (0 = unknown / not timestamped yet)
+  summary: string;                                  // "3 values", "cell-level · 20,469 genes", "18 labels · 12 records", …
+  ref: { kind: string; id?: string; name?: string };   // what an action targets (a field name, a result id, …)
+}
+
+// Pure normalizer (no app state) so the row-building is node-testable. The shell gathers the live inputs and calls this.
+export function buildSessionEntities(inp: {
+  categories: { name: string; values: number; who: "user" | "agent"; when: number; derived?: boolean }[];
+  annotation?: { labels: number; records: number } | null;
+  results: SessionResult[];
+  apps: { id: string; name: string; origin: string; when: number }[];
+}): SessionEntity[] {
+  const out: SessionEntity[] = [];
+  if (inp.annotation) out.push({ id: "ann", type: "annotation", name: "working resolution", who: "user", when: 0, summary: `${inp.annotation.labels} labels` + (inp.annotation.records ? ` · ${inp.annotation.records} records` : ""), ref: { kind: "annotation", name: "annotation" } });
+  for (const c of inp.categories) out.push({ id: "cat:" + c.name, type: "category", name: c.name, who: c.who, when: c.when, summary: `${c.values} values` + (c.derived ? " · derived" : ""), ref: { kind: "category", name: c.name } });
+  for (const r of inp.results) out.push({ id: "res:" + r.id, type: "result", name: r.name, who: r.who, when: r.when, summary: r.summary, ref: { kind: "result", id: r.id } });
+  for (const a of inp.apps) out.push({ id: "app:" + a.id, type: "app", name: a.name, who: a.origin === "imported" ? "agent" : "user", when: a.when, summary: a.origin === "imported" ? "imported widget" : "authored widget", ref: { kind: "app", id: a.id } });
+  return out;
+}
+
 // Newest-first registry with stable string ids. add() returns the stored record (the caller keeps its id to link a panel).
 export class ResultRegistry {
   private items: SessionResult[] = [];

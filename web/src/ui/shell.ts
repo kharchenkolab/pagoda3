@@ -21,7 +21,7 @@ import { makeWidgetHost } from "../widget/apphost.ts";
 import type { WidgetHost, WidgetHandle } from "../widget/runtime.ts";
 import { widgetLint } from "../widget/contract.ts";
 import { pseudobulkDECore, pseudobulkPairedDECore } from "../compute/odcore.ts";
-import { ResultRegistry } from "./results.ts";
+import { ResultRegistry, buildSessionEntities, type SessionEntity } from "./results.ts";
 import { fieldBuckets } from "../data/fieldroles.ts";
 import { SESSION_KEY, WIDGETS_KEY, SavedWidget, SerAnnoLayer, Fingerprint, serializeSession, parseSession, serializeBundle, parseBundle, fingerprintMismatch, upsertWidget, loadWidgets, widgetHash } from "./persist.ts";
 
@@ -2083,6 +2083,18 @@ export class App {
     const r = await this.runCompute({ stat: replicate ? "pseudobulk" : "de", A, B, replicate, toCanvas: true, source: "user" });
     if (r.error) this.toast(`DE failed: ${r.error}`, null);
   }
+  // The unified SESSION LEDGER list — categories (editable annoLayers + derived groupings), the annotation, results,
+  // and apps, normalized to one row shape. Gathers live state and hands it to the pure builder (node-tested).
+  sessionEntities(): SessionEntity[] {
+    const categories: { name: string; values: number; who: "user" | "agent"; when: number; derived?: boolean }[] = [];
+    for (const L of this.annoLayers.values()) if (L.name !== "annotation") categories.push({ name: L.name, values: L.categories.length, who: "user", when: 0 });
+    for (const name of this.ctx.derivedGroupings()) categories.push({ name, values: this.ctx.categoricalValues(name).length, who: "user", when: 0, derived: true });
+    const ann = this.annoLayers.get("annotation");
+    const annotation = ann ? { labels: ann.categories.length, records: ann.records ? Object.keys(ann.records).length : 0 } : null;
+    const apps = this.widgetLib.map((w) => ({ id: w.id, name: w.name, origin: w.origin || "authored", when: w.createdAt || 0 }));
+    return buildSessionEntities({ categories, annotation, results: this.results.list(), apps });
+  }
+
   // Re-run a stored result from its spec (e.g. after editing a category it depends on) → a fresh result + panel.
   async rerunResult(id: string): Promise<void> {
     const r = this.results.get(id); if (!r) { this.toast("result no longer available", null); return; }
