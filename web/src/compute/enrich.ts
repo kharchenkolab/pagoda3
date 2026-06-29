@@ -47,3 +47,37 @@ export function enrich(query: string[], pathways: PathwaySet[], universe: Set<st
   for (let i = M - 1; i >= 0; i--) { prev = Math.min(prev, rows[i].p * M / (i + 1)); rows[i].fdr = prev; }
   return rows;
 }
+
+// ---- enrichment of a RANKED gene list (a DE / marker result), with the background COUPLED to that test ----
+// A DE result already carries every TESTED gene (subsampleDE ranks the contender set) with per-gene means, so the right
+// background is exactly those genes detected above a floor — NOT a global constant. We pick the query by thresholding the
+// SAME ranking (top-N by effect size), split by direction so an up-pathway and a down-pathway don't cancel.
+export interface RankedGene { symbol: string; lfc?: number; meanA?: number; meanB?: number; score?: number; }
+export interface EnrichResult { direction: "up" | "down" | "all"; n: number; N: number; topN: number; rows: EnrichRow[]; }
+
+export function enrichRanked(ranked: RankedGene[], pathways: PathwaySet[], geneSpace: Set<string>, opts?: { topN?: number; direction?: "up" | "down" | "both"; minDetect?: number }): EnrichResult[] {
+  const topN = opts?.topN ?? 200, minDetect = opts?.minDetect ?? 0;
+  // background = the TESTED genes detected above the floor (max group mean, or the score for unsigned lists), restricted
+  // to the annotated space — the "world that could be a hit", so genes too sparsely observed to rank never enter it.
+  // When the ranking carries NO expression signal at all (a marker/vs-rest table that omits means), we can't apply a
+  // detection floor, so the tested set is every ranked gene ∩ annotated (still excludes the un-annotated and un-ranked).
+  const hasDetect = ranked.some((g) => g.meanA != null || g.meanB != null || g.score != null);
+  const universe = new Set<string>();
+  for (const g of ranked) {
+    if (!geneSpace.has(g.symbol)) continue;
+    if (!hasDetect) { universe.add(g.symbol); continue; }
+    if (Math.max(g.meanA ?? 0, g.meanB ?? 0, g.score ?? 0) > minDetect) universe.add(g.symbol);
+  }
+  const signed = ranked.some((g) => g.lfc != null);
+  const dirs: ("up" | "down" | "all")[] = !signed ? ["all"] : opts?.direction === "up" ? ["up"] : opts?.direction === "down" ? ["down"] : ["up", "down"];
+  const out: EnrichResult[] = [];
+  for (const d of dirs) {
+    let q = ranked;
+    if (d === "up") q = ranked.filter((g) => (g.lfc ?? 0) > 0).slice().sort((a, b) => (b.lfc! - a.lfc!));
+    else if (d === "down") q = ranked.filter((g) => (g.lfc ?? 0) < 0).slice().sort((a, b) => (a.lfc! - b.lfc!));
+    const query = q.slice(0, topN).map((g) => g.symbol);
+    const n = query.filter((s) => universe.has(s)).length;
+    out.push({ direction: d, n, N: universe.size, topN, rows: enrich(query, pathways, universe, { minK: 2 }) });
+  }
+  return out;
+}

@@ -346,6 +346,24 @@ button{font-family:inherit}
 .ledger .lgexp{padding:5px 12px 9px 26px;background:var(--inset);border-bottom:1px solid var(--line2)}
 .ledger .lgexpmeta{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--faint);margin:0 0 5px}
 .ledger .lgdline{font-size:12px;color:var(--dim);line-height:1.6}
+/* enrichment (gene-set over-representation) */
+.dehdr{display:inline-flex;gap:6px;align-items:center}
+.enrich{font-size:13px} .enrctrls{display:inline-flex;gap:5px}
+.enrbody{padding:4px 10px 10px}
+.enrmeta{font-size:11px;color:var(--faint);padding:4px 2px 6px}
+.enrsec{display:flex;align-items:baseline;justify-content:space-between;margin:9px 2px 6px}
+.enrsec .enrdir{color:var(--dim);font-weight:500;font-size:11.5px} .enrsec .enrn{color:var(--faint);font-size:11px}
+.enrrow{border:1px solid var(--line2);border-radius:8px;padding:8px 10px;margin-bottom:7px;cursor:pointer;background:var(--inset)}
+.enrrow:hover{border-color:var(--cyan)}
+.enrtop{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:6px}
+.enrname{font-size:13px;color:var(--text);font-weight:500} .enrfdr{font-family:var(--mono);font-size:11px;color:var(--dim);white-space:nowrap}
+.enrbarrow{display:flex;align-items:center;gap:9px}
+.enrbar{flex:1;height:6px;border-radius:3px;background:var(--panel);overflow:hidden} .enrbarfill{display:block;height:100%;background:var(--teal)}
+.enrkm{font-size:10.5px;color:var(--faint);white-space:nowrap}
+.enrchips{display:flex;flex-wrap:wrap;gap:4px;margin-top:7px}
+.enrchip{font-family:var(--mono);font-size:10.5px;padding:1px 6px;border-radius:5px;background:var(--panel);border:1px solid var(--line);color:var(--dim)}
+.enrmore{font-size:10.5px;color:var(--faint);align-self:center}
+.enrempty{padding:12px;color:var(--faint);font-size:12px;line-height:1.7}
 /* account / session menu (top-bar avatar) */
 .tb.acct{padding:5px 7px}
 .acdot{display:inline-flex;width:20px;height:20px;border-radius:50%;background:var(--cyan);color:var(--on-accent);align-items:center;justify-content:center;font-size:11px;font-weight:700;line-height:1}

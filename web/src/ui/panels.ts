@@ -1,7 +1,9 @@
 import { mk, S } from "./dom.ts";
 import { Ctx } from "../data/ctx.ts";
 import { EmbeddingView } from "../render/embedding.ts";
-import { colorsFor, focusMaskFor, categoryColorOf } from "../render/colors.ts";
+import { colorsFor, focusMaskFor, categoryColorOf, setCodeValues } from "../render/colors.ts";
+import { loadGeneSets, GeneSetDB } from "../compute/genesets.ts";
+import { enrichRanked, RankedGene } from "../compute/enrich.ts";
 import { themeIsDark } from "../render/theme.ts";
 import { getStyle, resolveStyle } from "../render/style.ts";
 import { registerPanelType, getPanelType } from "./panel-registry.ts";
@@ -338,7 +340,14 @@ function deBody(p: Panel, _ctx: Ctx, hooks: PanelHooks): BuiltBody {
     cols.push({ key: "meanA", label: p.aLabel ? short(p.aLabel) : "A", num: true, get: (r: any) => r.meanA ?? 0, fmt: (v: number) => v.toFixed(2) });
     cols.push({ key: "meanB", label: p.bLabel ? short(p.bLabel) : "B", num: true, get: (r: any) => r.meanB ?? 0, fmt: (v: number) => v.toFixed(2) });
   }
-  return geneTable(rows, cols, hooks.onGeneClick);
+  const built = geneTable(rows, cols, hooks.onGeneClick);
+  // "Enrich →" spawns a gene-set enrichment of THIS result, carrying its full ranked rows so the background stays
+  // coupled to the same test (tested + detected genes). Only meaningful for a real ranking (≥ a handful of genes).
+  const enr = mk("button", "mini", "Enrich →") as HTMLButtonElement;
+  enr.title = "Reactome gene-set enrichment of this result";
+  enr.onclick = () => hooks.addPanel({ type: "Enrichment", title: "Enrichment · " + (p.title || "DE"), cap: "Reactome", rows, aLabel: p.aLabel, bLabel: p.bLabel });
+  const hc = mk("div", "dehdr"); if (built.headerControls) hc.appendChild(built.headerControls); hc.appendChild(enr);
+  return { ...built, headerControls: hc };
 }
 
 // A ranked gene list with a single score column (e.g. scope-aware overdispersion).
@@ -1578,7 +1587,68 @@ registerPanelType({ type: "Reconcile", body: reconcileBody, agent: true });
 registerPanelType({ type: "SessionLedger", body: sessionLedgerBody, agent: true, title: "Session" });
 registerPanelType({ type: "AnnoRecord", body: annoRecordBody, agent: true });
 registerPanelType({ type: "GeneList", body: (p, _ctx, hooks) => geneListBody(p, hooks), agent: true });
+
+// ── Enrichment (gene-set over-representation) ── Launched from a DE/marker result; carries that result's full ranked
+// rows (sourceRows) so the background is COUPLED to the same test (tested + detected genes), not a global constant.
+// Lazy-loads the bundled Reactome asset on first render. Clicking a pathway scores cells by its overlap-gene signature.
+function enrichmentBody(p: Panel, ctx: Ctx, _hooks: PanelHooks): BuiltBody {
+  const el = mk("div", "enrich");
+  const rows: RankedGene[] = ((p as any).sourceRows || (p as any).rows || []) as RankedGene[];
+  const aL = (p as any).aLabel || "A", bL = (p as any).bLabel || "B";
+  let topN: number = (p as any).enrTopN ?? 150;
+  let dir: "up" | "down" | "both" = (p as any).enrDir ?? "both";
+  const detect = 0;   // detection floor on the per-group mean: > 0 excludes genes not observed in the contrast (v1 default)
+  const FDR_SHOW = 0.1;
+  let db: GeneSetDB | null = null;
+  const esc = (s: string) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]!));
+
+  const body = mk("div", "enrbody"); body.innerHTML = `<div class="enrempty">loading gene sets…</div>`; el.appendChild(body);
+
+  const ctrls = mk("div", "enrctrls");
+  const nsel = mk("select", "mini") as HTMLSelectElement; for (const v of [50, 100, 150, 200, 300]) { const o = document.createElement("option"); o.value = String(v); o.textContent = "top " + v; nsel.appendChild(o); } nsel.value = String(topN);
+  const dsel = mk("select", "mini") as HTMLSelectElement; for (const [v, l] of [["both", "up + down"], ["up", "up only"], ["down", "down only"]]) { const o = document.createElement("option"); o.value = v; o.textContent = l; dsel.appendChild(o); } dsel.value = dir;
+  ctrls.appendChild(nsel); ctrls.appendChild(dsel);
+  nsel.onchange = () => { topN = +nsel.value; (p as any).enrTopN = topN; render(); };
+  dsel.onchange = () => { dir = dsel.value as any; (p as any).enrDir = dir; render(); };
+  const dirLabel = (d: string) => d === "up" ? `▲ up in ${esc(aL)}` : d === "down" ? `▲ up in ${esc(bL)}` : "enriched";
+
+  const render = () => {
+    if (!db) return;
+    const results = enrichRanked(rows, db.pathways, db.geneSpace, { topN, direction: dir, minDetect: detect });
+    body.innerHTML = "";
+    const meta = mk("div", "enrmeta"); meta.textContent = `${db.nPathways.toLocaleString()} Reactome pathways · background = ${(results[0]?.N || 0).toLocaleString()} detected + annotated genes`; body.appendChild(meta);
+    for (const res of results) {
+      const sig = res.rows.filter((r) => r.fdr < FDR_SHOW).slice(0, 20);
+      const sec = mk("div", "enrsec"); sec.innerHTML = `<span class="enrdir">${dirLabel(res.direction)}</span><span class="enrn">${res.n} genes${sig.length ? "" : " · none significant"}</span>`; body.appendChild(sec);
+      for (const r of sig) {
+        const maxL = Math.max(...sig.map((x) => -Math.log10(Math.max(x.fdr, 1e-300))));
+        const w = Math.max(3, Math.round(-Math.log10(Math.max(r.fdr, 1e-300)) / (maxL || 1) * 100));
+        const chips = r.genes.slice(0, 8).map((g) => `<span class="enrchip">${esc(g)}</span>`).join("") + (r.k > 8 ? `<span class="enrmore">+${r.k - 8}</span>` : "");
+        const row = mk("div", "enrrow");
+        row.innerHTML = `<div class="enrtop"><span class="enrname">${esc(r.name)}</span><span class="enrfdr">FDR ${r.fdr.toExponential(1)}</span></div>`
+          + `<div class="enrbarrow"><span class="enrbar"><span class="enrbarfill" style="width:${w}%"></span></span><span class="enrkm">${r.k}/${r.m} · ${r.fold.toFixed(0)}×</span></div>`
+          + `<div class="enrchips">${chips}</div>`;
+        row.title = "colour cells by this pathway's signature";
+        row.onclick = () => scorePathway(r.name, r.genes);
+        body.appendChild(row);
+      }
+    }
+  };
+
+  // signature = mean log-expression of the pathway's overlap genes, per cell → a code field the embedding colours by.
+  async function scorePathway(name: string, genes: string[]) {
+    if (!genes.length) return;
+    let acc: Float32Array | null = null, cnt = 0;
+    for (const g of genes) { const e = await ctx.view.geneExpression(g).catch(() => null); if (!e) continue; if (!acc) acc = new Float32Array(e.values.length); for (let i = 0; i < acc.length; i++) acc[i] += e.values[i]; cnt++; }
+    if (acc && cnt) { for (let i = 0; i < acc.length; i++) acc[i] /= cnt; const label = "sig: " + name.slice(0, 32); setCodeValues(label, acc); ctx.coord.setColor("code:" + label); }
+  }
+
+  loadGeneSets("human").then((d) => { db = d; render(); }).catch((e) => { body.innerHTML = `<div class="enrempty">Couldn't load gene sets: ${esc(e.message)}.<br>Build them with <code>node server/build_genesets.mjs</code>.</div>`; });
+  return { el, headerControls: ctrls };
+}
+
 registerPanelType({ type: "VariableGenes", body: variableGenesBody, agent: true });
+registerPanelType({ type: "Enrichment", body: enrichmentBody, agent: true, title: "Enrichment" });
 registerPanelType({ type: "Widget", body: widgetBody, agent: true });
 registerPanelType({ type: "Note", body: (p) => { const d = mk("div", "notebody"); d.innerHTML = p.text || ""; d.style.cssText = "font-size:12.5px;line-height:1.5"; return { el: d }; }, agent: true });
 registerPanelType({ type: "SplitHeat", body: (p) => splitHeatBody(p) });   // app-created only (not agent-addable) — matches the old REGISTRY which omitted it

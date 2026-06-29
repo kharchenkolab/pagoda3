@@ -1,7 +1,7 @@
 // Unit tests for ORA enrichment. Run: `node --test src/compute/enrich.test.ts`.
 import { test } from "node:test";
 import assert from "node:assert";
-import { hyperUpperTail, enrich } from "./enrich.ts";
+import { hyperUpperTail, enrich, enrichRanked } from "./enrich.ts";
 
 test("hyperUpperTail: bounds, monotonicity, known value", () => {
   // P(X>=k) is 1 at the floor and shrinks as k grows
@@ -45,4 +45,24 @@ test("enrich: query genes outside the universe are ignored (background is what y
   const rows = enrich(["a", "b", "ZZZ_not_measured"], [{ id: "P", name: "p", genes: ["a", "b", "c"] }], universe, { minK: 2 });
   assert.equal(rows[0].n, 2);   // ZZZ dropped → n counts only a,b
   assert.equal(rows[0].k, 2);
+});
+
+test("enrichRanked: splits up/down, and the background is the tested+DETECTED genes (undetected excluded)", () => {
+  const geneSpace = new Set(["U1", "U2", "U3", "U4", "U5", "D1", "D2", "D3", "D4", "D5", "X1", "X2", "X3", "Z1"]);
+  const pathways = [
+    { id: "PUP", name: "up path", genes: ["U1", "U2", "U3", "U4", "U5", "X1"] },
+    { id: "PDN", name: "down path", genes: ["D1", "D2", "D3", "D4", "D5", "X2"] },
+  ];
+  const ranked = [
+    ...["U1", "U2", "U3", "U4", "U5"].map((s, i) => ({ symbol: s, lfc: 2 - i * 0.1, meanA: 1, meanB: 0 })),   // up, detected
+    ...["D1", "D2", "D3", "D4", "D5"].map((s, i) => ({ symbol: s, lfc: -2 + i * 0.1, meanA: 0, meanB: 1 })),   // down, detected
+    { symbol: "X3", lfc: 0.01, meanA: 0.5, meanB: 0.5 },
+    { symbol: "Z1", lfc: 1.5, meanA: 0, meanB: 0 },   // ranked + annotated BUT undetected → must not enter the background
+  ];
+  const res = enrichRanked(ranked, pathways, geneSpace, { topN: 50, direction: "both" });
+  const up = res.find((r) => r.direction === "up")!, down = res.find((r) => r.direction === "down")!;
+  assert.equal(up.rows[0].id, "PUP");                 // up-regulated genes enrich the up pathway
+  assert.equal(down.rows[0].id, "PDN");               // down-regulated → down pathway (no cancellation)
+  assert.equal(up.N, 11);                             // background = U1-5 + D1-5 + X3 = 11; Z1 (undetected) excluded
+  assert.ok(!up.rows.some((r) => r.genes.includes("Z1")));
 });
