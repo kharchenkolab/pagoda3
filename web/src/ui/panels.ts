@@ -17,6 +17,10 @@ import { reconcile, crosstab, ReconRow, AnnotationLayer, CapRecord, labelChain }
 import { olsLookup } from "../anno/ols.ts";
 import { mountWidget, WidgetHost, WidgetHandle } from "../widget/runtime.ts";
 
+// Paint-droplet glyph for the facet "colour by this field" button — an inline SVG (not an emoji) so fill follows
+// the button's currentColor and themes with it (faint → cyan on hover → on-accent when active).
+const DROPLET_SVG = `<svg viewBox="0 0 24 24" width="11" height="11" style="vertical-align:middle" aria-hidden="true"><path fill="currentColor" d="M12 2.6c-.35.45-6.5 8.2-6.5 12.4a6.5 6.5 0 0 0 13 0c0-4.2-6.15-11.95-6.5-12.4z"/></svg>`;
+
 // Per-panel view spec — the agent's deep-control surface (configure_panel). Each property overrides the
 // GLOBAL coord default for THIS panel only; the shared bus (selection/hint) stays global. See docs/deep-view-control.md.
 export interface PanelView {
@@ -569,14 +573,15 @@ async function facetsBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltB
       comp.onclick = (e) => { e.stopPropagation(); hooks.addPanel({ type: "CompositionBars", title: `Composition · ${f.name}`, cap: "by sample", bind: "composition:bySample", view: { colorBy: "meta:" + f.name } }); };
       row.appendChild(comp);
     }
-    const drop = mk("button", "fdrop mini" + (act === f.name ? " on" : ""), "◉"); drop.title = `colour the embedding by ${f.name}`;
-    drop.onclick = (e) => { e.stopPropagation(); ctx.coord.setColor("meta:" + f.name); };
-    row.appendChild(drop);
-    if (f.kind === "categorical" && ctx.isAnnotationLayer(f.name) && f.name !== "annotation") {   // a CUSTOM (editable) category → offer the manage card
+    if (f.kind === "categorical" && ctx.isAnnotationLayer(f.name) && f.name !== "annotation") {   // a CUSTOM (editable) category → manage card, to the LEFT of the paint droplet
       const edit = mk("button", "fedit mini", "✎"); edit.title = `manage category “${f.name}” — rename / merge / delete values, rename / delete field`;
       edit.onclick = (e) => { e.stopPropagation(); showManageCard(f.name); };
       row.appendChild(edit);
     }
+    const drop = mk("button", "fdrop mini" + (act === f.name ? " on" : "")); drop.title = `colour the embedding by ${f.name}`;
+    drop.innerHTML = DROPLET_SVG;   // cellxgene-style paint-droplet colour-by affordance (currentColor → themes with the button)
+    drop.onclick = (e) => { e.stopPropagation(); ctx.coord.setColor("meta:" + f.name); };
+    row.appendChild(drop);
     row.onclick = (e) => { if ((e.target as HTMLElement).closest(".fdrop,.fcomp,.fedit")) return; if (open.has(f.name)) open.delete(f.name); else open.add(f.name); render(); };
     box.appendChild(row);
     // if the search matched VALUES (not the field name), filter the shown values to the query
