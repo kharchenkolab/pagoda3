@@ -66,3 +66,17 @@ test("enrichRanked: splits up/down, and the background is the tested+DETECTED ge
   assert.equal(up.N, 11);                             // background = U1-5 + D1-5 + X3 = 11; Z1 (undetected) excluded
   assert.ok(!up.rows.some((r) => r.genes.includes("Z1")));
 });
+
+test("enrichRanked: direction 'ranked' honours the INPUT order (the table's sort), no re-sort by logFC", () => {
+  const geneSpace = new Set(["A", "B", "C", "D", "E", "F"]);
+  const pathways = [{ id: "P", name: "p", genes: ["A", "B", "C"] }];
+  const ranked = [   // the user has sorted so A,B,C are on top, even though their logFC is the most NEGATIVE
+    { symbol: "A", lfc: -3, meanA: 1, meanB: 0 }, { symbol: "B", lfc: -2, meanA: 1, meanB: 0 }, { symbol: "C", lfc: -1, meanA: 1, meanB: 0 },
+    { symbol: "D", lfc: 5, meanA: 1, meanB: 0 }, { symbol: "E", lfc: 4, meanA: 1, meanB: 0 }, { symbol: "F", lfc: 3, meanA: 1, meanB: 0 },
+  ];
+  const r = enrichRanked(ranked, pathways, geneSpace, { topN: 3, direction: "ranked" });
+  assert.equal(r.length, 1); assert.equal(r[0].direction, "ranked");
+  assert.deepEqual(r[0].rows[0].genes, ["A", "B", "C"]);   // top-3 of the INPUT order = A,B,C → all in P
+  const up = enrichRanked(ranked, pathways, geneSpace, { topN: 3, direction: "up" });
+  assert.equal(up[0].rows.length, 0);   // "up" re-sorts by logFC → D,E,F → none in P (proves the orders differ)
+});

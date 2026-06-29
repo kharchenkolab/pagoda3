@@ -247,7 +247,7 @@ async function categoryLabels(ctx: Ctx, colorBy: string, emb: Float32Array = ctx
 type GCol = { key: string; label: string; num?: boolean; get: (r: any) => any; fmt?: (v: any, r: any) => string; cls?: (v: any) => string };
 const GTABLE_CAP = 200;   // max ROWS rendered at once — the table holds the FULL ranked list (all tested genes) for
                           // search, but only renders the top slice / matches so the DOM stays light on big gene sets.
-function geneTable(initial: any[], cols: GCol[], onPick: (symbol: string) => void): BuiltBody & { setRows: (r: any[]) => void } {
+function geneTable(initial: any[], cols: GCol[], onPick: (symbol: string) => void): BuiltBody & { setRows: (r: any[]) => void; ordered: () => any[]; rankInfo: () => { key: string | null; dir: number; label: string | null } } {
   let rows = initial;   // mutable so a reactive panel (Variable genes) can swap the list in place, keeping the search box + its text
   const wrap = mk("div", "gtable");
   const search = Object.assign(document.createElement("input"), { className: "gsearch", placeholder: "filter genes…" }) as HTMLInputElement;
@@ -257,12 +257,20 @@ function geneTable(initial: any[], cols: GCol[], onPick: (symbol: string) => voi
   const more = mk("div", "gmore");   // "showing N of M — filter to find any gene"
   wrap.appendChild(scroll); wrap.appendChild(more);   // the search box lives in the panel header (returned as headerControls)
   let sortKey: string | null = null, dir = 1;
+  // The current FILTERED + SORTED rows in display order — the user stages a query here (sort by logFC ↑/↓, p, a group
+  // mean…), so "Enrich →" reads THIS, not the stored ranking. `rankInfo` names the ordering for the enrichment header.
+  const ordered = () => {
+    const q = search.value.trim().toLowerCase();
+    const rs = q ? rows.filter((r) => String(r.symbol).toLowerCase().includes(q)) : rows.slice();
+    if (sortKey) { const c = cols.find((x) => x.key === sortKey)!; rs.sort((a, b) => { const av = c.get(a), bv = c.get(b); return (av < bv ? -1 : av > bv ? 1 : 0) * dir; }); }
+    return rs;
+  };
+  const rankInfo = () => ({ key: sortKey, dir, label: sortKey ? `${cols.find((c) => c.key === sortKey)?.label || sortKey} ${dir > 0 ? "↑" : "↓"}` : null });
   const render = () => {
     thead.innerHTML = `<tr>${cols.map((c) => `<th data-k="${c.key}" class="sortable${sortKey === c.key ? " sorted" : ""}">${esc(c.label)}${sortKey === c.key ? (dir > 0 ? " ↑" : " ↓") : ""}</th>`).join("")}</tr>`;
     thead.querySelectorAll<HTMLElement>("th").forEach((th) => th.onclick = () => { const k = th.dataset.k!; if (sortKey === k) dir = -dir; else { sortKey = k; dir = cols.find((c) => c.key === k)?.num ? -1 : 1; } render(); });
     const q = search.value.trim().toLowerCase();
-    let rs = q ? rows.filter((r) => String(r.symbol).toLowerCase().includes(q)) : rows.slice();
-    if (sortKey) { const c = cols.find((x) => x.key === sortKey)!; rs.sort((a, b) => { const av = c.get(a), bv = c.get(b); return (av < bv ? -1 : av > bv ? 1 : 0) * dir; }); }
+    const rs = ordered();
     const shown = rs.slice(0, GTABLE_CAP);   // cap the DOM; the full list stays searchable via `rows`
     tb.innerHTML = shown.map((r) => `<tr class="gene">${cols.map((c) => { const v = c.get(r); return `<td class="${c.cls ? c.cls(v) : ""}">${c.fmt ? c.fmt(v, r) : esc(String(v))}</td>`; }).join("")}</tr>`).join("");
     [...tb.children].forEach((tr, i) => (tr as HTMLElement).onclick = () => { [...tb.children].forEach((x) => x.classList.remove("on")); tr.classList.add("on"); onPick(shown[i].symbol); });
@@ -270,7 +278,7 @@ function geneTable(initial: any[], cols: GCol[], onPick: (symbol: string) => voi
       : q ? `${rs.length.toLocaleString()} match${rs.length === 1 ? "" : "es"}` : (rows.length ? `${rows.length.toLocaleString()} genes` : "");
   };
   search.oninput = render; render();
-  return { el: wrap, headerControls: search, setRows: (r: any[]) => { rows = r; render(); } };
+  return { el: wrap, headerControls: search, setRows: (r: any[]) => { rows = r; render(); }, ordered, rankInfo };
 }
 
 // Reactive "Variable genes" panel: top OVERDISPERSED genes for the current selection (or all cells), recomputed
@@ -344,8 +352,10 @@ function deBody(p: Panel, _ctx: Ctx, hooks: PanelHooks): BuiltBody {
   // "Enrich →" spawns a gene-set enrichment of THIS result, carrying its full ranked rows so the background stays
   // coupled to the same test (tested + detected genes). Only meaningful for a real ranking (≥ a handful of genes).
   const enr = mk("button", "mini", "Enrich →") as HTMLButtonElement;
-  enr.title = "Reactome gene-set enrichment of this result";
-  enr.onclick = () => hooks.addPanel({ type: "Enrichment", title: "Enrichment · " + (p.title || "DE"), cap: "Reactome", rows, aLabel: p.aLabel, bLabel: p.bLabel });
+  enr.title = "Reactome gene-set enrichment of the genes as currently ranked here";
+  // Capture the table's CURRENT order (the user's sort) → enrich its top-N "as ranked". Sort logFC ↓ for up-genes, ↑ for
+  // down, by p for significance, by a group mean for expression level — the staged order IS the query.
+  enr.onclick = () => { const ri = built.rankInfo(); hooks.addPanel({ type: "Enrichment", title: "Enrichment · " + (p.title || "DE"), cap: "Reactome", rows: built.ordered(), aLabel: p.aLabel, bLabel: p.bLabel, enrDir: "ranked", rankedBy: ri.label || "logFC ↓" }); };
   const hc = mk("div", "dehdr"); if (built.headerControls) hc.appendChild(built.headerControls); hc.appendChild(enr);
   return { ...built, headerControls: hc };
 }
@@ -1596,7 +1606,8 @@ function enrichmentBody(p: Panel, ctx: Ctx, _hooks: PanelHooks): BuiltBody {
   const rows: RankedGene[] = ((p as any).sourceRows || (p as any).rows || []) as RankedGene[];
   const aL = (p as any).aLabel || "A", bL = (p as any).bLabel || "B";
   let topN: number = (p as any).enrTopN ?? 150;
-  let dir: "up" | "down" | "both" = (p as any).enrDir ?? "both";
+  let dir: "ranked" | "up" | "down" | "both" = (p as any).enrDir ?? "both";
+  const rankedBy = (p as any).rankedBy || "logFC ↓";   // how the source table was sorted when launched (the staged order)
   const detect = 0;   // detection floor on the per-group mean: > 0 excludes genes not observed in the contrast (v1 default)
   const FDR_SHOW = 0.1;
   let db: GeneSetDB | null = null;
@@ -1606,11 +1617,11 @@ function enrichmentBody(p: Panel, ctx: Ctx, _hooks: PanelHooks): BuiltBody {
 
   const ctrls = mk("div", "enrctrls");
   const nsel = mk("select", "mini") as HTMLSelectElement; for (const v of [50, 100, 150, 200, 300]) { const o = document.createElement("option"); o.value = String(v); o.textContent = "top " + v; nsel.appendChild(o); } nsel.value = String(topN);
-  const dsel = mk("select", "mini") as HTMLSelectElement; for (const [v, l] of [["both", "up + down"], ["up", "up only"], ["down", "down only"]]) { const o = document.createElement("option"); o.value = v; o.textContent = l; dsel.appendChild(o); } dsel.value = dir;
+  const dsel = mk("select", "mini") as HTMLSelectElement; for (const [v, l] of [["ranked", "as ranked"], ["both", "up + down"], ["up", "up only"], ["down", "down only"]]) { const o = document.createElement("option"); o.value = v; o.textContent = l; dsel.appendChild(o); } dsel.value = dir;
   ctrls.appendChild(nsel); ctrls.appendChild(dsel);
   nsel.onchange = () => { topN = +nsel.value; (p as any).enrTopN = topN; render(); };
   dsel.onchange = () => { dir = dsel.value as any; (p as any).enrDir = dir; render(); };
-  const dirLabel = (d: string) => d === "up" ? `▲ up in ${esc(aL)}` : d === "down" ? `▲ up in ${esc(bL)}` : "enriched";
+  const dirLabel = (d: string) => d === "up" ? `▲ up in ${esc(aL)}` : d === "down" ? `▲ up in ${esc(bL)}` : d === "ranked" ? `top ${topN} · ranked by ${esc(rankedBy)}` : "enriched";
 
   const render = () => {
     if (!db) return;

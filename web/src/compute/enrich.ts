@@ -53,7 +53,7 @@ export function enrich(query: string[], pathways: PathwaySet[], universe: Set<st
 // background is exactly those genes detected above a floor — NOT a global constant. We pick the query by thresholding the
 // SAME ranking (top-N by effect size), split by direction so an up-pathway and a down-pathway don't cancel.
 export interface RankedGene { symbol: string; lfc?: number; meanA?: number; meanB?: number; score?: number; }
-export interface EnrichResult { direction: "up" | "down" | "all"; n: number; N: number; topN: number; rows: EnrichRow[]; }
+export interface EnrichResult { direction: "up" | "down" | "all" | "ranked"; n: number; N: number; topN: number; rows: EnrichRow[]; }
 
 export function enrichRanked(ranked: RankedGene[], pathways: PathwaySet[], geneSpace: Set<string>, opts?: { topN?: number; direction?: "up" | "down" | "both"; minDetect?: number }): EnrichResult[] {
   const topN = opts?.topN ?? 200, minDetect = opts?.minDetect ?? 0;
@@ -68,14 +68,16 @@ export function enrichRanked(ranked: RankedGene[], pathways: PathwaySet[], geneS
     if (!hasDetect) { universe.add(g.symbol); continue; }
     if (Math.max(g.meanA ?? 0, g.meanB ?? 0, g.score ?? 0) > minDetect) universe.add(g.symbol);
   }
+  // "ranked" = honour the INPUT order (the gene table's current sort) — top-N as the user staged it, no re-sort. Else
+  // split a signed list up/down by logFC; an unsigned list is "all" (also input order).
   const signed = ranked.some((g) => g.lfc != null);
-  const dirs: ("up" | "down" | "all")[] = !signed ? ["all"] : opts?.direction === "up" ? ["up"] : opts?.direction === "down" ? ["down"] : ["up", "down"];
+  const dirs: EnrichResult["direction"][] = opts?.direction === "ranked" ? ["ranked"] : !signed ? ["all"] : opts?.direction === "up" ? ["up"] : opts?.direction === "down" ? ["down"] : ["up", "down"];
   const out: EnrichResult[] = [];
   for (const d of dirs) {
     let q = ranked;
     if (d === "up") q = ranked.filter((g) => (g.lfc ?? 0) > 0).slice().sort((a, b) => (b.lfc! - a.lfc!));
     else if (d === "down") q = ranked.filter((g) => (g.lfc ?? 0) < 0).slice().sort((a, b) => (a.lfc! - b.lfc!));
-    const query = q.slice(0, topN).map((g) => g.symbol);
+    const query = q.slice(0, topN).map((g) => g.symbol);   // "ranked"/"all" → q is the input order untouched
     const n = query.filter((s) => universe.has(s)).length;
     out.push({ direction: d, n, N: universe.size, topN, rows: enrich(query, pathways, universe, { minK: 2 }) });
   }
