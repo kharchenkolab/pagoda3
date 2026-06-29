@@ -599,11 +599,20 @@ async function facetsBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltB
       host.appendChild(banner);
     }
     const allFields = ctx.metadataFields();   // recompute each render → newly created derived categories appear
+    // A just-CREATED custom category should reveal itself: auto-OPEN fields that appeared since the last render (skip
+    // the very first render so a restored session doesn't explode everything open), and float custom categories to the
+    // TOP of the annotation group (newest first) so a fresh "save selection" lands visible, not buried below cell_type.
+    const annoOrder = ctx.annotationLayers();
+    const isCustom = (name: string) => ctx.isAnnotationLayer(name) && name !== "annotation";
+    let seen: Set<string> = (p as any)._seenFields;
+    const firstRender = !seen; if (firstRender) seen = (p as any)._seenFields = new Set<string>();
+    for (const f of allFields) if (!seen.has(f.name)) { seen.add(f.name); if (!firstRender && isCustom(f.name)) open.add(f.name); }
     // a field matches the search if its NAME matches OR (categorical) any of its VALUE names match (so "cd4" surfaces
     // the cell_type facet showing its CD4 rows). Value-matched fields auto-expand and show only the matching values.
     const matchField = (f: any) => { if (!q) return true; if (f.name.toLowerCase().includes(q)) return true; const m = meta.get(f.name); return !!m && m.categories.some((c: string) => c.toLowerCase().includes(q)); };
     for (const [g, label] of GROUPS) {
       const fs = allFields.filter((f) => f.group === g && matchField(f));
+      if (g === "annotation") fs.sort((a, b) => (isCustom(a.name) ? -annoOrder.indexOf(a.name) : 1) - (isCustom(b.name) ? -annoOrder.indexOf(b.name) : 1));   // custom categories first, newest first
       if (!fs.length) continue;
       host.appendChild(mk("div", "facetsub", label));
       for (const f of fs) host.appendChild(fieldEl(f, act, sel, selCells, q));
