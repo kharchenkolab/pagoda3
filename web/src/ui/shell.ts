@@ -1999,7 +1999,7 @@ export class App {
       // position with the menu's REAL width: if the anchor carries a `right` (a right-aligned trigger like the facet
       // "actions" button), align the menu's right edge to it so it stays inside the panel; else open to the right of
       // the anchor. Clamp within the window with an 8px margin either way (never bleed to the very edge).
-      const a = this.lastSelAnchor; const wpx = sp.offsetWidth || 210;
+      const a = this.lastSelAnchor || { left: 8, top: 8 }; const wpx = sp.offsetWidth || 210;
       const left = a.right != null ? a.right - wpx : a.left + 8;
       sp.style.left = Math.max(8, Math.min(left, innerWidth - wpx - 8)) + "px"; sp.style.top = a.top + "px";
       sp.querySelectorAll<HTMLElement>(".it").forEach((it) => it.onclick = () => { const a = it.dataset.a;

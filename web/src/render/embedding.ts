@@ -24,7 +24,7 @@ export class EmbeddingView {
   private fitZoom = 0;   // the zoom at which the current frame fits — reference for fading the hint accent ring as you zoom OUT past it
   private frameN = 0;    // cells in the current frame (whole dataset, or the focused subset) — sizes the zoom-IN limit
   private bounds = { minX: 0, maxX: 0, minY: 0, maxY: 0 };   // the current frame's data bounding box — used by clampTarget (pan bounds)
-  onSelect?: (ids: Int32Array) => void;
+  onSelect?: (ids: Int32Array, anchor?: { left: number; top: number }) => void;   // anchor = lasso release point (px) for the selpop
   onHover?: (index: number | null) => void;   // a cell under the cursor (or null) — emits the cross-panel hint
   onPick?: (index: number | null, x?: number, y?: number) => void;   // a plain click: a cell (→ select its cluster) or empty (→ deselect); x/y px for the selpop anchor
 
@@ -314,7 +314,7 @@ export class EmbeddingView {
         if (sx < minX || sx > maxX || sy < minY || sy > maxY) continue;   // bbox cull before the polygon test
         if (pointInPolygon(sx, sy, path)) ids.push(i);
       }
-      if (ids.length) this.onSelect?.(Int32Array.from(ids));
+      if (ids.length) this.onSelect?.(Int32Array.from(ids), { left: e.clientX, top: e.clientY });   // anchor the selpop at the lasso release point
     });
   }
 }
