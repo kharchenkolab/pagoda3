@@ -74,6 +74,42 @@ export function parseBundle(raw: string | null): { session: SessionDoc; widgets:
     return { session, widgets: loadWidgets(JSON.stringify(o.widgets ?? [])), savedAt: Number(o.savedAt) || 0 };
   } catch { return null; }
 }
+
+// ---- a single PORTABLE WIDGET file: one self-describing app, for reuse + sharing (vs the whole-session bundle) ----
+// The widget's capability manifest (title/params/permissions) lives INSIDE `source` (pagoda.ready({...})), so the file is
+// self-describing for what it DOES. This wrapper adds only what the code can't carry: the library name, a format version,
+// and a DERIVED dependency contract (`needs`) so a recipient sees which host libs + external hosts the widget requires
+// BEFORE trusting/running it (host parity, not file size, is the portability limit). See docs/widget-format.md.
+export const WIDGET_FILE_KIND = "pagoda-widget";
+export interface WidgetNeeds { libs: string[]; external: string[]; }
+export interface WidgetFile { name: string; source: string; controls?: { id: string; label: string }[]; needs: WidgetNeeds; }
+
+// Static, source-only dependency scan: which host-pinned libs the widget loadLib()s and which external hosts it
+// fetchExternal()s. Only STRING-LITERAL args are caught — a dynamic loadLib(name) or a templated URL won't appear (the
+// widget lint already nudges authors to declare permissions.external; the doc notes the limit). `declaredExternal` (the
+// manifest's declared hosts, when the caller has them) is merged so a declared-but-not-yet-fetched host still shows.
+export function widgetNeeds(source: string, declaredExternal?: string[]): WidgetNeeds {
+  const s = String(source || "");
+  const libs = new Set<string>();
+  for (const m of s.matchAll(/loadLib\s*\(\s*['"`]([^'"`]+)['"`]/g)) libs.add(m[1]);
+  const external = new Set<string>((declaredExternal || []).map((h) => String(h).trim()).filter(Boolean));
+  for (const m of s.matchAll(/fetchExternal\s*\(\s*['"]([^'"]+)['"]/g)) { try { external.add(new URL(m[1]).host); } catch { /* relative → host unknown, skip */ } }   // plain-quoted only: a templated `${host}` URL isn't static, so it's left for the declared list
+  return { libs: [...libs].sort(), external: [...external].sort() };
+}
+
+export function serializeWidgetFile(w: { name: string; source: string; controls?: { id: string; label: string }[] }, savedAt: number, declaredExternal?: string[]): string {
+  return JSON.stringify({ kind: WIDGET_FILE_KIND, v: VERSION, name: (w.name || "Widget").trim(), source: w.source, controls: w.controls, needs: widgetNeeds(w.source, declaredExternal), savedAt }, null, 2);
+}
+// Tolerant parse → null on anything that isn't a widget file, so a caller can try parseBundle and parseWidgetFile on the
+// same text and branch on whichever matches. `needs` is re-derived if absent/malformed (never trust a hand-edited block).
+export function parseWidgetFile(raw: string | null): WidgetFile | null {
+  if (!raw) return null;
+  try {
+    const o = JSON.parse(raw); if (!o || o.kind !== WIDGET_FILE_KIND || typeof o.source !== "string") return null;
+    const needs = (o.needs && Array.isArray(o.needs.libs) && Array.isArray(o.needs.external)) ? { libs: o.needs.libs.map(String), external: o.needs.external.map(String) } : widgetNeeds(o.source);
+    return { name: String(o.name || "Widget"), source: o.source, controls: Array.isArray(o.controls) ? o.controls : undefined, needs };
+  } catch { return null; }
+}
 // Compare a doc's fingerprint against the live dataset's. Returns a human reason when they DON'T align (so the caller
 // can warn / refuse cell-indexed restore), or null when they match (or can't be compared — older docs have none).
 export function fingerprintMismatch(doc?: Fingerprint, live?: Fingerprint): string | null {

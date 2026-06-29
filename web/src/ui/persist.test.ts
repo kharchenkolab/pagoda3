@@ -1,7 +1,7 @@
 // Unit tests for session/widget persistence helpers. Run: `node --test src/ui/persist.test.ts`.
 import { test } from "node:test";
 import assert from "node:assert";
-import { serializeSession, parseSession, upsertWidget, loadWidgets, serializeBundle, parseBundle, fingerprintMismatch, widgetHash } from "./persist.ts";
+import { serializeSession, parseSession, upsertWidget, loadWidgets, serializeBundle, parseBundle, fingerprintMismatch, widgetHash, serializeWidgetFile, parseWidgetFile, widgetNeeds, WIDGET_FILE_KIND } from "./persist.ts";
 
 test("session carries the dataset fingerprint + annotation layers through serialize/parse", () => {
   const s = { store: "/pbmc6.lstar.zarr", fingerprint: { n: 35391, fields: ["cell_type", "leiden"] }, currentWS: "Annotate", colorBy: "meta:annotation", canvas: [], userWS: [],
@@ -87,4 +87,35 @@ test("upsertWidget carries origin (authored vs imported) and preserves it on upd
   assert.equal(lib[0].origin, "imported");
   const authored = upsertWidget([], { name: "A", source: "s", origin: "authored" }, 1, "ida");
   assert.equal(authored[0].origin, "authored");
+});
+
+test("widgetNeeds: static loadLib + fetchExternal-host scan; declared hosts merged; dynamic args not caught", () => {
+  const src = `await pagoda.loadLib('3dmol'); await pagoda.loadLib("d3");
+    const pdb = await pagoda.fetchExternal('https://data.rcsb.org/rest/v1/core/entry/4HHB', {as:'json'});
+    await pagoda.fetchExternal("https://rest.uniprot.org/uniprotkb/P69905");
+    const lib = pick(); await pagoda.loadLib(lib);                       // dynamic — NOT caught
+    await pagoda.fetchExternal(\`https://\${host}/x\`);                   // templated — host unknown, skipped`;
+  const n = widgetNeeds(src, ["ensembl.org"]);   // a declared-but-not-yet-fetched host is merged in
+  assert.deepEqual(n.libs, ["3dmol", "d3"]);
+  assert.deepEqual(n.external, ["data.rcsb.org", "ensembl.org", "rest.uniprot.org"]);
+  assert.deepEqual(widgetNeeds("no deps here"), { libs: [], external: [] });
+});
+
+test("serializeWidgetFile / parseWidgetFile round-trip; needs derived; non-widget input → null", () => {
+  const src = "pagoda.ready({title:'Bars'}); pagoda.loadLib('d3');";
+  const file = serializeWidgetFile({ name: " Ranked bars ", source: src, controls: [{ id: "n", label: "N" }] }, 1719);
+  const o = JSON.parse(file);
+  assert.equal(o.kind, WIDGET_FILE_KIND); assert.equal(o.v, 2); assert.equal(o.name, "Ranked bars");   // trimmed
+  assert.deepEqual(o.needs, { libs: ["d3"], external: [] });
+  const w = parseWidgetFile(file)!;
+  assert.equal(w.name, "Ranked bars"); assert.equal(w.source, src);
+  assert.deepEqual(w.controls, [{ id: "n", label: "N" }]); assert.deepEqual(w.needs.libs, ["d3"]);
+  assert.equal(parseWidgetFile("not json"), null);
+  assert.equal(parseWidgetFile(serializeBundle({ session: parseSession(serializeSession({ store: "s", currentWS: "", colorBy: "", canvas: [], userWS: [] }))!, widgets: [], savedAt: 0 })), null);   // a SESSION bundle is not a widget file
+  assert.equal(parseBundle(file), null);   // …and a widget file is not a session bundle (clean disambiguation)
+});
+
+test("parseWidgetFile re-derives needs when the block is absent or malformed (never trust a hand-edited needs)", () => {
+  const raw = JSON.stringify({ kind: WIDGET_FILE_KIND, v: 2, name: "W", source: "pagoda.loadLib('3dmol')", needs: { libs: "junk" } });
+  assert.deepEqual(parseWidgetFile(raw)!.needs, { libs: ["3dmol"], external: [] });
 });

@@ -23,7 +23,7 @@ import { widgetLint } from "../widget/contract.ts";
 import { pseudobulkDECore, pseudobulkPairedDECore } from "../compute/odcore.ts";
 import { ResultRegistry, buildSessionEntities, type SessionEntity } from "./results.ts";
 import { fieldBuckets } from "../data/fieldroles.ts";
-import { SESSION_KEY, WIDGETS_KEY, SavedWidget, SerAnnoLayer, Fingerprint, serializeSession, parseSession, serializeBundle, parseBundle, fingerprintMismatch, upsertWidget, loadWidgets, widgetHash } from "./persist.ts";
+import { SESSION_KEY, WIDGETS_KEY, SavedWidget, SerAnnoLayer, Fingerprint, serializeSession, parseSession, serializeBundle, parseBundle, fingerprintMismatch, upsertWidget, loadWidgets, widgetHash, serializeWidgetFile, parseWidgetFile, WidgetFile } from "./persist.ts";
 
 // Item 2/C — the trust registry: source-hashes of widgets the user has authored or explicitly consented to run. Foreign
 // widgets that arrive via an imported session file are NOT here, so they're GATED (rendered as a consent placeholder)
@@ -313,6 +313,22 @@ export class App {
     if (b.session.conversation?.history?.length) parts.push(`${b.session.conversation.history.length} chat exchange(s)`);
     return { ok: true, msg: parts.join(" · ") };
   }
+  // The import button takes a .json that's EITHER a whole-session bundle OR a single portable widget — branch on kind
+  // (the two parses are mutually exclusive). A widget file is dataset-agnostic, so it just joins the library.
+  applyImported(raw: string): { ok: boolean; msg: string } {
+    const w = parseWidgetFile(raw); if (w) return this.importWidgetFile(w);
+    const r = this.applyBundle(raw); return r.ok ? { ok: true, msg: "Session " + r.msg } : { ok: false, msg: "Not a pagoda session or widget file." };
+  }
+  importWidgetFile(w: WidgetFile): { ok: boolean; msg: string } {
+    // Imported like any foreign widget: origin:"imported" → it lands in "Add to workbench" and its panel renders the
+    // consent gate (Item 2/C) before the code ever runs. The trust list is content-addressed, so re-importing source you
+    // already trusted stays trusted. The DERIVED needs are surfaced so you see what host libs/hosts it wants up front.
+    this.widgetLib = upsertWidget(this.widgetLib, { name: w.name, source: w.source, controls: w.controls, origin: "imported" }, Date.now(), "w" + Date.now().toString(36));
+    try { localStorage.setItem(WIDGETS_KEY, JSON.stringify({ widgets: this.widgetLib })); } catch { /* */ }
+    this.fullRender();
+    const dep = [w.needs.libs.length ? `libs: ${w.needs.libs.join(", ")}` : "", w.needs.external.length ? `fetches: ${w.needs.external.join(", ")}` : ""].filter(Boolean).join(" · ");
+    return { ok: true, msg: `Widget “${w.name}” added to your library${dep ? ` (${dep})` : ""} — add it from + ; it’ll ask to run the first time.` };
+  }
   async exportSessionToFile(): Promise<void> {
     const data = this.buildBundle();
     const base = this.currentStore().replace(/[^a-z0-9]+/gi, "_").replace(/^_+|_+$/g, "").slice(0, 40) || "session";
@@ -326,10 +342,10 @@ export class App {
     this.toast("Session downloaded", "A portable .json — reopen it here or on another machine, or share it.");
   }
   async importSessionFromFile(): Promise<void> {
-    const read = (text: string) => { const r = this.applyBundle(text); this.toast(r.ok ? "Session " + r.msg : "Couldn't open session", r.ok ? null : r.msg); };
+    const read = (text: string) => { const r = this.applyImported(text); this.toast(r.ok ? r.msg : "Couldn't open file", r.ok ? null : r.msg); };
     try {
       const w = window as any;
-      if (w.showOpenFilePicker) { const [h] = await w.showOpenFilePicker({ types: [{ description: "pagoda session", accept: { "application/json": [".json"] } }] }); const f = await h.getFile(); read(await f.text()); return; }
+      if (w.showOpenFilePicker) { const [h] = await w.showOpenFilePicker({ types: [{ description: "pagoda session or widget", accept: { "application/json": [".json"] } }] }); const f = await h.getFile(); read(await f.text()); return; }
     } catch (e) { if ((e as any)?.name === "AbortError") return; /* else fall through to file input */ }
     const inp = document.createElement("input"); inp.type = "file"; inp.accept = "application/json,.json";
     inp.onchange = async () => { const f = inp.files?.[0]; if (f) read(await f.text()); };
@@ -2174,7 +2190,8 @@ export class App {
         for (let i = 0; i < m.codes.length; i++) { const c = m.codes[i]; if (c < 0) continue; const v = m.categories[c]; lines.push(isAnn ? `${cell(cells[i])},${cell(v)},${cell(records[v]?.category || "")}` : `${cell(cells[i])},${cell(v)}`); }
         dl(safe(field) + ".csv", lines.join("\n"));
       } else if (ref.kind === "app") {
-        const w = this.widgetLib.find((x) => x.id === ref.id); if (w) dl(safe(w.name) + ".js", w.source, "text/javascript");
+        // a portable, re-IMPORTABLE widget file (not raw .js): self-describing source + name + derived dependency block
+        const w = this.widgetLib.find((x) => x.id === ref.id); if (w) dl("pagoda-widget-" + safe(w.name) + ".json", serializeWidgetFile({ name: w.name, source: w.source, controls: w.controls }, Date.now()), "application/json");
       }
       this.toast(`exported ${ent.name}`, null);
     } catch (e) { this.toast(`export failed: ${(e as Error).message}`, null); }
