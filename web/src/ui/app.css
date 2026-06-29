@@ -347,7 +347,7 @@ button{font-family:inherit}
 .ledger .lgexpmeta{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--faint);margin:0 0 5px}
 .ledger .lgdline{font-size:12px;color:var(--dim);line-height:1.6}
 /* enrichment (gene-set over-representation) */
-.dehdr{display:inline-flex;gap:6px;align-items:center}
+.gthdr{display:inline-flex;gap:6px;align-items:center}   /* gene table header: Genes⇄Pathways toggle + the active mode's controls */
 .enrich{font-size:13px} .enrctrls{display:inline-flex;gap:5px}
 .enrbody{padding:4px 10px 10px}
 .enrmeta{font-size:11px;color:var(--faint);padding:4px 2px 6px}
