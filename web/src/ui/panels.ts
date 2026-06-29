@@ -254,7 +254,7 @@ const GTABLE_CAP = 200;   // max ROWS rendered at once — the table holds the F
 // returns the live ordered rows when the user flips to this view; `rankedByFn` names the active sort (shown prominently).
 // Clicking a pathway scores cells by its overlap-gene signature. Lazy-loads the bundled Reactome asset once.
 interface EnrichCap { ctx: Ctx; aLabel?: string; bLabel?: string; defaultRank?: string; record?: (r: any) => void; sourceName?: string; persist?: any; }   // persist = the Panel, so the view mode + top-N/dir ride through a re-render
-function enrichView(cap: EnrichCap, getRows: () => RankedGene[], rankedByFn: () => string, st: { topN: number; dir: "ranked" | "up" | "down" | "both" }): { el: HTMLElement; ensure: () => void } {
+function enrichView(cap: EnrichCap, getRows: () => RankedGene[], rankedByFn: () => string, st: { topN: number; dir: "ranked" | "up" | "down" | "both" }, getFilter: () => string): { el: HTMLElement; ensure: () => void } {
   const ctx = cap.ctx, aL = cap.aLabel || "A", bL = cap.bLabel || "B", FDR_SHOW = 0.1;
   const esc = (s: string) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]!));
   const el = mk("div", "enrich");
@@ -278,9 +278,10 @@ function enrichView(cap: EnrichCap, getRows: () => RankedGene[], rankedByFn: () 
     last = results;
     body.innerHTML = "";
     const meta = mk("div", "enrmeta"); meta.textContent = `top ${st.topN} · background ${(results[0]?.N || 0).toLocaleString()} detected+annotated · ${db.nPathways.toLocaleString()} Reactome pathways`; body.appendChild(meta);
+    const flt = (getFilter() || "").toLowerCase();
     for (const res of results) {
-      const sig = res.rows.filter((r) => r.fdr < FDR_SHOW).slice(0, 20);
-      const sec = mk("div", "enrsec"); sec.innerHTML = `<span class="enrdir">${dirLabel(res.direction)}</span><span class="enrn">${res.n} genes${sig.length ? "" : " · none significant"}</span>`; body.appendChild(sec);
+      const sig = res.rows.filter((r) => r.fdr < FDR_SHOW && (!flt || r.name.toLowerCase().includes(flt))).slice(0, 20);
+      const sec = mk("div", "enrsec"); sec.innerHTML = `<span class="enrdir">${dirLabel(res.direction)}</span><span class="enrn">${res.n} genes${sig.length ? "" : flt ? " · no matching pathways" : " · none significant"}</span>`; body.appendChild(sec);
       for (const r of sig) {
         const maxL = Math.max(...sig.map((x) => -Math.log10(Math.max(x.fdr, 1e-300))));
         const w = Math.max(3, Math.round(-Math.log10(Math.max(r.fdr, 1e-300)) / (maxL || 1) * 100));
@@ -315,8 +316,8 @@ function geneTable(initial: any[], cols: GCol[], onPick: (symbol: string) => voi
   let sortKey: string | null = null, dir = 1;
   // The current FILTERED + SORTED rows in display order — the user stages a query here (sort by logFC ↑/↓, p, a group
   // mean…), so "Enrich →" reads THIS, not the stored ranking. `rankInfo` names the ordering for the enrichment header.
-  const ordered = () => {
-    const q = search.value.trim().toLowerCase();
+  const ordered = (applyFilter = true) => {
+    const q = applyFilter ? search.value.trim().toLowerCase() : "";   // the gene display applies the search; ENRICHMENT does not (there the box filters pathway names instead)
     const rs = q ? rows.filter((r) => String(r.symbol).toLowerCase().includes(q)) : rows.slice();
     if (sortKey) { const c = cols.find((x) => x.key === sortKey)!; rs.sort((a, b) => { const av = c.get(a), bv = c.get(b); return (av < bv ? -1 : av > bv ? 1 : 0) * dir; }); }
     return rs;
@@ -341,17 +342,19 @@ function geneTable(initial: any[], cols: GCol[], onPick: (symbol: string) => voi
   // user staged here). Both faces live in `wrap`; the toggle swaps which is shown + which controls sit in the header.
   const pp = enrich.persist || {};
   const st = { topN: pp.enrTopN ?? 150, dir: (pp.enrDir ?? "ranked") as "ranked" | "up" | "down" | "both" };
-  const ev = enrichView(enrich, ordered, () => rankInfo().label || enrich.defaultRank || "the source order", st);
+  let mode: "genes" | "pathways" = "genes";
+  const ev = enrichView(enrich, () => ordered(false), () => rankInfo().label || enrich.defaultRank || "the source order", st, () => mode === "pathways" ? search.value.trim() : "");
   ev.el.style.display = "none"; ev.el.style.cssText += ";overflow:auto;max-height:min(60vh,480px)"; wrap.appendChild(ev.el);
   const hdr = mk("div", "gthdr");
   const toggle = mk("div", "segtog"); const gBtn = mk("button", "mini", "genes") as HTMLButtonElement; const pBtn = mk("button", "mini", "pathways") as HTMLButtonElement; toggle.append(gBtn, pBtn);
-  hdr.append(toggle, search);   // header = the toggle (always there → always a way back) + the genes-mode search
+  hdr.append(search, toggle);   // search to the LEFT of the toggle → the toggle keeps a fixed position across modes; the box stays visible and filters genes, or pathway NAMES in pathways mode
+  search.oninput = () => { if (mode === "genes") render(); else ev.ensure(); };   // mode-aware: filter the gene table, or the pathway list
   const setMode = (m: "genes" | "pathways") => {
-    if (enrich.persist) enrich.persist.enrMode = m;   // ride through a re-render so "keep" / any fullRender doesn't snap back to genes
+    mode = m; if (enrich.persist) enrich.persist.enrMode = m;   // ride through a re-render so "keep" / any fullRender doesn't snap back to genes
     const g = m === "genes"; gBtn.classList.toggle("on", g); pBtn.classList.toggle("on", !g);
     scroll.style.display = g ? "" : "none"; more.style.display = g ? "" : "none"; ev.el.style.display = g ? "none" : "";
-    search.style.display = g ? "" : "none";
-    if (!g) ev.ensure();
+    search.placeholder = g ? "filter genes…" : "filter pathways…";
+    if (g) render(); else ev.ensure();
   };
   gBtn.onclick = () => setMode("genes"); pBtn.onclick = () => setMode("pathways");
   setMode(pp.enrMode === "pathways" ? "pathways" : "genes");   // restore the staged view after a rebuild
