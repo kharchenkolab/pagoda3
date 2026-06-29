@@ -320,11 +320,11 @@ button{font-family:inherit}
 .defoot{display:flex;justify-content:flex-end;align-items:center;gap:8px;margin-top:4px}
 /* session ledger panel */
 .ledger{font-size:13px}
-.ledger .lgtools{display:flex;justify-content:flex-end;gap:5px;padding:6px 8px 2px}
-.ledger .lgtools button{font-size:11px;padding:2px 8px}
-.ledger .lgchips{display:flex;gap:5px;flex-wrap:wrap;padding:6px 8px 4px}
-.ledger .lgchip{font-size:11.5px;padding:2px 9px;border-radius:999px;border:1px solid var(--line);background:transparent;color:var(--dim);cursor:pointer}
-.ledger .lgchip.on{background:var(--cyan);color:var(--on-accent);border-color:var(--cyan)}
+.lghdr{display:inline-flex;gap:4px}   /* session import/export, in the panel header */
+.ledger .lgchips{display:flex;gap:5px;flex-wrap:wrap;padding:8px 8px 4px}
+.ledger .lgchip{font-size:11.5px;padding:2px 9px;border-radius:999px;border:1px solid var(--line);background:var(--inset);color:var(--dim);cursor:pointer}
+.ledger .lgchip:hover{color:var(--text)}
+.ledger .lgchip.on{background:var(--inset);color:var(--cyan);border-color:var(--cyan)}   /* outlined, like the header .mini.on pills (labels/legend) — not a filled chip */
 .ledger .lgsearch{margin:2px 8px 6px;width:calc(100% - 16px)}
 .ledger .lgsec{font-size:10px;font-weight:500;color:var(--faint);padding:7px 10px 2px;text-transform:uppercase;letter-spacing:.04em}
 .ledger .lgrow{display:flex;align-items:center;gap:8px;padding:4px 10px;min-height:28px}
