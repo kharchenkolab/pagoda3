@@ -2369,15 +2369,21 @@ export class App {
   }
 
   // ---------- command palette ----------
+  // Example prompts for the palette (the "what can I ask?" intro). Chosen to span the FULL spectrum — visualize, two
+  // LAYOUT ops, composition, DE, gene programs, annotation, custom cell sets, freeform signature compute, widget
+  // authoring — not just colour/markers. `q` is sent verbatim to the live agent, so each is a complete, working request
+  // (6 of 10 were verified end-to-end on the live agent). `t` is the friendly label shown.
   SUGS = [
-    { t: "Colour cells by IL6", q: "show il6", ic: "◐" },
-    { t: "Colour by cell type", q: "colour by cell type", ic: "◐" },
-    { t: "What are the markers of this cluster?", q: "what genes changed", ic: "≢" },
-    { t: "Most variable genes (per-gene HVG)", q: "show most variable genes", ic: "≢" },
-    { t: "Show overdispersed gene programs", q: "show overdispersed gene programs", ic: "▤" },
-    { t: "Show composition across samples", q: "show composition", ic: "▥" },
-    { t: "Help me interpret a finding", q: "help me interpret this", ic: "✦" },
-    { t: "Set everything up to compare conditions", q: "set everything up to compare conditions", ic: "⚙" },
+    { t: "Colour the embedding by a gene", q: "colour the embedding by NKG7", ic: "◐" },
+    { t: "Facet the embedding by condition", q: "facet the embedding by condition", ic: "▦" },
+    { t: "Variable genes in a third column", q: "show the most variable genes in a third column", ic: "◫" },
+    { t: "Composition across samples", q: "show how cell-type composition varies across samples", ic: "▥" },
+    { t: "Compare two cell types with DE", q: "run differential expression between CD8 T effector and CD8 T memory cells", ic: "⇄" },
+    { t: "Most overdispersed gene programs", q: "show the most overdispersed gene programs", ic: "▤" },
+    { t: "Name the cell types, with rationale", q: "propose clean cell-type names with a marker-grounded rationale for each cluster", ic: "✎" },
+    { t: "Create a custom cell set", q: "create a category of cytotoxic cells with high GZMB and PRF1", ic: "⊕" },
+    { t: "Score cells for a gene signature", q: "score every cell for a cytotoxicity signature (GZMB, PRF1, NKG7, GNLY) and colour by it", ic: "∑" },
+    { t: "Build an interactive widget", q: "build an interactive violin plot of NKG7 expression across cell types", ic: "◳" },
   ];
   openPalette(scope?: Scope) {
     this.scope = scope || this.scope; this.$("scrim").classList.add("show"); this.$("palette").classList.add("show");
