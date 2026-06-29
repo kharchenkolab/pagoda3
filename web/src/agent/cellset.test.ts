@@ -33,6 +33,17 @@ test("validate: leaves", () => {
   assert.match(validateCellSet({ category: { grouping: "leiden", value: "Z" } }, world)!, /not a value of leiden/);
 });
 
+test("set: literal id leaf — validate, resolve, describe", () => {
+  assert.equal(validateCellSet({ set: [2, 5, 8] }, world), null);
+  assert.match(validateCellSet({ set: [] }, world)!, /non-empty array of cell indices/);
+  assert.match(validateCellSet({ set: "nope" }, world)!, /non-empty array of cell indices/);
+  assert.match(validateCellSet({ set: [1.5] }, world)!, /cell indices/);
+  assert.deepEqual(arr(resolveCellSet({ set: [7, 2, 3] }, env)), [2, 3, 7]);
+  // composes with the boolean ops like any other leaf — A (leiden A) minus a pinned set
+  assert.deepEqual(arr(resolveCellSet({ intersect: [{ category: { grouping: "leiden", value: "A" } }, { complement: { set: [0, 1] } }] }, env)), [2, 3, 4]);
+  assert.equal(describeCellSet({ set: [4, 9, 1] } as any), "3 cells");
+});
+
 test("validate: structure", () => {
   assert.match(validateCellSet({}, world)!, /exactly one of/);
   assert.match(validateCellSet({ all: true, selection: true }, world)!, /exactly one of/);   // two keys

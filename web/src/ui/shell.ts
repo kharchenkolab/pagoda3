@@ -88,6 +88,7 @@ export class App {
   thread: any = null; threadDocked = false; nudgePending: any = null; apTimer: any = null; apIndex = 0;
   scope: Scope | null = null; askScope: Scope | null = null; hot = 0; filtered: any[] = []; lastSelAnchor: { left: number; top: number; right?: number } = { left: 0, top: 0 };
   private selpopOutside?: (e: Event) => void;   // the selection popover's OWN outside-dismiss listener (armed on open, removed on close) — see showSelpop/hideSelpop
+  groupB: { set: CellSet; label: string; n: number } | null = null;   // pinned comparison group B for agent-free A-vs-B DE (set from a selection; see openSelpop)
   proposalWhy = "";
 
   constructor(ctx: Ctx) {
@@ -1988,22 +1989,37 @@ export class App {
     this.ctx.metaOf("cell_type").then((m: any) => {
       const cts: Record<string, number> = {}; for (const i of ids) cts[m.categories[m.codes[i]]] = (cts[m.categories[m.codes[i]]] || 0) + 1;
       const top = Object.entries(cts).sort((a, b) => b[1] - a[1])[0];
-      this.scope = { type: "selection", ids: Array.from(ids), summary: `${ids.length} cells (mostly ${top?.[0] || "?"})`, sel: this.coord.state.selection } as any;
+      const sel = this.coord.state.selection as any;
+      this.scope = { type: "selection", ids: Array.from(ids), summary: `${ids.length} cells (mostly ${top?.[0] || "?"})`, sel } as any;
+      const esc = (s: string) => String(s).replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]!));
       const sp = this.$("selpop");
-      sp.innerHTML = `<div class="head">${ids.length} cells · mostly ${top?.[0] || "?"}</div>` +
+      // DE is direct now (no agent). When a comparison group B is pinned, the menu grows the A-vs-B contrasts —
+      // cell-level always, plus donor-level pseudobulk when a replicate field is detected (the statistically correct
+      // population test). A-vs-B works for two lassos AND two category values (a category click IS a selection).
+      const hasB = !!this.groupB; const rep = hasB ? this.likelyReplicate() : null;
+      let html = `<div class="head">${ids.length} cells · mostly ${top?.[0] || "?"}</div>` +
         `<div class="it" data-a="ask"><span class="ic">⌘K</span>Ask about these…</div>` +
-        `<div class="it" data-a="de"><span class="ic">≢</span>Run DE on selection</div>` +
+        `<div class="it" data-a="de"><span class="ic">≢</span>Run DE <span style="opacity:.5;margin-left:auto;font-size:10px">vs rest</span></div>`;
+      if (hasB) html += `<div class="it" data-a="deB"><span class="ic">≢</span>DE vs group B <span style="opacity:.5;margin-left:auto;font-size:10px">${esc(this.groupB!.label)}</span></div>`;
+      if (hasB && rep) html += `<div class="it" data-a="deBpb"><span class="ic">≣</span>DE vs B · donor-level <span style="opacity:.5;margin-left:auto;font-size:10px">${esc(rep)}</span></div>`;
+      html += `<div class="it" data-a="setB"><span class="ic">◧</span>Set as comparison group B</div>` +
         `<div class="it" data-a="subset"><span class="ic">⊙</span>Subset to these <span style="opacity:.5;margin-left:auto;font-size:10px">hide the rest</span></div>` +
         `<div class="it" data-a="label"><span class="ic">✎</span>Save selection…</div>` +
         `<div class="it" data-a="clear"><span class="ic">✕</span>Clear selection</div>`;
+      if (hasB) html += `<div class="it" data-a="clearB"><span class="ic">⌫</span>Clear group B</div>`;
+      sp.innerHTML = html;
       this.showSelpop();   // reveal at lastSelAnchor + arm the popover's own outside-dismiss listener
+      const A = () => this.selToCellSet(sel, ids); const aL = this.selLabel(sel, ids);
       sp.querySelectorAll<HTMLElement>(".it").forEach((it) => it.onclick = () => { const a = it.dataset.a;
-        if (a === "label") { this.selpopLabelInput(Array.from(ids)); return; }   // sub-state — keep the popover open
+        if (a === "label") { this.selpopLabelInput(Array.from(ids)); return; }   // sub-view — popover stays open
+        if (a === "setB") { this.groupB = { set: A(), label: aL, n: ids.length }; this.hideSelpop(); this.coord.setSelection(null); this.scope = null; this.toast(`comparison group B = ${aL}`, "Select another group, then choose “DE vs group B”."); return; }
         this.hideSelpop();
         if (a === "ask") this.openPalette(this.scope!);
-        else if (a === "de") this.agent.ask("run de", this.scope);
+        else if (a === "de") this.runDEdirect(A(), aL, undefined, "rest");
+        else if (a === "deB") this.runDEdirect(A(), aL, this.groupB!.set, this.groupB!.label);
+        else if (a === "deBpb") this.runDEdirect(A(), aL, this.groupB!.set, this.groupB!.label, rep!);
+        else if (a === "clearB") { this.groupB = null; this.toast("cleared comparison group B", null); }
         else if (a === "subset") {   // L3: promote the selection to the working subset — the rest is hidden from every view
-          const sel = this.coord.state.selection as any;
           const op = sel?.kind === "category" ? { dim: sel.grouping, value: sel.value } : { set: Array.from(ids), label: `${ids.length.toLocaleString()} cells` };
           this.coord.setSelection(null);   // the subset becomes the frame — nothing is sub-selected within it
           const r = this.focusFromOp(op);
@@ -2011,6 +2027,28 @@ export class App {
         }
         else { this.coord.setSelection(null); this.scope = null; } });
     });
+  }
+  // current selection → a CellSet: a category selection keeps its identity (nice labels + the precomputed-markers fast
+  // path); a manual lasso becomes a literal {set} so it can be pinned as a fixed group even after the live selection moves.
+  private selToCellSet(sel: any, ids: ArrayLike<number>): CellSet {
+    return sel?.kind === "category" ? { category: { grouping: sel.grouping, value: sel.value } } : { set: Array.from(ids as ArrayLike<number>) };
+  }
+  private selLabel(sel: any, ids: ArrayLike<number>): string {
+    if (sel?.kind === "category") return /^\d+$/.test(String(sel.value)) ? `${sel.grouping} ${sel.value}` : String(sel.value);
+    return `${ids.length.toLocaleString()} cells`;
+  }
+  // the heuristically-flagged donor/replicate field (for offering donor-level pseudobulk), or null
+  private likelyReplicate(): string | null {
+    const cats = this.ctx.categoricalFields().map((f) => ({ name: f, n: this.ctx.categoricalValues(f).length }));
+    const numeric = this.ctx.metadataFields().filter((f) => f.kind === "numeric").map((f) => f.name);
+    const b = fieldBuckets(this.ctx.groupings(), cats, numeric, this.ctx.view.nGenes, (f) => this.ctx.fieldRole(f) as any);
+    return (b as any).replicate || null;
+  }
+  // run DE straight to the canvas (no agent). B omitted ⇒ vs rest; replicate set ⇒ donor-level pseudobulk.
+  private async runDEdirect(A: CellSet, aLabel: string, B: CellSet | undefined, bLabel: string, replicate?: string) {
+    this.toast(`computing ${replicate ? "donor-level " : ""}DE — ${aLabel} vs ${bLabel}…`, null);
+    const r = await this.runCompute({ stat: replicate ? "pseudobulk" : "de", A, B, replicate, toCanvas: true });
+    if (r.error) this.toast(`DE failed: ${r.error}`, null);
   }
   // selection → "Save selection…": name a VALUE and choose the target CATEGORY — the working draft, another editable
   // category you made, or a brand-new one. Writes via labelCells into ANY annotation layer (auto-creates it), then

@@ -12,6 +12,7 @@ export type CellSet =
   | { selection: true }
   | { focus: true }
   | { all: true }
+  | { set: number[] }   // a LITERAL set of cell indices — self-contained (needs no env). The UI uses it to pin a manual lasso as a fixed group (e.g. comparison group B); the agent never emits it.
   | { complement: CellSet }
   | { intersect: CellSet[] }
   | { union: CellSet[] };
@@ -32,7 +33,7 @@ export interface CellEnv {
   focus: () => Iterable<number>;
 }
 
-const KEYS = ["category", "selection", "focus", "all", "complement", "intersect", "union"];
+const KEYS = ["category", "selection", "focus", "all", "set", "complement", "intersect", "union"];
 
 function soleKey(expr: any): string | null {
   if (!expr || typeof expr !== "object") return null;
@@ -45,6 +46,7 @@ export function validateCellSet(expr: any, w: CellWorld, where = "cellset"): str
   const k = soleKey(expr);
   if (!k) return `${where}: must be exactly one of {category, selection, focus, all, complement, intersect, union}`;
   if (k === "all") return null;
+  if (k === "set") { const a = (expr as any).set; return Array.isArray(a) && a.length > 0 && a.every((x: any) => Number.isInteger(x)) ? null : `${where}: set needs a non-empty array of cell indices`; }
   if (k === "selection") return w.hasSelection ? null : `${where}: no active selection — ask the user to select cells first`;
   if (k === "focus") return w.hasFocus ? null : `${where}: no active focus`;
   if (k === "category") {
@@ -67,6 +69,7 @@ function toSet(it: Iterable<number>): Set<number> { return it instanceof Set ? i
 export function resolveCellSet(expr: CellSet, env: CellEnv): Set<number> {
   const k = soleKey(expr)!;
   if (k === "all") { const s = new Set<number>(); for (let i = 0; i < env.n; i++) s.add(i); return s; }
+  if (k === "set") return new Set((expr as any).set as number[]);
   if (k === "category") { const c = (expr as any).category; return toSet(env.category(c.grouping, c.value)); }
   if (k === "selection") return toSet(env.selection());
   if (k === "focus") return toSet(env.focus());
@@ -87,6 +90,7 @@ export function resolveCellSet(expr: CellSet, env: CellEnv): Set<number> {
 export function describeCellSet(expr: CellSet): string {
   const k = soleKey(expr)!;
   if (k === "all") return "all cells";
+  if (k === "set") return `${(expr as any).set.length} cells`;
   if (k === "selection") return "selection";
   if (k === "focus") return "focus";
   if (k === "category") return (expr as any).category.value;
