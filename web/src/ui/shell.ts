@@ -87,6 +87,7 @@ export class App {
   // presence
   thread: any = null; threadDocked = false; nudgePending: any = null; apTimer: any = null; apIndex = 0;
   scope: Scope | null = null; askScope: Scope | null = null; hot = 0; filtered: any[] = []; lastSelAnchor: { left: number; top: number; right?: number } = { left: 0, top: 0 };
+  skipDocClick = false;   // a lasso's setPointerCapture fires a trailing `click` on mouseup — swallow that ONE click in the document dismiss handler so it can't close the just-opened selpop
   proposalWhy = "";
 
   constructor(ctx: Ctx) {
@@ -424,7 +425,7 @@ export class App {
   hooks(): PanelHooks {
     return {
       onGeneClick: (sym) => this.agent.coordinateGene(sym),
-      onSelect: (ids, anchor) => { this.coord.setSelection({ kind: "cells", ids }); this.lastSelAnchor = anchor; this.openSelpop(); },   // brush has no category — raw cells
+      onSelect: (ids, anchor) => { this.coord.setSelection({ kind: "cells", ids }); this.lastSelAnchor = anchor; this.openSelpop(); this.skipDocClick = true; },   // brush has no category — raw cells; skip the lasso's trailing click so it doesn't dismiss the selpop
       registerEmbedding: (ev) => this.embeddings.push(ev),
       onCellHover: (idx) => this.onCellHover(idx),
       onCellClick: (idx, anchor) => this.onCellClick(idx, anchor),
@@ -2118,7 +2119,7 @@ export class App {
       else if (e.key === "ArrowUp") { this.hot = Math.max(this.hot - 1, 0); this.renderSugs(); e.preventDefault(); }
       else if (e.key === "Enter") { const s = this.filtered[this.hot]; if (s) { this.closePalette(); this.agent.ask(s.q, this.scope); } }
     });
-    document.addEventListener("click", (e) => { if (!this.$("selpop").contains(e.target as Node)) this.hideSelpop(); if (!this.$("ctx").contains(e.target as Node)) this.$("ctx").classList.remove("show"); const ac = this.$("acct"); if (!ac.contains(e.target as Node) && (e.target as HTMLElement).id !== "acctBtn" && !this.$("acctBtn").contains(e.target as Node)) ac.classList.remove("show"); });
+    document.addEventListener("click", (e) => { const skip = this.skipDocClick; this.skipDocClick = false; if (!skip && !this.$("selpop").contains(e.target as Node)) this.hideSelpop(); if (!this.$("ctx").contains(e.target as Node)) this.$("ctx").classList.remove("show"); const ac = this.$("acct"); if (!ac.contains(e.target as Node) && (e.target as HTMLElement).id !== "acctBtn" && !this.$("acctBtn").contains(e.target as Node)) ac.classList.remove("show"); });
     document.addEventListener("keydown", (e) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); this.openPalette(); }
       else if (e.key === "Escape") { this.closePalette(); this.hideSelpop(); this.$("ctx").classList.remove("show"); }
