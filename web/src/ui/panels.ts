@@ -71,6 +71,7 @@ export interface PanelHooks {
     proposeRecord: (layerName: string, label: string) => void;  // ask the agent to suggest a CAP record for one label
     proposeAllNames: (layerName: string) => void;               // ask the agent to name+explain all working clusters
     splitLabel: (label: string) => void;                        // isolate a working label's cells to split it (brush a subset)
+    manageCategory: (input: any) => { ok?: string; error?: string };   // create/edit/delete a CUSTOM categorical field — rename/merge/delete value, rename/delete field, set_cells (the manage_category verbs)
   };
   widgetHost: () => WidgetHost;                                // the coord/ctx/theme bridge a Widget panel's iframe talks to
   onTeardown: (fn: () => void) => void;                        // register cleanup (e.g. destroy a widget iframe) run on the next fullRender
@@ -571,7 +572,12 @@ async function facetsBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltB
     const drop = mk("button", "fdrop mini" + (act === f.name ? " on" : ""), "◉"); drop.title = `colour the embedding by ${f.name}`;
     drop.onclick = (e) => { e.stopPropagation(); ctx.coord.setColor("meta:" + f.name); };
     row.appendChild(drop);
-    row.onclick = (e) => { if ((e.target as HTMLElement).closest(".fdrop,.fcomp")) return; if (open.has(f.name)) open.delete(f.name); else open.add(f.name); render(); };
+    if (f.kind === "categorical" && ctx.isAnnotationLayer(f.name) && f.name !== "annotation") {   // a CUSTOM (editable) category → offer the manage card
+      const edit = mk("button", "fedit mini", "✎"); edit.title = `manage category “${f.name}” — rename / merge / delete values, rename / delete field`;
+      edit.onclick = (e) => { e.stopPropagation(); showManageCard(f.name); };
+      row.appendChild(edit);
+    }
+    row.onclick = (e) => { if ((e.target as HTMLElement).closest(".fdrop,.fcomp,.fedit")) return; if (open.has(f.name)) open.delete(f.name); else open.add(f.name); render(); };
     box.appendChild(row);
     // if the search matched VALUES (not the field name), filter the shown values to the query
     const vq = q && !f.name.toLowerCase().includes(q) ? q : "";
@@ -604,6 +610,65 @@ async function facetsBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltB
     }
     if (!host.querySelector(".facetf")) host.innerHTML = `<div style="color:var(--faint);padding:12px;font-size:11px">no fields match “${esc(q)}”</div>`;
     host.scrollTop = top;
+  };
+
+  // MANAGE a custom (editable) category — rename/delete the FIELD, rename / merge / delete its VALUES, and add the
+  // current selection as a value. A body-level modal so it survives the fullRender every edit triggers; it reads the
+  // LIVE layer each rebuild and routes every edit through hooks.annotation.manageCategory (the same verbs the agent uses).
+  const showManageCard = (field0: string) => {
+    if (document.getElementById("mgcat")) return;
+    let field = field0;
+    const back = mk("div"); back.id = "mgcat";
+    back.style.cssText = "position:fixed;inset:0;z-index:60;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center";
+    const card = mk("div", "facetcreate"); card.style.cssText = "position:relative;max-height:82vh;overflow:auto;min-width:300px;max-width:380px";
+    back.appendChild(card); document.body.appendChild(back);
+    const close = () => back.remove();
+    back.onclick = (e) => { if (e.target === back) close(); };
+    const tally = (layer: any) => { const c: Record<string, number> = {}; const codes = layer.codes; for (let i = 0; i < codes.length; i++) { const k = codes[i]; if (k >= 0) c[layer.categories[k]] = (c[layer.categories[k]] || 0) + 1; } return c; };
+    const rebuild = () => {
+      const layer = hooks.annotation.annoLayer(field);
+      if (!layer) { close(); return; }   // the field was deleted out from under us
+      const counts = tally(layer);
+      const sel = ctx.coord.state.selection; const selN = sel ? ctx.refToCells(sel).length : 0;
+      const others = (v: string) => layer.categories.filter((c: string) => c !== v);
+      card.innerHTML =
+        `<div class="fchead"><b>Manage · ${esc(field)}</b><span class="fcx" title="close">✕</span></div>` +
+        `<div class="fcrow" style="gap:5px"><input class="mgfield" value="${esc(field)}" style="flex:1"><button class="mini mgrenfield">rename</button><button class="mini mgdelfield" title="delete this whole category field">delete field</button></div>` +
+        (selN ? `<div class="fcrow" style="gap:5px"><input class="mgaddv" placeholder="add selection as value…" style="flex:1"><button class="mini mgadd">+ ${selN.toLocaleString()} cells</button></div>` : `<div class="fchint">select cells (lasso, or a value) then reopen to add them as a value</div>`) +
+        `<div class="fcerr mgerr"></div>` +
+        `<div class="fcvlist">` + (layer.categories.length ? layer.categories.map((v: string) =>
+          `<div class="fcvrow" data-v="${esc(v)}"><span class="fcvn" style="flex:1">${esc(v)}</span><span class="fcvc">${(counts[v] || 0).toLocaleString()}</span>` +
+          `<button class="mini mgren" title="rename value">✎</button><button class="mini mgmerge" title="merge into another value"${others(v).length ? "" : " disabled"}>⇢</button><button class="mini mgdel" title="delete value (unassign its cells)">✕</button></div>`).join("")
+          : `<div class="fchint">no values yet</div>`) +
+        `</div>`;
+      const errEl = card.querySelector(".mgerr") as HTMLElement;
+      const run = (input: any) => { const r = hooks.annotation.manageCategory(input); errEl.textContent = r.error || ""; if (!r.error) rebuild(); return r; };
+      (card.querySelector(".fcx") as HTMLElement).onclick = close;
+      (card.querySelector(".mgrenfield") as HTMLElement).onclick = () => { const to = (card.querySelector(".mgfield") as HTMLInputElement).value.trim(); if (!to || to === field) return; const r = hooks.annotation.manageCategory({ op: "rename_field", name: field, to }); if (r.error) { errEl.textContent = r.error; return; } field = to; rebuild(); };   // update `field` BEFORE rebuild — the layer now lives under the new name
+      (card.querySelector(".mgdelfield") as HTMLElement).onclick = () => { const r = hooks.annotation.manageCategory({ op: "delete", name: field }); if (r.error) errEl.textContent = r.error; else close(); };
+      const addBtn = card.querySelector(".mgadd") as HTMLElement | null;
+      if (addBtn) addBtn.onclick = () => { const v = (card.querySelector(".mgaddv") as HTMLInputElement).value.trim(); if (v) run({ op: "set_cells", name: field, value: v, A: { selection: true } }); };
+      card.querySelectorAll<HTMLElement>(".fcvrow").forEach((rowEl) => {
+        const v = rowEl.dataset.v!;
+        (rowEl.querySelector(".mgdel") as HTMLElement).onclick = () => run({ op: "delete_value", name: field, value: v });
+        (rowEl.querySelector(".mgren") as HTMLElement).onclick = () => {
+          const nameSpan = rowEl.querySelector(".fcvn") as HTMLElement;
+          nameSpan.innerHTML = `<input class="mgreninp" value="${esc(v)}" style="width:94%">`;
+          const inp = nameSpan.querySelector(".mgreninp") as HTMLInputElement; inp.focus(); inp.select();
+          let done = false; const apply = () => { if (done) return; done = true; const to = inp.value.trim(); if (to && to !== v) run({ op: "rename_value", name: field, from: v, to }); else rebuild(); };
+          inp.onkeydown = (e) => { if (e.key === "Enter") apply(); else if (e.key === "Escape") { done = true; rebuild(); } };
+          inp.onblur = apply;
+        };
+        const mergeBtn = rowEl.querySelector(".mgmerge") as HTMLElement;
+        if (!mergeBtn.hasAttribute("disabled")) mergeBtn.onclick = () => {
+          const sel2 = mk("select", "mgmergesel") as HTMLSelectElement;
+          sel2.innerHTML = `<option value="">merge into…</option>` + others(v).map((c: string) => `<option>${esc(c)}</option>`).join("");
+          rowEl.appendChild(sel2); sel2.focus();
+          sel2.onchange = () => { const into = sel2.value; if (into) run({ op: "merge_values", name: field, into, values: [v] }); };
+        };
+      });
+    };
+    rebuild();
   };
 
   // CREATE DERIVED CATEGORY — derive a new grouping from existing metadata (the checkboxes live here). Four modes:

@@ -447,6 +447,7 @@ export class App {
         proposeRecord: (layerName, label) => { this.proposeRecord(label, layerName); },
         proposeAllNames: (layerName) => { this.proposeAllNames(layerName); },
         splitLabel: (label) => { this.splitLabel(label); },
+        manageCategory: (input) => this.manageCategory(input),   // Metadata-panel manage card → the same verbs the agent uses
       },
       widgetHost: () => this.widgetHost(),
       onTeardown: (fn) => { this.teardowns.push(fn); },   // run + cleared each fullRender (like coordSubs) — no iframe leak
@@ -1390,6 +1391,14 @@ export class App {
       return { ok: `labeled ${ids.length} cells as "${value}" in field "${name}"` };
     }
     if (op === "rename_value") return this.renameLabel(name, String(input?.from || ""), String(input?.to || ""));
+    if (op === "delete_value") {
+      const value = String(input?.value || "").trim(); if (!value) return { error: "delete_value: 'value' is required" };
+      const layer = this.annoLayers.get(name); if (!layer) return { error: `no category field "${name}"` };
+      const ci = layer.categories.indexOf(value); if (ci < 0) return { error: `delete_value: "${value}" is not a value in "${name}"` };
+      let n = 0; const codes = layer.codes as Int32Array; for (let i = 0; i < codes.length; i++) if (codes[i] === ci) { codes[i] = -1; n++; }
+      this.commitLayer(layer);   // compact() drops the now-empty category
+      return { ok: `deleted value "${value}" (${n} cells unassigned) from "${name}"` };
+    }
     if (op === "merge_values") {
       const into = String(input?.into || "").trim(); if (!into) return { error: "merge_values: 'into' is required" };
       const values = Array.isArray(input?.values) ? input.values.map((v: any) => String(v)) : [];
