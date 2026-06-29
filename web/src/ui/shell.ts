@@ -459,6 +459,7 @@ export class App {
       onTheme: (fn) => { const u = this.onTheme(fn); this.coordSubs.push(u); },   // managed theme-change subscription — torn down on fullRender alongside the coord subs
       focusCategory: (field, value) => { const r = this.focusFromOp({ dim: field, value }); if (!r.error) { this.fullRender(); this.checkpoint(`focus · ${field}=${value}`, "Restricted the workspace to a metadata value — release with the focus chip."); } },
       addPanel: (spec) => { this.addPanel(spec); this.fullRender(); },
+      recordResult: (r: any) => { const it = this.results.add({ name: r.name, kind: r.kind, spec: r.spec || { stat: r.kind }, who: "user", when: Date.now(), summary: r.summary, bind: r.bind || "enrich:pathways", rows: r.rows }); this.fullRender(); this.toast(`Kept “${it.name}” in session results`, "It's in the session ledger — re-open, export to CSV, or delete from there."); },
       openSelectionMenu: (anchor) => { this.lastSelAnchor = anchor; this.openSelpop(); },   // ops menu for the current selection (facet/lasso/etc.)
       onConfigurePanel: (id, patch) => this.configurePanel(id, patch),
       registerGeneHover: (fn) => this.geneHoverSinks.push(fn),
@@ -2143,7 +2144,10 @@ export class App {
     if (op === "open") {
       if (ref.kind === "category") { this.noteColor("meta:" + ref.name); this.coord.setColor("meta:" + ref.name); this.switchWS("Metadata", true); }
       else if (ref.kind === "annotation") this.switchWS("Annotate", true);
-      else if (ref.kind === "result") { const r = this.results.get(ref.id!); if (r) { this.addPanel({ type: r.kind === "hvg" ? "GeneList" : "DeTable", title: r.name, cap: r.summary, bind: r.bind, aLabel: r.aLabel, bLabel: r.bLabel, rows: r.rows }); this.fullRender(); } }
+      else if (ref.kind === "result") { const r = this.results.get(ref.id!); if (r) {
+        if (r.kind === "enrich") this.addPanel({ type: "GeneList", title: r.name, cap: "enriched pathways", bind: "enrich:pathways", rows: r.rows.map((x: any) => ({ symbol: x.name, score: -Math.log10(Math.max(x.fdr, 1e-300)) })) });   // snapshot: pathways ranked by −log10 FDR
+        else this.addPanel({ type: r.kind === "hvg" ? "GeneList" : "DeTable", title: r.name, cap: r.summary, bind: r.bind, aLabel: r.aLabel, bLabel: r.bLabel, rows: r.rows });
+        this.fullRender(); } }
       else if (ref.kind === "app") { const w = this.widgetLib.find((x) => x.id === ref.id); if (w) { this.addWidgetPanel(w.source, w.name, w.controls, w.origin === "imported" ? "imported" : "authored"); this.fullRender(); } }
       return;
     }
@@ -2177,10 +2181,14 @@ export class App {
     try {
       if (ref.kind === "result") {
         const r = this.results.get(ref.id!); if (!r) return;
-        const hasMeans = r.rows.some((x: any) => x.meanA != null), hasP = r.rows.some((x: any) => x.p != null), isHvg = r.kind === "hvg";
-        const cols = isHvg ? ["symbol", "score"] : (["symbol", "lfc"] as string[]).concat(hasP ? ["p"] : []).concat(hasMeans ? ["meanA", "meanB"] : []);
-        const head = isHvg ? ["gene", "score"] : (["gene", "logFC"] as string[]).concat(hasP ? ["p"] : []).concat(hasMeans ? [r.aLabel || "A", r.bLabel || "B"] : []);
-        dl(safe(r.name) + ".csv", [head.join(",")].concat(r.rows.map((x: any) => cols.map((c) => cell(x[c])).join(","))).join("\n"));
+        if (r.kind === "enrich") {   // pathway table CSV (name, FDR, fold, overlap, overlap genes)
+          dl(safe(r.name) + ".csv", [["pathway", "FDR", "fold", "k", "m", "genes"].join(",")].concat(r.rows.map((x: any) => [cell(x.name), x.fdr, (x.fold ?? 0).toFixed(1), x.k, x.m, cell((x.genes || []).join(";"))].join(","))).join("\n"));
+        } else {
+          const hasMeans = r.rows.some((x: any) => x.meanA != null), hasP = r.rows.some((x: any) => x.p != null), isHvg = r.kind === "hvg";
+          const cols = isHvg ? ["symbol", "score"] : (["symbol", "lfc"] as string[]).concat(hasP ? ["p"] : []).concat(hasMeans ? ["meanA", "meanB"] : []);
+          const head = isHvg ? ["gene", "score"] : (["gene", "logFC"] as string[]).concat(hasP ? ["p"] : []).concat(hasMeans ? [r.aLabel || "A", r.bLabel || "B"] : []);
+          dl(safe(r.name) + ".csv", [head.join(",")].concat(r.rows.map((x: any) => cols.map((c) => cell(x[c])).join(","))).join("\n"));
+        }
       } else if (ref.kind === "category" || ref.kind === "annotation") {
         const field = ref.name!;
         const m: any = await this.ctx.metaOf(field); if (!m || !m.codes) { this.toast("nothing to export", null); return; }

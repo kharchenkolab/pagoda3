@@ -63,6 +63,7 @@ export interface PanelHooks {
   onTheme: (fn: () => void) => void;                           // managed theme-change subscription (re-resolve build-time-baked theme colours + redraw); cleaned up on fullRender
   focusCategory: (field: string, value: string) => void;       // restrict the workspace to a metadata value (focus + chip)
   addPanel: (spec: any) => void;                               // add a panel to the workbench (e.g. → composition hand-off)
+  recordResult: (r: any) => void;                              // keep a computed result (e.g. a gene-set enrichment) in the session ledger
   openSelectionMenu: (anchor: { left: number; top: number; right?: number }) => void;   // open the selection ops menu (DE/label/ask); `right` right-aligns it to a right-side trigger
   onConfigurePanel: (panelId: number, patch: any) => void;     // a panel reconfiguring itself (e.g. dismissing pinned genes)
   registerGeneHover: (fn: (sym: string | null) => void) => void;   // a panel that highlights a gene's row on cross-panel geneHint
@@ -252,7 +253,7 @@ const GTABLE_CAP = 200;   // max ROWS rendered at once — the table holds the F
 // rows: the sort IS the query (background coupled to the same test = the tested+detected genes ∩ annotated). `getRows`
 // returns the live ordered rows when the user flips to this view; `rankedByFn` names the active sort (shown prominently).
 // Clicking a pathway scores cells by its overlap-gene signature. Lazy-loads the bundled Reactome asset once.
-interface EnrichCap { ctx: Ctx; aLabel?: string; bLabel?: string; defaultRank?: string; }
+interface EnrichCap { ctx: Ctx; aLabel?: string; bLabel?: string; defaultRank?: string; record?: (r: any) => void; sourceName?: string; }
 function enrichView(cap: EnrichCap, getRows: () => RankedGene[], rankedByFn: () => string, st: { topN: number; dir: "ranked" | "up" | "down" | "both" }): { el: HTMLElement; ctrls: HTMLElement; ensure: () => void } {
   const ctx = cap.ctx, aL = cap.aLabel || "A", bL = cap.bLabel || "B", FDR_SHOW = 0.1;
   const esc = (s: string) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]!));
@@ -265,10 +266,14 @@ function enrichView(cap: EnrichCap, getRows: () => RankedGene[], rankedByFn: () 
   nsel.onchange = () => { st.topN = +nsel.value; render(); };
   dsel.onchange = () => { st.dir = dsel.value as any; render(); };
   const dirLabel = (d: string) => d === "up" ? `▲ up in ${esc(aL)}` : d === "down" ? `▲ up in ${esc(bL)}` : d === "ranked" ? `ranked by ${esc(rankedByFn())}` : "enriched";
-  let db: GeneSetDB | null = null;
+  let db: GeneSetDB | null = null, last: EnrichResult[] = [];
+  // "keep" the current enrichment as a first-class session result (shows in the ledger; re-openable + CSV-exportable).
+  if (cap.record) { const keep = mk("button", "mini", "＋ results") as HTMLButtonElement; keep.title = "keep this enrichment in the session results"; ctrls.append(keep);
+    keep.onclick = () => { const rows = last.flatMap((r) => r.rows.filter((x) => x.fdr < FDR_SHOW).map((x) => ({ ...x, direction: r.direction }))); if (!rows.length) return; cap.record!({ name: `Pathways · ${cap.sourceName || "genes"}`, kind: "enrich", summary: `${rows.length} pathway${rows.length === 1 ? "" : "s"} · ranked by ${rankedByFn()}`, bind: "enrich:pathways", rows }); }; }
   const render = () => {
     if (!db) return;
     const results = enrichRanked(getRows(), db.pathways, db.geneSpace, { topN: st.topN, direction: st.dir, minDetect: 0 });
+    last = results;
     body.innerHTML = "";
     const meta = mk("div", "enrmeta"); meta.textContent = `top ${st.topN} · background ${(results[0]?.N || 0).toLocaleString()} detected+annotated · ${db.nPathways.toLocaleString()} Reactome pathways`; body.appendChild(meta);
     for (const res of results) {
@@ -355,7 +360,7 @@ function variableGenesBody(p: Panel, ctx: Ctx, hooks: PanelHooks): BuiltBody {
   const gt = geneTable([], [
     { key: "symbol", label: "gene", get: (r: any) => r.symbol },
     { key: "score", label: "overdispersion", num: true, get: (r: any) => r.score ?? 0, fmt: (v: number) => v.toFixed(2), cls: () => "up" },
-  ], hooks.onGeneClick, { ctx, defaultRank: "overdispersion ↓" });
+  ], hooks.onGeneClick, { ctx, defaultRank: "overdispersion ↓", record: hooks.recordResult, sourceName: p.title || "variable genes" });
   const w = mk("div"); w.style.cssText = "position:absolute;inset:0;display:flex;flex-direction:column;overflow:hidden";
   const scope = mk("div", "vgscope");
   const bar = mk("div", "fetchbar");   // thin data-fetch progress bar — determinate (csrRows runs) or indeterminate (whole-matrix)
@@ -417,7 +422,7 @@ function deBody(p: Panel, ctx: Ctx, hooks: PanelHooks): BuiltBody {
   }
   // The gene table IS the query-staging surface: sort it (logFC ↑/↓, p, a group mean), then flip the header's
   // Genes ⇄ Pathways toggle to enrich that exact order. Enrichment is the other face of the same table.
-  return geneTable(rows, cols, hooks.onGeneClick, { ctx, aLabel: p.aLabel, bLabel: p.bLabel, defaultRank: "logFC ↓" });
+  return geneTable(rows, cols, hooks.onGeneClick, { ctx, aLabel: p.aLabel, bLabel: p.bLabel, defaultRank: "logFC ↓", record: hooks.recordResult, sourceName: p.title });
 }
 
 // A ranked gene list with a single score column (e.g. scope-aware overdispersion).
@@ -425,7 +430,7 @@ function geneListBody(p: Panel, ctx: Ctx, hooks: PanelHooks): BuiltBody {
   return geneTable(p.rows || [], [
     { key: "symbol", label: "gene", get: (r) => r.symbol },
     { key: "score", label: p.cap || "score", num: true, get: (r) => r.score ?? 0, fmt: (v) => v.toFixed(2), cls: () => "up" },
-  ], hooks.onGeneClick, { ctx, defaultRank: (p.cap || "score") + " ↓" });
+  ], hooks.onGeneClick, { ctx, defaultRank: (p.cap || "score") + " ↓", record: hooks.recordResult, sourceName: p.title });
 }
 
 async function compositionBody(panel: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltBody> {
