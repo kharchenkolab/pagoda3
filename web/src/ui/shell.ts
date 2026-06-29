@@ -2124,9 +2124,8 @@ export class App {
       const bExpl = sideCS(B) ? this.resolveCells(sideCS(B)!).ids : null;
       let overlap = 0; if (aIds && bExpl) { const bs = new Set<number>(Array.from(bExpl as any)); for (const i of aIds as any) if (bs.has(i)) overlap++; }
       const aN = aIds ? aIds.length : 0, bRest = !bExpl && !!aIds, bN = bExpl ? bExpl.length : (aIds ? ctx.n - aN : 0), pb = method === "pseudobulk";
-      const note = overlap ? `<b>${fmt(overlap)}</b> cells fall in both A and B → excluded from both.`
-        : bRest ? `Group B is empty → <b>all other cells</b>. A and “rest” are disjoint — nothing to exclude.`
-        : `Overlaps within a group are merged automatically — each cell counts once.`;
+      // Flag ONLY an actual A∩B overlap, and say what it is; stay silent when there's nothing to exclude.
+      const note = overlap ? `⚠ <b>${fmt(overlap)}</b> cell${overlap === 1 ? "" : "s"} match a member of BOTH A and B — excluded from both sides so the contrast stays clean.` : "";
       card.innerHTML =
         `<div class="dehd"><b>Differential expression</b><span class="dex">✕</span></div>` +
         `<div class="delab a">Group A</div><div class="degrp${A.length ? "" : " empty"}" data-box="A">${chips(A, "A")}</div>` +
@@ -2134,7 +2133,7 @@ export class App {
         `<div class="derow">add <select class="deadd" style="flex:1;min-width:0">${addOptions()}</select> to <button class="detgt mini${target === "A" ? " ona" : ""}" data-t="A">A</button><button class="detgt mini${target === "B" ? " onb" : ""}" data-t="B">B</button></div>` +
         `<div class="derow" style="border-top:1px solid var(--line2);padding-top:9px">test <select class="demethod"><option value="de"${pb ? "" : " selected"}>cell-level (ranking)</option><option value="pseudobulk"${pb ? " selected" : ""}>pseudobulk (paired)</option></select>${pb ? ` across <select class="derep">${ctx.categoricalFields().map((f) => `<option value="${esc(f)}"${f === replicate ? " selected" : ""}>${esc(f)}</option>`).join("")}</select>` : ""}</div>` +
         `<div class="deread"><span class="ca">A:</span> ${fmt(Math.max(0, aN - overlap))} cells &nbsp;vs&nbsp; <span class="cb">B:</span> ${bRest ? "rest · " + fmt(bN) : fmt(Math.max(0, bN - overlap)) + " cells"}</div>` +
-        `<div class="denote">${note}</div>` +
+        (note ? `<div class="denote">${note}</div>` : "") +
         `<div class="defoot"><span style="font-size:11px;color:var(--faint);margin-right:auto">${pb ? "paired t across " + esc(replicate) + " → real p-value" : "ranking-grade · no p-value"}</span><button class="mini derun"${A.length ? "" : " disabled"}>Run DE</button></div>`;
       (card.querySelector(".dex") as HTMLElement).onclick = close;
       (card.querySelector(".deadd") as HTMLSelectElement).onchange = (e) => { const v = (e.target as HTMLSelectElement).value; if (!v) return; const s = items[+v]; (target === "A" ? A : B).push(s.kind === "category" ? { kind: "category", grouping: s.grouping, value: s.value } : { kind: "cells", ids: s.ids.slice(), label: s.label }); render(); };
