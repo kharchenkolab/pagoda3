@@ -263,7 +263,7 @@ async function execTool(app: App, name: string, input: any): Promise<string> {
     case "adopt_source": { if (!input.source) return "adopt_source: 'source' is required"; const { ok, error } = await app.adoptSource(input.source, input.base); return error ? `error: ${error}` : ok!; }
     case "import_labeling": { const { ok, error } = await app.importLabeling(input); return error ? `error: ${error}` : ok!; }
     case "rename_label": { if (!input.from || !input.to) return "rename_label: 'from' and 'to' are required"; const { ok, error } = app.renameLabel("annotation", String(input.from), String(input.to)); return error ? `error: ${error}` : ok!; }
-    case "manage_category": { const { ok, error } = app.manageCategory(input); return error ? `error: ${error}` : ok!; }
+    case "manage_category": { const { ok, error } = app.manageCategory({ ...input, source: "agent" }); return error ? `error: ${error}` : ok!; }
     case "lookup_ontology": {
       const term = String(input?.term || "").trim(); if (!term) return "lookup_ontology: 'term' is required";
       const hits = await olsLookup(term);

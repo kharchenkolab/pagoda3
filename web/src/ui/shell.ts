@@ -252,10 +252,13 @@ export class App {
   persistSession() {
     const userWS = this.wsOrder.filter((n) => !this.builtinWS.has(n) && this.WS[n]).map((n) => ({ name: n, ws: this.WS[n] }));
     const base = { store: this.currentStore(), fingerprint: this.datasetFingerprint(), currentWS: this.currentWS, colorBy: this.coord.state.colorBy, canvas: this.captureLayout(), userWS, annotation: this.serializeAnnotation(), catColors: serializeCategoryColors(), style: (this.coord.state as any).style, customPalette: serializeCustomPalette(), results: this.results.serialize() };
-    // Try the full doc (incl. the chat log); if it busts the ~5MB quota, retry WITHOUT the conversation so views +
-    // annotation still persist (the chat is the biggest + most droppable part — it's also in the exportable file).
+    // Quota ladder (~5MB localStorage): full doc → drop the chat log → drop RESULT ROWS (keep each result as a
+    // re-runnable stub: spec + provenance + summary survive, the rows don't — re-open re-runs it) → give up. Each rung
+    // sheds the next-biggest droppable thing while keeping the session reopenable. The portable FILE export keeps everything.
+    const slim = { ...base, results: this.results.serialize().map((r) => ({ ...r, rows: [] })) };
     try { localStorage.setItem(SESSION_KEY, serializeSession({ ...base, conversation: this.serializeConversation() })); }
-    catch { try { localStorage.setItem(SESSION_KEY, serializeSession(base)); } catch { /* private mode / still over — non-fatal */ } }
+    catch { try { localStorage.setItem(SESSION_KEY, serializeSession(base)); }
+      catch { try { localStorage.setItem(SESSION_KEY, serializeSession(slim)); } catch { /* private mode / still over — non-fatal */ } } }
   }
   restoreSession() {
     this.widgetLib = loadWidgets(localStorage.getItem(WIDGETS_KEY));   // the widget LIBRARY is dataset-agnostic — always load it
@@ -1383,7 +1386,7 @@ export class App {
         setLabel(layer, ids, value); total += ids.length;
       }
       if (!layer.categories.length) return { error: "create: no cells were assigned to any value" };
-      layer.provenance = { method: "manage_category" };
+      layer.provenance = { method: "manage_category", who: String(input?.source || "user") } as any;
       this.commitLayer(layer); this.noteColor("meta:" + name); this.coord.setColor("meta:" + name);
       return { ok: `created field "${name}" (${layer.categories.length} categories: ${layer.categories.slice(0, 8).join(", ")}) — labeled ${total} cells; coloured by it` };
     }
@@ -2091,7 +2094,7 @@ export class App {
   // and apps, normalized to one row shape. Gathers live state and hands it to the pure builder (node-tested).
   sessionEntities(): SessionEntity[] {
     const categories: { name: string; values: number; who: "user" | "agent"; when: number; derived?: boolean }[] = [];
-    for (const L of this.annoLayers.values()) if (L.name !== "annotation") categories.push({ name: L.name, values: L.categories.length, who: "user", when: 0 });
+    for (const L of this.annoLayers.values()) if (L.name !== "annotation") categories.push({ name: L.name, values: L.categories.length, who: (L.provenance as any)?.who === "agent" ? "agent" : "user", when: 0 });
     for (const name of this.ctx.derivedGroupings()) categories.push({ name, values: this.ctx.categoricalValues(name).length, who: "user", when: 0, derived: true });
     const ann = this.annoLayers.get("annotation");
     const annotation = ann ? { labels: ann.categories.length, records: ann.records ? Object.keys(ann.records).length : 0 } : null;
