@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { sample, overdispersedCore, deCore, groupStatsForCellsCore, meanVarCore, logFupperTail, pseudobulkDECore, type ODPanel } from "./odcore.ts";
+import { sample, overdispersedCore, deCore, groupStatsForCellsCore, meanVarCore, logFupperTail, pseudobulkDECore, pseudobulkPairedDECore, type ODPanel } from "./odcore.ts";
 
 // Build a cell-major CSR panel from a dense [cell][gene] matrix (stores only nonzeros, like the real panel).
 function buildPanel(dense: number[][], lognorm = true): ODPanel {
@@ -125,4 +125,24 @@ test("pseudobulkDECore: a gene that differs across replicate groups beats a null
   // a group with <2 replicates → no rows (caller turns repsA/repsB into a clear error)
   const one = pseudobulkDECore(meanA, [50, 0, 0, 0], meanB, nB, ng, G, 10);
   assert.equal(one.rows.length, 0); assert.deepEqual(one.repsA, [0]);
+});
+
+test("pseudobulkPairedDECore: paired across levels carrying BOTH sides; consistent within-pair shift is significant; ≥2 guard", () => {
+  const ng = 2, G = 3;   // 3 samples, EACH with A-cells and B-cells (paired). row-major s*ng+j
+  //  gene0: A−B = +1.0 every sample (consistent shift). gene1: A−B = ~0 (null).
+  const meanA = [ 3.0, 1.0,   3.1, 1.1,   2.9, 0.9 ];
+  const nA    = [ 40, 40, 40 ];
+  const meanB = [ 2.0, 1.05,  2.1, 0.95,  1.9, 1.0 ];
+  const nB    = [ 40, 40, 40 ];
+  const { rows, reps } = pseudobulkPairedDECore(meanA, nA, meanB, nB, ng, G, 10);
+  assert.deepEqual(reps, [0, 1, 2]);                 // all three carry BOTH sides → paired replicates
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].g, 0);                         // the consistently-shifted gene ranks first
+  assert.ok(Math.abs(rows[0].lfc - 1.0) < 1e-6);      // mean paired difference ≈ +1.0
+  assert.equal(rows[0].nA, 3); assert.equal(rows[0].nB, 3);   // paired-level count
+  assert.ok(rows[0].p < 0.05, `consistent shift is significant (p=${rows[0].p})`);
+  assert.ok(rows.find((r) => r.g === 1)!.p > 0.3, "null gene not significant");
+  // a level missing one side is NOT a paired replicate; only 1 paired level left → <2 → no rows
+  const dropped = pseudobulkPairedDECore(meanA, [40, 0, 40], meanB, [40, 40, 0], ng, G, 10);
+  assert.deepEqual(dropped.reps, [0]); assert.equal(dropped.rows.length, 0);
 });

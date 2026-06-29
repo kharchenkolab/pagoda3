@@ -20,7 +20,7 @@ import { installOverflow } from "./overflow.ts";
 import { makeWidgetHost } from "../widget/apphost.ts";
 import type { WidgetHost, WidgetHandle } from "../widget/runtime.ts";
 import { widgetLint } from "../widget/contract.ts";
-import { pseudobulkDECore } from "../compute/odcore.ts";
+import { pseudobulkDECore, pseudobulkPairedDECore } from "../compute/odcore.ts";
 import { fieldBuckets } from "../data/fieldroles.ts";
 import { SESSION_KEY, WIDGETS_KEY, SavedWidget, SerAnnoLayer, Fingerprint, serializeSession, parseSession, serializeBundle, parseBundle, fingerprintMismatch, upsertWidget, loadWidgets, widgetHash } from "./persist.ts";
 
@@ -88,7 +88,6 @@ export class App {
   thread: any = null; threadDocked = false; nudgePending: any = null; apTimer: any = null; apIndex = 0;
   scope: Scope | null = null; askScope: Scope | null = null; hot = 0; filtered: any[] = []; lastSelAnchor: { left: number; top: number; right?: number } = { left: 0, top: 0 };
   private selpopOutside?: (e: Event) => void;   // the selection popover's OWN outside-dismiss listener (armed on open, removed on close) — see showSelpop/hideSelpop
-  groupB: { set: CellSet; label: string; n: number } | null = null;   // pinned comparison group B for agent-free A-vs-B DE (set from a selection; see openSelpop)
   lastSaveCategory?: string;   // remember the Save-selection target so repeated saves default to the same custom category
   proposalWhy = "";
 
@@ -1448,7 +1447,7 @@ export class App {
     return (s?.type === "selection" && s.ids && s.ids.length) ? s.ids : live;
   }
 
-  async runCompute(input: { stat?: string; A?: CellSet; B?: CellSet; replicate?: string; toCanvas?: boolean; title?: string }): Promise<{ ok?: string; error?: string }> {
+  async runCompute(input: { stat?: string; A?: CellSet; B?: CellSet; replicate?: string; paired?: boolean; toCanvas?: boolean; title?: string }): Promise<{ ok?: string; error?: string }> {
     const ctx = this.ctx;
     if (input.stat !== "de" && input.stat !== "overdispersion" && input.stat !== "pseudobulk") return { error: `unknown stat "${input.stat}" — use "de", "pseudobulk", or "overdispersion"` };
     if (!input.A) { if (input.stat === "overdispersion") input.A = { all: true } as CellSet; else return { error: "A (a cell set) is required" }; }   // global variable genes when no scope given
@@ -1458,7 +1457,7 @@ export class App {
     const Bexpr: CellSet | undefined = needsB ? (input.B ?? ({ complement: input.A } as CellSet)) : undefined;
     if (Bexpr) { const eB = validateCellSet(Bexpr, world, "B"); if (eB) return { error: eB }; }
     const env: CellEnv = { n: ctx.n, category: (g, v) => ctx.cellsOfCategory(g, v), selection: () => this.selectionForCompute(), focus: () => ctx.coord.state.focus?.ids ?? [] };
-    const Aids = [...resolveCellSet(input.A, env)];
+    let Aids = [...resolveCellSet(input.A, env)];
     if (!Aids.length) return { error: `A (${describeCellSet(input.A)}) resolves to no cells` };
     await ctx.view.genes();
     // The category a cell set RESOLVES to (so we can name it AUTHORITATIVELY), or null. {category} is itself; {selection}
@@ -1490,8 +1489,16 @@ export class App {
       place({ type: "GeneList", title: namedA ? `Variable genes · ${label}` : (input.title || `Variable genes · ${label}`), cap: "overdispersion", bind: "hvg:scope", rows: hv.map((h) => ({ symbol: h.symbol, score: h.resid })) });
       return { ok: `top variable genes in ${label} (${Aids.length} cells), recomputed for this scope: ${hv.slice(0, 10).map((h) => h.symbol).join(", ")}` };
     }
-    const Bids = [...resolveCellSet(Bexpr!, env)];
+    let Bids = [...resolveCellSet(Bexpr!, env)];
     if (!Bids.length) return { error: `B (${describeCellSet(Bexpr!)}) resolves to no cells` };
+    // Exclude cells that fall in BOTH A and B — ambiguous for a contrast: drop from both sides, report the count. For
+    // A-vs-rest or two values of one field the intersection is empty, so this is a no-op there; it only bites the
+    // cross-field / selection cases that can actually overlap.
+    let excludedBoth = 0;
+    { const bset = new Set(Bids); const overlap = Aids.filter((i) => bset.has(i));
+      if (overlap.length) { const oset = new Set(overlap); Aids = Aids.filter((i) => !oset.has(i)); Bids = Bids.filter((i) => !oset.has(i)); excludedBoth = overlap.length; } }
+    if (!Aids.length || !Bids.length) return { error: `after excluding ${excludedBoth.toLocaleString()} cell(s) shared by A and B, one side is empty — the groups overlap too much to contrast` };
+    const sharedNote = excludedBoth ? ` · ${excludedBoth.toLocaleString()} shared cells excluded` : "";
     const aL = richLabel(input.A, Aids), bL = input.B ? richLabel(Bexpr!, Bids) : "rest";
     // When either side is an authoritative category, the contrast IS the title — ignore a generic agent `title`. Only an
     // anonymous (manual-lasso) contrast falls back to the agent's title, so it can still NAME an otherwise-unlabelled set.
@@ -1525,11 +1532,22 @@ export class App {
       const G = md.categories.length, ng = ctx.view.nGenes, minCells = 10;
       const sA = await ctx.view.groupStatsForCells(md.codes, G, Aids);
       const sB = await ctx.view.groupStatsForCells(md.codes, G, Bids);
+      // PAIRED (the composer's Test 1): each replicate carries BOTH A and B cells → test the per-replicate A−B difference.
+      if (input.paired) {
+        const { rows: pr, reps } = pseudobulkPairedDECore(sA.mean, sA.n, sB.mean, sB.n, ng, G, minCells);
+        if (reps.length < 2) return { error: `paired pseudobulk needs ≥2 ${rep}s carrying BOTH A and B cells (≥${minCells} each), but found ${reps.length}. Each ${rep} is its own paired control — pick a factor whose levels span both groups (or use cell-level).` };
+        const genes = await ctx.view.genes();
+        const rows = pr.map((r) => ({ gene: r.g, symbol: genes[r.g], lfc: r.lfc, p: r.p, meanA: r.meanA, meanB: r.meanB }));
+        place({ type: "DeTable", title: titleOf(`${aL} vs ${bL}`), cap: `pseudobulk · paired across ${reps.length} ${rep}s${sharedNote}`, bind: "pseudobulk:paired", aLabel: aL, bLabel: bL, rows });
+        const sig = rows.filter((r) => r.p < 0.05).length;
+        const top = rows.slice(0, 8).map((r) => `${r.symbol}${r.p < 0.05 ? "*" : ""}`).join(", ");
+        return { ok: `paired pseudobulk DE ${aL} vs ${bL} across ${reps.length} ${rep}(s): ${sig} gene(s) at p<0.05 (paired t-test on the per-${rep} A−B difference — each ${rep} is its own control). Top by p: ${top}.` };
+      }
       const { rows: pr, repsA, repsB } = pseudobulkDECore(sA.mean, sA.n, sB.mean, sB.n, ng, G, minCells);
       if (repsA.length < 2 || repsB.length < 2) return { error: `pseudobulk needs ≥2 replicates per group, but A has ${repsA.length} and B has ${repsB.length} ${rep}(s) with ≥${minCells} cells. Pick a replicate field with enough samples on each side (a 1-vs-1 or 3-vs-0 split can't carry a population claim).` };
       const genes = await ctx.view.genes();
       const rows = pr.map((r) => ({ gene: r.g, symbol: genes[r.g], lfc: r.lfc, p: r.p, meanA: r.meanA, meanB: r.meanB }));
-      place({ type: "DeTable", title: titleOf(`${aL} vs ${bL}`), cap: `donor-level · ${repsA.length} vs ${repsB.length} ${rep}s`, bind: "pseudobulk:donor", aLabel: aL, bLabel: bL, rows });
+      place({ type: "DeTable", title: titleOf(`${aL} vs ${bL}`), cap: `donor-level · ${repsA.length} vs ${repsB.length} ${rep}s${sharedNote}`, bind: "pseudobulk:donor", aLabel: aL, bLabel: bL, rows });
       const sig = rows.filter((r) => r.p < 0.05).length;
       const top = rows.slice(0, 8).map((r) => `${r.symbol}${r.p < 0.05 ? "*" : ""}`).join(", ");
       return { ok: `pseudobulk DE ${aL} vs ${bL} across ${rep}, ${repsA.length} vs ${repsB.length} replicates: ${sig} gene(s) at p<0.05 (Welch t-test on per-replicate mean log-expression). Top by p: ${top}. The replicate is the unit here, so unlike cell-level de this carries a real p-value and supports a population-level claim — but with few replicates power is limited; treat marginal hits cautiously.` };
@@ -1538,7 +1556,7 @@ export class App {
     // de (cell-level, ranking-grade)
     const { ranked, panel } = await ctx.view.subsampleDE(Aids, Bids);
     const rows = ranked.map((r: any) => ({ gene: r.gene, symbol: r.symbol, lfc: r.lfc, meanA: r.meanA, meanB: r.meanB }));   // ALL tested genes — the panel filters/searches the full list (render is capped)
-    place({ type: "DeTable", title: titleOf(`${aL} vs ${bL}`), cap: "cell-level DE", bind: "de:between", aLabel: aL, bLabel: bL, rows });   // title = the contrast (the identity); cap = the test TYPE (secondary, non-redundant) — the approx/ranking nature lives in the caveat
+    place({ type: "DeTable", title: titleOf(`${aL} vs ${bL}`), cap: "cell-level DE" + sharedNote, bind: "de:between", aLabel: aL, bLabel: bL, rows });   // title = the contrast (the identity); cap = the test TYPE (secondary, non-redundant) — the approx/ranking nature lives in the caveat
     const up = rows.filter((r: any) => r.lfc > 0).slice(0, 6).map((r: any) => r.symbol).join(", ");
     const dn = rows.filter((r: any) => r.lfc < 0).slice(0, 6).map((r: any) => r.symbol).join(", ");
     return { ok: `DE ${aL} (${Aids.length}) vs ${bL} (${Bids.length}), compared directly. Higher in ${aL}: ${up || "—"}. Higher in ${bL}: ${dn || "—"}.` };
@@ -2003,32 +2021,24 @@ export class App {
       this.scope = { type: "selection", ids: Array.from(ids), summary: `${ids.length} cells (mostly ${top?.[0] || "?"})`, sel } as any;
       const esc = (s: string) => String(s).replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]!));
       const sp = this.$("selpop");
-      // DE is direct now (no agent). When a comparison group B is pinned, the menu grows the A-vs-B contrasts —
-      // cell-level always, plus donor-level pseudobulk when a replicate field is detected (the statistically correct
-      // population test). A-vs-B works for two lassos AND two category values (a category click IS a selection).
-      const hasB = !!this.groupB; const rep = hasB ? this.likelyReplicate() : null;
-      let html = `<div class="head">${ids.length} cells · mostly ${top?.[0] || "?"}</div>` +
+      // DE is direct (no agent). "Run DE" is the one-click selection-vs-rest; "Compare A vs B…" opens the composer
+      // (prefilled with this selection as A) for the general case — two groups, unions, cross-field, cell-level or
+      // paired pseudobulk. The composer replaced the old stateful group-B pin.
+      sp.innerHTML = `<div class="head">${ids.length} cells · mostly ${top?.[0] || "?"}</div>` +
         `<div class="it" data-a="ask"><span class="ic">⌘K</span>Ask about these…</div>` +
-        `<div class="it" data-a="de"><span class="ic">≢</span>Run DE <span style="opacity:.5;margin-left:auto;font-size:10px">vs rest</span></div>`;
-      if (hasB) html += `<div class="it" data-a="deB"><span class="ic">≢</span>DE vs group B <span style="opacity:.5;margin-left:auto;font-size:10px">${esc(this.groupB!.label)}</span></div>`;
-      if (hasB && rep) html += `<div class="it" data-a="deBpb"><span class="ic">≣</span>DE vs B · donor-level <span style="opacity:.5;margin-left:auto;font-size:10px">${esc(rep)}</span></div>`;
-      html += `<div class="it" data-a="setB"><span class="ic">◧</span>Set as comparison group B</div>` +
+        `<div class="it" data-a="de"><span class="ic">≢</span>Run DE <span style="opacity:.5;margin-left:auto;font-size:10px">vs rest</span></div>` +
+        `<div class="it" data-a="compare"><span class="ic">⇄</span>Compare A vs B…</div>` +
         `<div class="it" data-a="subset"><span class="ic">⊙</span>Subset to these <span style="opacity:.5;margin-left:auto;font-size:10px">hide the rest</span></div>` +
         `<div class="it" data-a="label"><span class="ic">✎</span>Save selection…</div>` +
         `<div class="it" data-a="clear"><span class="ic">✕</span>Clear selection</div>`;
-      if (hasB) html += `<div class="it" data-a="clearB"><span class="ic">⌫</span>Clear group B</div>`;
-      sp.innerHTML = html;
       this.showSelpop();   // reveal at lastSelAnchor + arm the popover's own outside-dismiss listener
       const A = () => this.selToCellSet(sel, ids); const aL = this.selLabel(sel, ids);
       sp.querySelectorAll<HTMLElement>(".it").forEach((it) => it.onclick = () => { const a = it.dataset.a;
         if (a === "label") { this.selpopLabelInput(Array.from(ids)); return; }   // sub-view — popover stays open
-        if (a === "setB") { this.groupB = { set: A(), label: aL, n: ids.length }; this.hideSelpop(); this.coord.setSelection(null); this.scope = null; this.toast(`comparison group B = ${aL}`, "Select another group, then choose “DE vs group B”."); return; }
         this.hideSelpop();
         if (a === "ask") this.openPalette(this.scope!);
         else if (a === "de") this.runDEdirect(A(), aL, undefined, "rest");
-        else if (a === "deB") this.runDEdirect(A(), aL, this.groupB!.set, this.groupB!.label);
-        else if (a === "deBpb") this.runDEdirect(A(), aL, this.groupB!.set, this.groupB!.label, rep!);
-        else if (a === "clearB") { this.groupB = null; this.toast("cleared comparison group B", null); }
+        else if (a === "compare") this.openDEComposer({ sel, ids: Array.from(ids) });   // general A-vs-B composer, prefilled with this selection as A
         else if (a === "subset") {   // L3: promote the selection to the working subset — the rest is hidden from every view
           const op = sel?.kind === "category" ? { dim: sel.grouping, value: sel.value } : { set: Array.from(ids), label: `${ids.length.toLocaleString()} cells` };
           this.coord.setSelection(null);   // the subset becomes the frame — nothing is sub-selected within it
@@ -2059,6 +2069,93 @@ export class App {
     this.toast(`computing ${replicate ? "donor-level " : ""}DE — ${aLabel} vs ${bLabel}…`, null);
     const r = await this.runCompute({ stat: replicate ? "pseudobulk" : "de", A, B, replicate, toCanvas: true });
     if (r.error) this.toast(`DE failed: ${r.error}`, null);
+  }
+
+  // The DE composer — build group A and B from any field's values (+ the current selection), drag chips between them,
+  // pick cell-level or paired-pseudobulk, run. B empty ⇒ rest. Body-level modal so it survives a fullRender; A and B
+  // resolve to CellSets handed to runCompute (which excludes A∩B and reports it). Replaces the old group-B pin.
+  openDEComposer(prefill?: { sel?: any; ids?: number[] }) {
+    if (document.getElementById("decomp")) return;
+    const ctx = this.ctx;
+    type Member = { kind: "category"; grouping: string; value: string } | { kind: "cells"; ids: number[]; label: string };
+    const A: Member[] = [], B: Member[] = [];
+    const sel = prefill?.sel ?? ctx.coord.state.selection;
+    const selIds = prefill?.ids ?? Array.from(ctx.selectedCells());
+    if ((sel as any)?.kind === "category") A.push({ kind: "category", grouping: (sel as any).grouping, value: String((sel as any).value) });
+    else if (selIds.length) A.push({ kind: "cells", ids: selIds.slice(), label: `selection · ${selIds.length.toLocaleString()}` });
+    let method: "de" | "pseudobulk" = "de";
+    let replicate = this.likelyReplicate() || ctx.categoricalFields()[0] || "";
+    let target: "A" | "B" = "B";
+    let dragRef: { m: Member; from: "A" | "B" } | null = null;
+    const esc = (s: string) => String(s).replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]!));
+    const fmt = (x: number) => x.toLocaleString();
+    const memberCS = (m: Member): CellSet => m.kind === "category" ? { category: { grouping: m.grouping, value: m.value } } : { set: m.ids };
+    const sideCS = (arr: Member[]): CellSet | null => arr.length ? (arr.length === 1 ? memberCS(arr[0]) : { union: arr.map(memberCS) }) : null;
+    const memLabel = (m: Member) => m.kind === "category" ? m.value : m.label;
+    const memField = (m: Member) => m.kind === "category" ? m.grouping : "cells";
+    // the value picker's flat item list (option index → a member to clone): the current selection, then every category value
+    const items: Member[] = [];
+    if (selIds.length) items.push({ kind: "cells", ids: selIds.slice(), label: `selection · ${selIds.length.toLocaleString()}` });
+    const selCount = items.length;
+    for (const f of ctx.metadataFields()) if (f.kind === "categorical") for (const v of ctx.categoricalValues(f.name)) items.push({ kind: "category", grouping: f.name, value: String(v) });
+
+    const back = document.createElement("div"); back.id = "decomp"; back.className = "demodal"; back.innerHTML = `<div class="decard"></div>`;
+    const card = back.querySelector(".decard") as HTMLElement; document.body.appendChild(back);
+    const close = () => { back.remove(); document.removeEventListener("keydown", onKey, true); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
+    document.addEventListener("keydown", onKey, true);
+    back.onpointerdown = (e) => { if (e.target === back) close(); };
+
+    const addOptions = () => {
+      let h = `<option value="">add a value…</option>`;
+      if (selCount) h += `<optgroup label="selection"><option value="0">${esc((items[0] as any).label)}</option></optgroup>`;
+      let cur = "", buf = "";
+      for (let i = selCount; i < items.length; i++) { const m = items[i] as any;
+        if (m.grouping !== cur) { if (cur) buf += `</optgroup>`; cur = m.grouping; buf += `<optgroup label="${esc(cur)}">`; }
+        buf += `<option value="${i}">${esc(m.value)}</option>`; }
+      return h + buf + (cur ? `</optgroup>` : "");
+    };
+    const chips = (arr: Member[], grp: "A" | "B") => arr.length
+      ? arr.map((m, i) => `<span class="dechip" draggable="true" data-g="${grp}" data-i="${i}"><span class="df">${esc(memField(m))} ·</span> ${esc(memLabel(m))}<i class="x" data-rm="${grp}:${i}">✕</i></span>`).join("")
+      : (grp === "B" ? `<span class="dehint">all other cells — everything not in A</span>` : `<span class="dehint">add a group…</span>`);
+
+    const render = () => {
+      const aIds = sideCS(A) ? this.resolveCells(sideCS(A)!).ids : null;
+      const bExpl = sideCS(B) ? this.resolveCells(sideCS(B)!).ids : null;
+      let overlap = 0; if (aIds && bExpl) { const bs = new Set<number>(Array.from(bExpl as any)); for (const i of aIds as any) if (bs.has(i)) overlap++; }
+      const aN = aIds ? aIds.length : 0, bRest = !bExpl && !!aIds, bN = bExpl ? bExpl.length : (aIds ? ctx.n - aN : 0), pb = method === "pseudobulk";
+      const note = overlap ? `<b>${fmt(overlap)}</b> cells fall in both A and B → excluded from both.`
+        : bRest ? `Group B is empty → <b>all other cells</b>. A and “rest” are disjoint — nothing to exclude.`
+        : `Overlaps within a group are merged automatically — each cell counts once.`;
+      card.innerHTML =
+        `<div class="dehd"><b>Differential expression</b><span class="dex">✕</span></div>` +
+        `<div class="delab a">Group A</div><div class="degrp${A.length ? "" : " empty"}" data-box="A">${chips(A, "A")}</div>` +
+        `<div class="delab b">Group B</div><div class="degrp${B.length ? "" : " empty"}" data-box="B">${chips(B, "B")}</div>` +
+        `<div class="derow">add <select class="deadd" style="flex:1;min-width:0">${addOptions()}</select> to <button class="detgt mini${target === "A" ? " ona" : ""}" data-t="A">A</button><button class="detgt mini${target === "B" ? " onb" : ""}" data-t="B">B</button></div>` +
+        `<div class="derow" style="border-top:1px solid var(--line2);padding-top:9px">test <select class="demethod"><option value="de"${pb ? "" : " selected"}>cell-level (ranking)</option><option value="pseudobulk"${pb ? " selected" : ""}>pseudobulk (paired)</option></select>${pb ? ` across <select class="derep">${ctx.categoricalFields().map((f) => `<option value="${esc(f)}"${f === replicate ? " selected" : ""}>${esc(f)}</option>`).join("")}</select>` : ""}</div>` +
+        `<div class="deread"><span class="ca">A:</span> ${fmt(Math.max(0, aN - overlap))} cells &nbsp;vs&nbsp; <span class="cb">B:</span> ${bRest ? "rest · " + fmt(bN) : fmt(Math.max(0, bN - overlap)) + " cells"}</div>` +
+        `<div class="denote">${note}</div>` +
+        `<div class="defoot"><span style="font-size:11px;color:var(--faint);margin-right:auto">${pb ? "paired t across " + esc(replicate) + " → real p-value" : "ranking-grade · no p-value"}</span><button class="mini derun"${A.length ? "" : " disabled"}>Run DE</button></div>`;
+      (card.querySelector(".dex") as HTMLElement).onclick = close;
+      (card.querySelector(".deadd") as HTMLSelectElement).onchange = (e) => { const v = (e.target as HTMLSelectElement).value; if (!v) return; const s = items[+v]; (target === "A" ? A : B).push(s.kind === "category" ? { kind: "category", grouping: s.grouping, value: s.value } : { kind: "cells", ids: s.ids.slice(), label: s.label }); render(); };
+      card.querySelectorAll<HTMLElement>(".detgt").forEach((b) => b.onclick = () => { target = b.dataset.t as any; render(); });
+      (card.querySelector(".demethod") as HTMLSelectElement).onchange = (e) => { method = (e.target as HTMLSelectElement).value as any; render(); };
+      const rep = card.querySelector(".derep") as HTMLSelectElement | null; if (rep) rep.onchange = () => { replicate = rep.value; render(); };
+      card.querySelectorAll<HTMLElement>(".x").forEach((x) => x.onclick = () => { const p = x.dataset.rm!.split(":"); (p[0] === "A" ? A : B).splice(+p[1], 1); render(); });
+      card.querySelectorAll<HTMLElement>(".dechip").forEach((c) => { c.ondragstart = () => { dragRef = { m: (c.dataset.g === "A" ? A : B)[+c.dataset.i!], from: c.dataset.g as any }; }; c.ondragend = () => { dragRef = null; }; });
+      card.querySelectorAll<HTMLElement>(".degrp").forEach((box) => {
+        box.ondragover = (e) => { e.preventDefault(); box.classList.add("drop"); };
+        box.ondragleave = () => box.classList.remove("drop");
+        box.ondrop = (e) => { e.preventDefault(); box.classList.remove("drop"); const to = box.dataset.box as "A" | "B"; if (!dragRef || dragRef.from === to) return; const src = dragRef.from === "A" ? A : B, idx = src.indexOf(dragRef.m); if (idx >= 0) src.splice(idx, 1); (to === "A" ? A : B).push(dragRef.m); dragRef = null; render(); };
+      });
+      (card.querySelector(".derun") as HTMLButtonElement).onclick = async () => {
+        const aCS = sideCS(A); if (!aCS) return; close();
+        this.toast(`computing ${method === "pseudobulk" ? "paired pseudobulk" : "cell-level"} DE…`, null);
+        const r = await this.runCompute({ stat: method, A: aCS, B: sideCS(B) || undefined, replicate: method === "pseudobulk" ? replicate : undefined, paired: method === "pseudobulk" ? true : undefined, toCanvas: true });
+        if (r.error) this.toast(`DE failed: ${r.error}`, null);
+      };
+    };
+    render();
   }
   // selection → "Save selection…": name a VALUE and choose the target CATEGORY — the working draft, another editable
   // category you made, or a brand-new one. Writes via labelCells into ANY annotation layer (auto-creates it), then

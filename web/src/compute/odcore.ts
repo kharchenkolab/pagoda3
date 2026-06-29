@@ -143,6 +143,36 @@ export function pseudobulkDECore(
   return { rows, repsA, repsB };
 }
 
+// PAIRED pseudobulk: the composer's "pseudobulk across <factor>" (Test 1). For each level s of the factor that has
+// ENOUGH cells in BOTH A and B, aggregate A-cells → aₛ and B-cells → bₛ; the test is on the per-level difference
+// dₛ = aₛ − bₛ (a one-sample t against 0), so the level is its own control — paired, more powerful, and the right test
+// when A and B are two cell groups measured within each replicate (e.g. CD4 vs CD8 per sample). Unlike the unpaired
+// pseudobulkDECore (A-reps vs B-reps as independent groups), here a replicate must carry BOTH sides. Pure → node-testable.
+export function pseudobulkPairedDECore(
+  meanA: ArrayLike<number>, nA: ArrayLike<number>,
+  meanB: ArrayLike<number>, nB: ArrayLike<number>,
+  ng: number, G: number, minCells = 10,
+): { rows: PseudobulkRow[]; reps: number[] } {
+  const reps: number[] = [];
+  for (let s = 0; s < G; s++) if (nA[s] >= minCells && nB[s] >= minCells) reps.push(s);   // a level joins only if it carries BOTH sides
+  const k = reps.length, rows: PseudobulkRow[] = [];
+  if (k < 2) return { rows, reps };   // caller errors — a paired t-test needs ≥2 levels present on both sides
+  for (let j = 0; j < ng; j++) {
+    let sd = 0; for (const s of reps) sd += meanA[s * ng + j] - meanB[s * ng + j];
+    const md = sd / k;                                   // mean per-level difference = the paired logFC
+    let v = 0; for (const s of reps) { const e = (meanA[s * ng + j] - meanB[s * ng + j]) - md; v += e * e; }
+    v /= (k - 1);
+    const se = Math.sqrt(v / k); let t = 0; const df = k - 1;
+    if (se > 1e-12) t = md / se;
+    else if (Math.abs(md) > 1e-9) t = md > 0 ? 50 : -50;   // zero within-pair variance but a consistent shift → near-perfect
+    const p = Math.exp(logFupperTail(t * t, 1, Math.max(df, 1)));
+    let ma = 0, mb = 0; for (const s of reps) { ma += meanA[s * ng + j]; mb += meanB[s * ng + j]; }
+    rows.push({ g: j, lfc: md, t, p, meanA: ma / k, meanB: mb / k, nA: k, nB: k });
+  }
+  rows.sort((x, y) => x.p - y.p || Math.abs(y.lfc) - Math.abs(x.lfc));
+  return { rows, reps };
+}
+
 // ----- LOWESS: tricube-weighted local linear fit of y~x at anchors, linearly interpolated -----
 function lowess(xs: number[], ys: number[], span = 0.3, nAnchor = 200): (x: number) => number {
   const n = xs.length;
