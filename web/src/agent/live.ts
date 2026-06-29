@@ -362,6 +362,17 @@ export async function runLive(app: App, userText: string, abort: AbortSignal): P
       app.thread.entries.push({ role: "agent", text: "Your Anthropic token was rejected — most likely the OAuth token expired. Open ⚙ connection and paste a fresh token, then resend." });
       ag.renderThread(); app.setPip("idle"); (app as any).onCredExpired?.(); return;
     }
+    // TRANSIENT, retryable API errors (rate-limited / overloaded): say so plainly and STOP this turn — do NOT degrade to
+    // the offline mock planner. The mock only handles a handful of scripted patterns, so on a real request it silently
+    // does the wrong thing (a fabricated dot-plot, or nothing) AND the failed live turn drops the user message → the chat
+    // "ghosts". Settle the exchange so the question + this note stay visible; the user just resends when the limit clears.
+    if (res.status === 429 || res.status === 503 || res.status === 529) {
+      const msg = res.status === 429
+        ? "I'm being rate-limited by the model API right now — too many requests in a short window. Wait a few seconds and resend; your message wasn't lost."
+        : "The model API is overloaded at the moment. Wait a few seconds and resend.";
+      app.thread.entries.push({ role: "agent", text: msg }); ag.renderThread(); app.setPip("idle");
+      ag.settleThread("model rate-limited — resend", msg); return;
+    }
     if (!res.ok || !res.body) { app.thread.entries.push({ role: "agent", text: "(agent unreachable — using local fallback)" }); ag.renderThread(); throw new Error("live unreachable"); }
     const assistant: any[] = []; let curText = ""; let curTool: any = null; let curJson = ""; let textEntry: any = null; let stop = "";
     const pstate = adapter.newState();

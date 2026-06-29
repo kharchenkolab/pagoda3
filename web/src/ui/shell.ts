@@ -2379,7 +2379,6 @@ export class App {
     { t: "Variable genes in a third column", q: "show the most variable genes in a third column", ic: "◫" },
     { t: "Composition across samples", q: "show how cell-type composition varies across samples", ic: "▥" },
     { t: "Compare two cell types with DE", q: "run differential expression between CD8 T effector and CD8 T memory cells", ic: "⇄" },
-    { t: "Most overdispersed gene programs", q: "show the most overdispersed gene programs", ic: "▤" },
     { t: "Name the cell types, with rationale", q: "propose clean cell-type names with a marker-grounded rationale for each cluster", ic: "✎" },
     { t: "Create a custom cell set", q: "create a category of cytotoxic cells with high GZMB and PRF1", ic: "⊕" },
     { t: "Score cells for a gene signature", q: "score every cell for a cytotoxicity signature (GZMB, PRF1, NKG7, GNLY) and colour by it", ic: "∑" },
