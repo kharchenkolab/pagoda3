@@ -7,9 +7,11 @@ it converts external formats to L* and provides the compute kernels; pagoda3 own
     import pagoda3
     pagoda3.write_viewer(ds)          # precompute the navigators on an lstar.Dataset
     pagoda3.view(adata_or_path)       # convert (if needed) -> prepare -> serve -> open the browser
+    pagoda3.publish(adata, "./share") # package a self-contained, shareable static folder
 """
 from .viewer import write_viewer
 from .launch import view
+from .publish import publish
 
-__all__ = ["write_viewer", "view"]
+__all__ = ["write_viewer", "view", "publish"]
 __version__ = "0.0.1"

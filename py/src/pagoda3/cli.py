@@ -38,6 +38,12 @@ def main(argv=None):
     s.add_argument("--port", type=int, default=0)
     s.add_argument("--host", default="127.0.0.1")
 
+    pub = sub.add_parser("publish", help="package a self-contained, shareable static folder")
+    pub.add_argument("store", help="path to a *.lstar.zarr store")
+    pub.add_argument("to", nargs="?", default="./share", help="output directory (default ./share)")
+    pub.add_argument("--data-only", dest="bundle", action="store_false",
+                     help="write only the store (no viewer bundle); host it + point a viewer at it")
+
     args = p.parse_args(argv)
     if args.cmd == "view":
         view(args.store, local=args.local, viewer=args.viewer, host=args.host, port=args.port,
@@ -50,6 +56,9 @@ def main(argv=None):
                 time.sleep(1)
         except KeyboardInterrupt:
             h.stop()
+    elif args.cmd == "publish":
+        from .publish import publish
+        publish(args.store, to=args.to, bundle=args.bundle)
 
 
 if __name__ == "__main__":

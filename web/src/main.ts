@@ -8,7 +8,10 @@ import { ComputePool } from "./compute/pool.ts";
 import "./ui/example-panel.ts";   // an EXTERNAL panel module that self-registers (proves the panel registry — zero core edits)
 
 const storeParam = new URLSearchParams(location.search).get("store") || ((((import.meta as any).env?.BASE_URL) as string) || "/") + "real.lstar.zarr/";   // base-aware so the bare URL self-loads a real demo store under a subpath deploy (e.g. /peterk/pagoda3/)
-const STORE_URL = new URL(storeParam.endsWith("/") ? storeParam : storeParam + "/", location.origin).href;
+// resolve against the full document URL (not just origin) so a RELATIVE ?store=store/ works when the
+// app is hosted under a subpath (e.g. a published folder at https://host/myshare/ — Phase 3b); an
+// absolute ?store=https://… still wins, and a root-absolute /path/ still resolves against the origin.
+const STORE_URL = new URL(storeParam.endsWith("/") ? storeParam : storeParam + "/", location.href).href;
 
 async function boot() {
   const ds = await openLstar(new HttpStore(STORE_URL));   // byte-range fast path + consolidated `.zmetadata` open
