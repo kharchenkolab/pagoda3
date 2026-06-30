@@ -37,6 +37,12 @@ async function boot() {
   app.widgetPool = widgetPool;
   if (widgetPool.isolated) void widgetPool.ping().catch(() => { /* best-effort warm */ });
   await app.mount(document.getElementById("app")!);
+  // Phase 3a deep-links: an explicit ?view= (compact, inline) or ?session=<url> (full, fetched) reopens
+  // a shared view — applied AFTER mount so it overrides the auto-restored local session for this store.
+  const params = new URLSearchParams(location.search);
+  const sessionUrl = params.get("session"), viewTok = params.get("view");
+  if (sessionUrl) await app.applySessionUrl(new URL(sessionUrl, location.href).href).catch(() => {});
+  else if (viewTok) await app.applyViewLink(viewTok).catch(() => {});
   // Dev switch between the Anthropic agent and the local OpenAI-compatible model (vLLM/qwen3). No UI — flip it from
   // the console: p2.setProvider("openai"). getProvider() is read at the start of every ask, so the NEXT ask uses it
   // (no reload needed). See web/src/agent/providers.ts.

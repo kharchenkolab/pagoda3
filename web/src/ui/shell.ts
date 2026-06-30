@@ -24,6 +24,7 @@ import { pseudobulkDECore, pseudobulkPairedDECore } from "../compute/odcore.ts";
 import { ResultRegistry, buildSessionEntities, type SessionEntity } from "./results.ts";
 import { fieldBuckets } from "../data/fieldroles.ts";
 import { SESSION_KEY, WIDGETS_KEY, SavedWidget, SerAnnoLayer, Fingerprint, serializeSession, parseSession, serializeBundle, parseBundle, fingerprintMismatch, upsertWidget, loadWidgets, widgetHash, serializeWidgetFile, parseWidgetFile, WidgetFile } from "./persist.ts";
+import { encodeViewToken, decodeViewToken } from "./sharelink.ts";
 import { serializeCustomCollections, restoreCustomCollections } from "../compute/genesets.ts";
 
 // Item 2/C — the trust registry: source-hashes of widgets the user has authored or explicitly consented to run. Foreign
@@ -285,6 +286,44 @@ export class App {
     if (doc.currentWS && this.WS[doc.currentWS]) this.currentWS = doc.currentWS;
     if (doc.colorBy) this.coord.set({ colorBy: doc.colorBy });
     if (Array.isArray(doc.canvas)) this.canvas = doc.canvas.map((p) => this.newPanel(p));   // widget panels carry their source
+  }
+
+  // ---- shareable deep-links (Phase 3a). A `?view=` token reopens this VIEW (workspaces + layout +
+  // colouring + colour/style overrides) — data-light so it fits in a URL; the store URL travels too, so
+  // the link is self-contained. Heavy state (annotation, results, chat, widgets) is NOT in a view link:
+  // that needs the portable file export or a published session doc (`?session=<url>`).
+  async buildViewLink(): Promise<{ url: string; tooBig: boolean; local: boolean }> {
+    const userWS = this.wsOrder.filter((n) => !this.builtinWS.has(n) && this.WS[n]).map((n) => ({ name: n, ws: this.WS[n] }));
+    const compact = serializeSession({ store: this.currentStore(), currentWS: this.currentWS, colorBy: this.coord.state.colorBy, canvas: this.captureLayout(), userWS, catColors: serializeCategoryColors(), style: (this.coord.state as any).style, customPalette: serializeCustomPalette() });
+    const token = await encodeViewToken(compact);
+    const store = this.currentStore();
+    const url = `${location.origin}${location.pathname}?store=${encodeURIComponent(store)}&view=${token}`;
+    const resolved = (() => { try { return new URL(store, location.href).href; } catch { return store; } })();
+    const local = store === "default" || /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])/.test(resolved);
+    return { url, tooBig: url.length > 8000, local };
+  }
+  async applyViewLink(token: string): Promise<boolean> {
+    try { const doc = parseSession(await decodeViewToken(token)); if (!doc) return false; this.applyViewDoc(doc); return true; } catch { return false; }
+  }
+  // fetch a published session doc/bundle by URL and apply it (the full-fidelity share). Same trust model
+  // as opening a session file: any widget source it carries lands behind the consent gate.
+  async applySessionUrl(url: string): Promise<boolean> {
+    try { const r = await fetch(url); if (!r.ok) return false; return this.applyImported(await r.text()).ok; } catch { return false; }
+  }
+  private applyViewDoc(doc: any): void {
+    this.applySessionViews(doc);
+    restoreCategoryColors(doc.catColors);
+    (this.coord.state as any).style = doc.style;
+    restoreCustomPalette(doc.customPalette);
+    this.fullRender(); this.renderWS();
+  }
+  async shareViewLink(): Promise<void> {
+    const { url, tooBig, local } = await this.buildViewLink();
+    if (tooBig) { this.toast("This view is too rich for a link", "Use Export (⤓) for a full session file, or publish the data + session."); return; }
+    try { await navigator.clipboard.writeText(url); } catch { /* clipboard may be blocked; the toast still shows the link is ready */ }
+    this.toast("Share link copied", local
+      ? "But the data is local to this machine — publish it first to share with others."
+      : "Anyone who can reach the data can open this exact view.");
   }
 
   // ---- the portable session DOCUMENT (file) — see persist.ts. A bundle = the session + the widget library it uses.
@@ -1905,6 +1944,7 @@ export class App {
         <button class="acbtn" data-a="ledger" style="margin-top:6px">▤ &nbsp;Session ledger</button>
         <div class="acicons">
           <button data-a="theme" title="${light ? "Light theme · switch to dark" : "Dark theme · switch to light"}">${light ? "☾" : "☀"}</button>
+          <button data-a="share" title="Copy a link to this view">🔗</button>
           <button data-a="export" title="Save session to a file (.json)">⤓</button>
           <button data-a="import" title="Open a session file">⤒</button>
           <button data-a="reset" title="Reset layout &amp; reload">↺</button>
@@ -1920,6 +1960,7 @@ export class App {
     c.querySelectorAll<HTMLElement>("[data-a]").forEach((el) => el.onclick = () => { const a = el.dataset.a!;
       if (a === "signin") { this.toast("Sign-in is coming soon — your session + widgets are saved locally for now.", null); c.classList.remove("show"); }
       else if (a === "theme") { this.applyTheme(document.documentElement.classList.contains("light") ? "dark" : "light"); this.openAccountMenu(); }   // toggle + re-render the icon
+      else if (a === "share") { c.classList.remove("show"); void this.shareViewLink(); }
       else if (a === "export") { c.classList.remove("show"); void this.exportSessionToFile(); }
       else if (a === "import") { c.classList.remove("show"); void this.importSessionFromFile(); }
       else if (a === "ledger") { c.classList.remove("show"); this.openSessionLedger(); }
