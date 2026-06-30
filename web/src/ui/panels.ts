@@ -287,21 +287,27 @@ function enrichView(cap: EnrichCap, getRows: () => RankedGene[], rankedByFn: () 
   const body = mk("div", "enrbody"); body.innerHTML = `<div class="enrempty">loading gene sets…</div>`; el.appendChild(body);
   nsel.onchange = () => { st.topN = +nsel.value; if (cap.persist) cap.persist.enrTopN = st.topN; render(); };
   dsel.onchange = () => { st.dir = dsel.value as any; if (cap.persist) cap.persist.enrDir = st.dir; render(); };
-  const dirLabel = (d: string) => d === "up" ? `▲ up in ${esc(aL)}` : d === "down" ? `▲ up in ${esc(bL)}` : d === "ranked" ? `ranked by ${esc(rankedByFn())}` : "enriched";
+  const dirLabel = (d: string) => d === "up" ? `genes up in ${esc(aL)}` : d === "down" ? `genes up in ${esc(bL)}` : d === "ranked" ? `genes ranked by ${esc(rankedByFn())}` : "enriched genes";
   let db: GeneSetDB | null = null, last: EnrichResult[] = [];
   // "keep" the current enrichment as a first-class session result (shows in the ledger; re-openable + CSV-exportable).
   if (cap.record) { const keep = mk("button", "mini", "save to results") as HTMLButtonElement; keep.title = "save this enrichment to the session results (ledger) — re-openable + CSV-exportable"; keep.style.marginLeft = "auto"; ctrls.append(keep);
-    keep.onclick = () => { const rows = last.flatMap((r) => r.rows.filter((x) => x.fdr < FDR_SHOW).map((x) => ({ ...x, direction: r.direction }))); if (!rows.length) return; cap.record!({ name: `Pathways · ${cap.sourceName || "genes"}`, kind: "enrich", summary: `${rows.length} pathway${rows.length === 1 ? "" : "s"} · ranked by ${rankedByFn()}`, bind: "enrich:pathways", rows }); }; }
+    keep.onclick = () => { const rows = last.flatMap((r) => r.rows.filter((x) => x.fdr < FDR_SHOW).map((x) => ({ ...x, direction: r.direction }))); if (!rows.length) return; cap.record!({ name: `Pathways · ${cap.sourceName || "genes"}`, kind: "enrich", summary: `${rows.length} pathway${rows.length === 1 ? "" : "s"} · genes ranked by ${rankedByFn()}`, bind: "enrich:pathways", rows }); }; }
   const render = () => {
     if (!db) return;
     const results = enrichRanked(getRows(), db.pathways, db.geneSpace, { topN: st.topN, direction: st.dir, minDetect: 0 });
     last = results;
     body.innerHTML = "";
-    const meta = mk("div", "enrmeta"); meta.textContent = `top ${st.topN} · background ${(results[0]?.N || 0).toLocaleString()} detected+annotated · ${db.nPathways.toLocaleString()} Reactome pathways`; body.appendChild(meta);
     const flt = (getFilter() || "").toLowerCase();
+    const single = results.length === 1;
+    // "114 of top 150 tested" = of the top-N ranked genes, the ones in the background (detected + annotated). The
+    // reference (pathways · background size) merges onto the SAME line for a single direction; the up/down split shares
+    // one reference line on top, then a per-direction line each.
+    const ref = `${db.nPathways.toLocaleString()} Reactome pathways · ${(results[0]?.N || 0).toLocaleString()}-gene background`;
+    if (!single) { const m = mk("div", "enrmeta"); m.textContent = ref; body.appendChild(m); }
     for (const res of results) {
       const sig = res.rows.filter((r) => r.fdr < FDR_SHOW && (!flt || r.name.toLowerCase().includes(flt))).slice(0, 20);
-      const sec = mk("div", "enrsec"); sec.innerHTML = `<span class="enrdir">${dirLabel(res.direction)}</span><span class="enrn">${res.n} genes${sig.length ? "" : flt ? " · no matching pathways" : " · none significant"}</span>`; body.appendChild(sec);
+      const empty = sig.length ? "" : flt ? " · no matching pathways" : " · none significant";
+      const sec = mk("div", "enrsec"); sec.innerHTML = `<span class="enrdir">${dirLabel(res.direction)}</span><span class="enrn">· ${res.n} of top ${st.topN} tested${single ? " · " + ref : ""}${empty}</span>`; body.appendChild(sec);
       pathwayCards(body, sig, scorePathway);
     }
   };

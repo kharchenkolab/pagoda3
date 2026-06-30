@@ -352,7 +352,7 @@ button{font-family:inherit}
 .enrich>.enrctrls{display:flex;padding:8px 10px 4px;position:sticky;top:0;background:var(--panel);z-index:1}   /* full-width row, pinned as the rows scroll; the save action is pushed to the right (margin-left:auto) */
 .enrbody{padding:4px 10px 10px}
 .enrmeta{font-size:11px;color:var(--faint);padding:4px 2px 6px}
-.enrsec{display:flex;align-items:baseline;justify-content:space-between;margin:9px 2px 6px}
+.enrsec{display:flex;flex-wrap:wrap;gap:5px;align-items:baseline;margin:8px 2px 7px}
 .enrsec .enrdir{color:var(--dim);font-weight:500;font-size:11.5px} .enrsec .enrn{color:var(--faint);font-size:11px}
 /* THIN per-pathway rows as a divider list (not boxes). Each thin row carries a fixed-width significance bar, so all
    bars stack + compare at a glance; click the head to expand the EXTRA detail (counts, fold, genes, score) in place. */
@@ -363,7 +363,7 @@ button{font-family:inherit}
 .enrname{flex:1 1 auto;min-width:0;font-size:12.5px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .enrrow.exp .enrname{white-space:normal;font-weight:500}
 .enrbar{flex:0 0 60px;height:5px;border-radius:3px;background:var(--line2);overflow:hidden} .enrbarfill{display:block;height:100%;background:var(--teal)}
-.enrfdr{flex:0 0 auto;font-family:var(--mono);font-size:11px;color:var(--dim);white-space:nowrap}
+.enrfdr{flex:0 0 54px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--dim);white-space:nowrap}   /* fixed width → the bars line up in a column */
 .enrdetail{display:none;padding:1px 10px 10px} .enrrow.exp .enrdetail{display:block}
 .enrkm{font-size:11px;color:var(--dim);margin-bottom:7px}
 .enrchips{display:flex;flex-wrap:wrap;gap:4px}
