@@ -532,7 +532,7 @@ export class App {
   async panelEl(p: Panel): Promise<{ dom: HTMLElement; afterAttach?: () => void }> {
     // a lone panel fills the canvas (no point keeping it in one half of a 2-col grid)
     const isFull = p.full || this.canvas.length === 1;
-    const isTall = !!(p as any).tall && this.canvas.length > 1;   // vertical maximize (fill the column); meaningless for a lone panel
+    const isTall = !!p.tall && this.canvas.length > 1;   // vertical maximize (fill the column); meaningless for a lone panel
     const d = mk("div", "panel" + (isFull ? " full" : "") + (isTall ? " tall" : "") + (p.type === "Embedding" ? " embpanel" : "") + (p.type === "Widget" ? " wpanel" : ""));
     d.dataset.pid = String(p.id);
     const h = mk("div", "ph");
@@ -594,17 +594,30 @@ export class App {
       sp.appendChild(legBtn);
       sp.appendChild(winSel);
     }
-    // two-zone maximize: ↔ spans the columns (full width), ↕ fills the column (full height). One control, two axes.
-    const maxtog = mk("div", "maxtog segtog");
-    const wBtn = Object.assign(mk("button", "mini" + (isFull ? " on" : ""), "↔"), { title: isFull ? "restore width" : "maximize width (span columns)" }) as HTMLButtonElement;
-    const tBtn = Object.assign(mk("button", "mini" + (isTall ? " on" : ""), "↕"), { title: isTall ? "restore height" : "maximize height (fill column)" }) as HTMLButtonElement;
-    wBtn.onclick = () => { p.full = !isFull; if (p.full) p.tall = false; this.fullRender(); this.checkpoint((p.full ? "widen · " : "restore width · ") + p.title, "You resized a panel — the layout is yours to shape."); };   // width and height maximize are opposite shapes — engaging one releases the other
-    tBtn.onclick = () => { p.tall = !isTall; if (p.tall) p.full = false; this.fullRender(); this.checkpoint((p.tall ? "heighten · " : "restore height · ") + p.title, "You resized a panel — the layout is yours to shape."); };
-    maxtog.appendChild(wBtn); maxtog.appendChild(tBtn);
+    // Adaptive maximize — show only the moves that make sense for how the panel is sitting now. A lone panel already
+    // fills the canvas (no control). A maximized panel (full width OR own-the-column tall) offers a single restore.
+    // Otherwise the two-zone expander: ↔ spans the columns, ↕ owns the column (full height). The two are opposite
+    // shapes, so engaging one releases the other — and there's never a redundant direction on screen.
+    const lone = this.canvas.length === 1;
+    let maxtog: HTMLElement | null = null;
+    if (!lone) {
+      maxtog = mk("div", "maxtog segtog");
+      if (p.full || p.tall) {
+        const rest = Object.assign(mk("button", "mini on", "◫"), { title: p.full ? "restore (full-width → grid)" : "restore (full-height → grid)" }) as HTMLButtonElement;
+        rest.onclick = () => { p.full = false; p.tall = false; this.fullRender(); this.checkpoint("restore · " + p.title, "You resized a panel — the layout is yours to shape."); };
+        maxtog.appendChild(rest);
+      } else {
+        const wBtn = Object.assign(mk("button", "mini", "↔"), { title: "maximize width (span columns)" }) as HTMLButtonElement;
+        const tBtn = Object.assign(mk("button", "mini", "↕"), { title: "maximize height (own the column)" }) as HTMLButtonElement;
+        wBtn.onclick = () => { p.full = true; p.tall = false; this.fullRender(); this.checkpoint("widen · " + p.title, "You resized a panel — the layout is yours to shape."); };
+        tBtn.onclick = () => { p.tall = true; p.full = false; this.fullRender(); this.checkpoint("heighten · " + p.title, "You resized a panel — the layout is yours to shape."); };
+        maxtog.appendChild(wBtn); maxtog.appendChild(tBtn);
+      }
+    }
     const close = Object.assign(mk("button", "dismiss ico", "✕"), { title: "remove" }) as HTMLButtonElement;   // the shared light × (matches the Answers card)
     close.onclick = () => { this.canvas = this.canvas.filter((z) => z.id !== p.id); this.fullRender(); this.checkpoint("remove " + p.title, "You removed a panel — direct edits to your own layout always win."); };
     if (p.type === "Widget") { const info = Object.assign(mk("button", "mini", "ⓘ"), { title: "view source + declared permissions" }) as HTMLButtonElement; info.onclick = () => this.showWidgetInfo(p); sp.appendChild(info); }   // inspect a trusted widget (the post-trust analog of the consent gate)
-    sp.appendChild(maxtog); sp.appendChild(close);
+    if (maxtog) sp.appendChild(maxtog); sp.appendChild(close);
     h.appendChild(sp); d.appendChild(h);
     const H = this.ctx.handleOf(p.bind);
     if (H?.caveat) d.appendChild(this.caveatEl(p.bind, H.caveat));
@@ -631,7 +644,7 @@ export class App {
     d.oncontextmenu = (e) => { e.preventDefault(); this.openCtx(e.clientX, e.clientY, p); };
     return { dom: d, afterAttach: () => {
       built.afterAttach?.();
-      if (p.type === "Widget" && built.widget) this.wireWidgetControls(p, h, sp, maxtog, built.widget);   // the widget's declared toolbar controls (fold like the rest)
+      if (p.type === "Widget" && built.widget) this.wireWidgetControls(p, h, sp, maxtog || close, built.widget);   // the widget's declared toolbar controls (fold like the rest)
       installOverflow(h, sp);
     } };   // fold header controls into a ⋯ menu when the panel is too narrow
   }
@@ -1869,7 +1882,7 @@ export class App {
         <button class="acbtn" data-a="signin">Sign in</button>
         <button class="acbtn" data-a="ledger" style="margin-top:6px">▤ &nbsp;Session ledger</button>
         <div class="acicons">
-          <button data-a="theme" title="${light ? "Light theme · switch to dark" : "Dark theme · switch to light"}">${light ? "☀" : "☾"}</button>
+          <button data-a="theme" title="${light ? "Light theme · switch to dark" : "Dark theme · switch to light"}">${light ? "☾" : "☀"}</button>
           <button data-a="export" title="Save session to a file (.json)">⤓</button>
           <button data-a="import" title="Open a session file">⤒</button>
           <button data-a="reset" title="Reset layout &amp; reload">↺</button>
