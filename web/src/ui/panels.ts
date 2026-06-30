@@ -249,6 +249,24 @@ type GCol = { key: string; label: string; num?: boolean; get: (r: any) => any; f
 const GTABLE_CAP = 200;   // max ROWS rendered at once — the table holds the FULL ranked list (all tested genes) for
                           // search, but only renders the top slice / matches so the DOM stays light on big gene sets.
 
+// Render pathway rows as a THIN list — one line each (name + FDR). Clicking a row expands it in place to reveal the
+// detail (significance bar, fold, overlap genes) + a "colour cells by this signature" action. Shared by the live
+// enrichView and the saved-snapshot Enrichment panel so they look + behave identically.
+function pathwayCards(body: HTMLElement, rows: any[], score: (name: string, genes: string[]) => void): void {
+  const esc = (s: string) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]!));
+  const maxL = Math.max(...rows.map((r) => -Math.log10(Math.max(r.fdr ?? 1, 1e-300))), 1);
+  for (const r of rows) {
+    const w = Math.max(3, Math.round(-Math.log10(Math.max(r.fdr ?? 1, 1e-300)) / maxL * 100));
+    const chips = (r.genes || []).map((g: string) => `<span class="enrchip">${esc(g)}</span>`).join("");
+    const row = mk("div", "enrrow");
+    row.innerHTML = `<div class="enrhead"><span class="enrname" title="${esc(r.name)}">${esc(r.name)}</span><span class="enrfdr">FDR ${(r.fdr ?? 1).toExponential(1)}</span></div>`
+      + `<div class="enrdetail"><div class="enrbarrow"><span class="enrbar"><span class="enrbarfill" style="width:${w}%"></span></span><span class="enrkm">${r.k}/${r.m} genes · ${(r.fold ?? 0).toFixed(0)}× enriched</span></div><div class="enrchips">${chips}</div><button class="enrscore">◐ colour cells by this signature</button></div>`;
+    (row.querySelector(".enrhead") as HTMLElement).onclick = () => row.classList.toggle("exp");
+    (row.querySelector(".enrscore") as HTMLElement).onclick = (e) => { e.stopPropagation(); score(r.name, r.genes || []); };
+    body.appendChild(row);
+  }
+}
+
 // The "Pathways" side of a gene table — the OTHER FACE of the same coin. Gene-set ORA over the table's CURRENT ranked
 // rows: the sort IS the query (background coupled to the same test = the tested+detected genes ∩ annotated). `getRows`
 // returns the live ordered rows when the user flips to this view; `rankedByFn` names the active sort (shown prominently).
@@ -282,16 +300,7 @@ function enrichView(cap: EnrichCap, getRows: () => RankedGene[], rankedByFn: () 
     for (const res of results) {
       const sig = res.rows.filter((r) => r.fdr < FDR_SHOW && (!flt || r.name.toLowerCase().includes(flt))).slice(0, 20);
       const sec = mk("div", "enrsec"); sec.innerHTML = `<span class="enrdir">${dirLabel(res.direction)}</span><span class="enrn">${res.n} genes${sig.length ? "" : flt ? " · no matching pathways" : " · none significant"}</span>`; body.appendChild(sec);
-      for (const r of sig) {
-        const maxL = Math.max(...sig.map((x) => -Math.log10(Math.max(x.fdr, 1e-300))));
-        const w = Math.max(3, Math.round(-Math.log10(Math.max(r.fdr, 1e-300)) / (maxL || 1) * 100));
-        const chips = r.genes.slice(0, 8).map((g) => `<span class="enrchip">${esc(g)}</span>`).join("") + (r.k > 8 ? `<span class="enrmore">+${r.k - 8}</span>` : "");
-        const row = mk("div", "enrrow");
-        row.innerHTML = `<div class="enrtop"><span class="enrname">${esc(r.name)}</span><span class="enrfdr">FDR ${r.fdr.toExponential(1)}</span></div><div class="enrbarrow"><span class="enrbar"><span class="enrbarfill" style="width:${w}%"></span></span><span class="enrkm">${r.k}/${r.m} · ${r.fold.toFixed(0)}×</span></div><div class="enrchips">${chips}</div>`;
-        row.title = "colour cells by this pathway's signature";
-        row.onclick = () => scorePathway(r.name, r.genes);
-        body.appendChild(row);
-      }
+      pathwayCards(body, sig, scorePathway);
     }
   };
   async function scorePathway(name: string, genes: string[]) {
@@ -1677,20 +1686,12 @@ registerPanelType({ type: "VariableGenes", body: variableGenesBody, agent: true 
 // overlap genes), NOT a gene table. No toggle / recompute (it's a snapshot); clicking a pathway still scores its
 // signature. The LIVE enrichment lives folded into a gene table (enrichView); this is just the stored artifact.
 function enrichmentPanelBody(p: Panel, ctx: Ctx): BuiltBody {
-  const el = mk("div", "enrich"); const esc = (s: string) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]!));
+  const el = mk("div", "enrich");
   const body = mk("div", "enrbody"); el.appendChild(body);
   const rows: any[] = ((p as any).rows || []).slice().sort((a: any, b: any) => (a.fdr ?? 1) - (b.fdr ?? 1));
   const meta = mk("div", "enrmeta"); meta.textContent = p.cap || `${rows.length} pathways`; body.appendChild(meta);
-  const maxL = Math.max(...rows.map((r) => -Math.log10(Math.max(r.fdr ?? 1, 1e-300))), 1);
-  for (const r of rows) {
-    const w = Math.max(3, Math.round(-Math.log10(Math.max(r.fdr ?? 1, 1e-300)) / maxL * 100));
-    const chips = (r.genes || []).slice(0, 8).map((g: string) => `<span class="enrchip">${esc(g)}</span>`).join("") + (r.k > 8 ? `<span class="enrmore">+${r.k - 8}</span>` : "");
-    const row = mk("div", "enrrow");
-    row.innerHTML = `<div class="enrtop"><span class="enrname">${esc(r.name)}</span><span class="enrfdr">FDR ${(r.fdr ?? 1).toExponential(1)}</span></div><div class="enrbarrow"><span class="enrbar"><span class="enrbarfill" style="width:${w}%"></span></span><span class="enrkm">${r.k}/${r.m} · ${(r.fold ?? 0).toFixed(0)}×</span></div><div class="enrchips">${chips}</div>`;
-    row.title = "colour cells by this pathway's signature";
-    row.onclick = async () => { const genes: string[] = r.genes || []; if (!genes.length) return; let acc: Float32Array | null = null, cnt = 0; for (const g of genes) { const e = await ctx.view.geneExpression(g).catch(() => null); if (!e) continue; if (!acc) acc = new Float32Array(e.values.length); for (let i = 0; i < acc.length; i++) acc[i] += e.values[i]; cnt++; } if (acc && cnt) { for (let i = 0; i < acc.length; i++) acc[i] /= cnt; const label = "sig: " + r.name.slice(0, 32); setCodeValues(label, acc); ctx.coord.setColor("code:" + label); } };
-    body.appendChild(row);
-  }
+  const score = async (name: string, genes: string[]) => { if (!genes.length) return; let acc: Float32Array | null = null, cnt = 0; for (const g of genes) { const e = await ctx.view.geneExpression(g).catch(() => null); if (!e) continue; if (!acc) acc = new Float32Array(e.values.length); for (let i = 0; i < acc.length; i++) acc[i] += e.values[i]; cnt++; } if (acc && cnt) { for (let i = 0; i < acc.length; i++) acc[i] /= cnt; const label = "sig: " + name.slice(0, 32); setCodeValues(label, acc); ctx.coord.setColor("code:" + label); } };
+  pathwayCards(body, rows, score);
   return { el };
 }
 registerPanelType({ type: "Enrichment", body: (p, ctx) => enrichmentPanelBody(p, ctx), agent: false });
