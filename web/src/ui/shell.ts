@@ -532,7 +532,8 @@ export class App {
   async panelEl(p: Panel): Promise<{ dom: HTMLElement; afterAttach?: () => void }> {
     // a lone panel fills the canvas (no point keeping it in one half of a 2-col grid)
     const isFull = p.full || this.canvas.length === 1;
-    const d = mk("div", "panel" + (isFull ? " full" : "") + (p.type === "Embedding" ? " embpanel" : "") + (p.type === "Widget" ? " wpanel" : ""));
+    const isTall = !!(p as any).tall && this.canvas.length > 1;   // vertical maximize (fill the column); meaningless for a lone panel
+    const d = mk("div", "panel" + (isFull ? " full" : "") + (isTall ? " tall" : "") + (p.type === "Embedding" ? " embpanel" : "") + (p.type === "Widget" ? " wpanel" : ""));
     d.dataset.pid = String(p.id);
     const h = mk("div", "ph");
     const grip = mk("span", "grip", "⠿"); h.appendChild(grip);
@@ -593,12 +594,17 @@ export class App {
       sp.appendChild(legBtn);
       sp.appendChild(winSel);
     }
-    const span = Object.assign(mk("button", "mini", isFull ? "◫" : "▦"), { title: "maximize" }) as HTMLButtonElement;
-    span.onclick = () => { p.full = !isFull; this.fullRender(); this.checkpoint((p.full ? "maximize · " : "restore · ") + p.title, "You resized a panel — the layout is yours to shape."); };
+    // two-zone maximize: ↔ spans the columns (full width), ↕ fills the column (full height). One control, two axes.
+    const maxtog = mk("div", "maxtog segtog");
+    const wBtn = Object.assign(mk("button", "mini" + (isFull ? " on" : ""), "↔"), { title: isFull ? "restore width" : "maximize width (span columns)" }) as HTMLButtonElement;
+    const tBtn = Object.assign(mk("button", "mini" + (isTall ? " on" : ""), "↕"), { title: isTall ? "restore height" : "maximize height (fill column)" }) as HTMLButtonElement;
+    wBtn.onclick = () => { p.full = !isFull; if (p.full) p.tall = false; this.fullRender(); this.checkpoint((p.full ? "widen · " : "restore width · ") + p.title, "You resized a panel — the layout is yours to shape."); };   // width and height maximize are opposite shapes — engaging one releases the other
+    tBtn.onclick = () => { p.tall = !isTall; if (p.tall) p.full = false; this.fullRender(); this.checkpoint((p.tall ? "heighten · " : "restore height · ") + p.title, "You resized a panel — the layout is yours to shape."); };
+    maxtog.appendChild(wBtn); maxtog.appendChild(tBtn);
     const close = Object.assign(mk("button", "dismiss ico", "✕"), { title: "remove" }) as HTMLButtonElement;   // the shared light × (matches the Answers card)
     close.onclick = () => { this.canvas = this.canvas.filter((z) => z.id !== p.id); this.fullRender(); this.checkpoint("remove " + p.title, "You removed a panel — direct edits to your own layout always win."); };
     if (p.type === "Widget") { const info = Object.assign(mk("button", "mini", "ⓘ"), { title: "view source + declared permissions" }) as HTMLButtonElement; info.onclick = () => this.showWidgetInfo(p); sp.appendChild(info); }   // inspect a trusted widget (the post-trust analog of the consent gate)
-    sp.appendChild(span); sp.appendChild(close);
+    sp.appendChild(maxtog); sp.appendChild(close);
     h.appendChild(sp); d.appendChild(h);
     const H = this.ctx.handleOf(p.bind);
     if (H?.caveat) d.appendChild(this.caveatEl(p.bind, H.caveat));
@@ -625,7 +631,7 @@ export class App {
     d.oncontextmenu = (e) => { e.preventDefault(); this.openCtx(e.clientX, e.clientY, p); };
     return { dom: d, afterAttach: () => {
       built.afterAttach?.();
-      if (p.type === "Widget" && built.widget) this.wireWidgetControls(p, h, sp, span, built.widget);   // the widget's declared toolbar controls (fold like the rest)
+      if (p.type === "Widget" && built.widget) this.wireWidgetControls(p, h, sp, maxtog, built.widget);   // the widget's declared toolbar controls (fold like the rest)
       installOverflow(h, sp);
     } };   // fold header controls into a ⋯ menu when the panel is too narrow
   }
@@ -680,22 +686,36 @@ export class App {
   // (the friendly auto-balance width), but pin a panel to col 2 and the grid becomes three columns, so "three
   // side-by-side columns" is just col 0/1/2 (capped at MAX_COLS so a stray pin can't shred it into slivers).
   // Unpinned panels drop into the SHORTEST column so a new one doesn't pile onto a full one and scroll off; each
-  // column's last panel spans the leftover rows so there's never an empty hole. `full` panels span the width.
+  // column's last panel spans the leftover rows so there's never an empty hole. `full` panels span the width. A
+  // `tall` panel OWNS its column (full height, sole occupant): phase 1 reserves a column for each tall panel, phase 2
+  // stacks the rest into the columns that remain, and the leftover-rows pass stretches each owned column to the bottom.
   layoutCanvas(wb: HTMLElement) {
     const lone = this.canvas.length === 1;
     const pins = this.canvas.filter((p) => !p.full && typeof p.col === "number" && p.col >= 0).map((p) => p.col!);
     const ncol = Math.min(MAX_COLS, Math.max(2, ...(pins.length ? pins.map((c) => c + 1) : [2])));
     wb.style.gridTemplateColumns = `repeat(${ncol}, 1fr)`;
+    // phase 1 — reserve a column per tall panel (honour its pin if free, else the lowest free column).
+    const ownedBy: (number | null)[] = new Array(ncol).fill(null);
+    if (!lone) for (const p of this.canvas) {
+      if (p.full || !p.tall) continue;
+      let col = (typeof p.col === "number" && p.col >= 0 && ownedBy[Math.min(ncol - 1, p.col)] == null) ? Math.min(ncol - 1, p.col) : ownedBy.indexOf(null);
+      if (col < 0) continue;   // more tall panels than columns — this one falls through to normal stacking below
+      ownedBy[col] = p.id;
+    }
     const rowAt = new Array<number>(ncol).fill(1);                 // next free row in each column
     const last: (HTMLElement | null)[] = new Array(ncol).fill(null);
     for (const p of this.canvas) {
       const el = wb.querySelector<HTMLElement>(`.panel[data-pid="${p.id}"]`); if (!el) continue;
       if (p.full || lone) { const r = Math.max(...rowAt); el.style.gridColumn = "1 / -1"; el.style.gridRow = String(r); delete el.dataset.col; rowAt.fill(r + 1); last.fill(null); continue; }
-      const col = typeof p.col === "number" && p.col >= 0 ? Math.min(ncol - 1, p.col) : rowAt.indexOf(Math.min(...rowAt));
+      const tcol = ownedBy.indexOf(p.id);
+      if (tcol >= 0) { el.style.gridColumn = String(tcol + 1); el.style.gridRow = "1"; el.dataset.col = String(tcol); last[tcol] = el; continue; }   // tall: top of its own column; stretched to the bottom below
+      let col: number;
+      if (typeof p.col === "number" && p.col >= 0) col = Math.min(ncol - 1, p.col);       // an explicit pin wins (even into an owned column)
+      else { let best = -1, bestRow = Infinity; for (let c = 0; c < ncol; c++) { if (ownedBy[c] != null) continue; if (rowAt[c] < bestRow) { bestRow = rowAt[c]; best = c; } } col = best >= 0 ? best : rowAt.indexOf(Math.min(...rowAt)); }
       el.style.gridColumn = String(col + 1); el.style.gridRow = String(rowAt[col]++); el.dataset.col = String(col); last[col] = el;
     }
-    const maxRow = Math.max(...rowAt) - 1;
-    for (let c = 0; c < ncol; c++) { const el = last[c]; if (el && rowAt[c] - 1 < maxRow) el.style.gridRow = el.style.gridRow + " / " + (maxRow + 1); }
+    const maxRow = Math.max(1, Math.max(...rowAt) - 1);
+    for (let c = 0; c < ncol; c++) { const el = last[c]; if (el && (ownedBy[c] != null || rowAt[c] - 1 < maxRow)) el.style.gridRow = String(el.style.gridRow).split(" /")[0] + " / " + (maxRow + 1); }
   }
 
   // Move a dragged panel next to a target, into the target's column (so you can drop a panel UNDER another to
@@ -1692,7 +1712,7 @@ export class App {
   }
 
   newPanel(p: Partial<Panel>): Panel {
-    const np: Panel = { id: ++this.uid, type: p.type!, title: p.title || p.type!, cap: p.cap, full: p.full, col: p.col, bind: p.bind, text: p.text, q: p.q, group: p.group, gene: p.gene, aLabel: p.aLabel, bLabel: p.bLabel, heatMode: p.heatMode, genes: p.genes, view: p.view, split: p.split, rows: p.rows, source: p.source, controls: p.controls, params: p.params, version: p.version, description: p.description, permissions: p.permissions };   // widget module fields (P2 params, P4 version/description/permissions) MUST ride through restore — captureLayout serializes them, so newPanel (the reconstruct path for session/workspace restore) has to carry them or a reload silently drops a widget's knobs + its declared-permissions consent gate
+    const np: Panel = { id: ++this.uid, type: p.type!, title: p.title || p.type!, cap: p.cap, full: p.full, tall: p.tall, col: p.col, bind: p.bind, text: p.text, q: p.q, group: p.group, gene: p.gene, aLabel: p.aLabel, bLabel: p.bLabel, heatMode: p.heatMode, genes: p.genes, view: p.view, split: p.split, rows: p.rows, source: p.source, controls: p.controls, params: p.params, version: p.version, description: p.description, permissions: p.permissions };   // widget module fields (P2 params, P4 version/description/permissions) MUST ride through restore — captureLayout serializes them, so newPanel (the reconstruct path for session/workspace restore) has to carry them or a reload silently drops a widget's knobs + its declared-permissions consent gate
     // panel-LOCAL persisted UI state (facet expand-set/sort/brush, record collapse) must ride through the same
     // reconstruct — else a workspace switch (which JSON-clones the canvas, then rebuilds via newPanel) silently
     // resets it. Carried as ad-hoc (p as any) fields so they don't need to bloat the Panel type.
@@ -1770,7 +1790,7 @@ export class App {
     if (user) { this.toast("Switched to " + name, "A workspace is a named, reversible layout — your previous one is a step back in History."); this.checkpoint("workspace → " + name, "Deliberate workspace switch."); }
   }
 
-  captureLayout(): Partial<Panel>[] { return this.canvas.map((p) => { const o: Partial<Panel> = { type: p.type, title: p.title, cap: p.cap, full: p.full, col: p.col, bind: p.bind, group: p.group, gene: p.gene, heatMode: p.heatMode, genes: p.genes, view: p.view ? JSON.parse(JSON.stringify(p.view)) : undefined, rows: this.capRows(p), source: p.source, controls: p.controls ? JSON.parse(JSON.stringify(p.controls)) : undefined, params: p.params ? JSON.parse(JSON.stringify(p.params)) : undefined, version: p.version, description: p.description, permissions: p.permissions ? JSON.parse(JSON.stringify(p.permissions)) : undefined, aLabel: p.aLabel, bLabel: p.bLabel, split: p.split ? JSON.parse(JSON.stringify(p.split)) : undefined };
+  captureLayout(): Partial<Panel>[] { return this.canvas.map((p) => { const o: Partial<Panel> = { type: p.type, title: p.title, cap: p.cap, full: p.full, tall: p.tall, col: p.col, bind: p.bind, group: p.group, gene: p.gene, heatMode: p.heatMode, genes: p.genes, view: p.view ? JSON.parse(JSON.stringify(p.view)) : undefined, rows: this.capRows(p), source: p.source, controls: p.controls ? JSON.parse(JSON.stringify(p.controls)) : undefined, params: p.params ? JSON.parse(JSON.stringify(p.params)) : undefined, version: p.version, description: p.description, permissions: p.permissions ? JSON.parse(JSON.stringify(p.permissions)) : undefined, aLabel: p.aLabel, bLabel: p.bLabel, split: p.split ? JSON.parse(JSON.stringify(p.split)) : undefined };
     // same panel-local UI state newPanel carries — serialize it so a RELOAD (not just a workspace switch) restores
     // the facet expand-set/sort/brush + record collapse, instead of resetting to the default open category.
     for (const k of ["facetOpen", "facetSort", "facetBrush"] as const) if ((p as any)[k] !== undefined) (o as any)[k] = (p as any)[k];

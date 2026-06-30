@@ -36,7 +36,7 @@ export interface PanelView {
 }
 
 export interface Panel {
-  id: number; type: string; title: string; cap?: string; full?: boolean; col?: number;   // col pins a panel to a workbench column (0-based; else row-major)
+  id: number; type: string; title: string; cap?: string; full?: boolean; tall?: boolean; col?: number;   // full = span columns; tall = own the column (full height); col pins a panel to a workbench column (0-based; else row-major)
   bind?: string; text?: string; q?: string; group?: string; gene?: string;
   aLabel?: string; bLabel?: string;   // DE mean-column headers (the two groups being contrasted)
   heatMode?: "heat" | "dot";          // Heatmap panel: colour grid vs dotplot (size = % expressing)
