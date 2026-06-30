@@ -9,14 +9,20 @@ pagoda3.view("sample.lstar.zarr")      # serve an existing L* store and open the
 pagoda3.write_viewer(ds)               # just precompute the navigators on an lstar.Dataset
 ```
 
-`view()` is **standalone** — no repo checkout, no build step. It serves the store locally with a tiny
-byte-range + CORS HTTP server (`pagoda3.serve`) and opens the **hosted** viewer (a static web app)
-pointed at it via `?store=`. The viewer reads the store over range requests; nothing is uploaded.
+`view()` is **standalone** — no repo checkout, no build step — and serves over a tiny byte-range + CORS
+HTTP server (`pagoda3.serve`); nothing is uploaded. Two modes:
 
+- **local** (default when a viewer bundle ships with the package): the viewer app *and* the store are
+  served from one local origin (`/` and `/store/`) → no CORS, no `https→http` mixed content, works
+  offline. Robust everywhere, including Safari.
+- **hosted** (`local=False`, or when no bundle is present): the store is served locally and opened in
+  the hosted viewer build via `?store=` (a cross-origin read).
+
+Other options:
 - `pagoda3.view(adata)` accepts an AnnData, an `lstar.Dataset`, or any object lstar can read. Raw
   counts are auto-detected (`adata.layers['counts']`, else `adata.X` when it holds integer counts).
-- `viewer=` / `$PAGODA3_VIEWER` points at a different viewer build; `prepare=False` skips the
-  navigator precompute (the viewer then computes them live).
+- `local=True`/`False` forces the mode; `viewer=` / `$PAGODA3_VIEWER` points at a different hosted
+  build; `prepare=False` skips the navigator precompute (the viewer then computes them live).
 
 From the shell:
 

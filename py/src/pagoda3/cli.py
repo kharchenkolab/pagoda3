@@ -27,6 +27,11 @@ def main(argv=None):
     v.add_argument("--port", type=int, default=0, help="store-server port (default: a free port)")
     v.add_argument("--host", default="127.0.0.1", help="store-server bind host")
     v.add_argument("--no-open", action="store_true", help="do not open a browser; just print the URL")
+    mode = v.add_mutually_exclusive_group()
+    mode.add_argument("--local", dest="local", action="store_true", default=None,
+                      help="serve the bundled viewer same-origin (no CORS/host; default if available)")
+    mode.add_argument("--hosted", dest="local", action="store_false",
+                      help="use the hosted viewer instead of the local bundle")
 
     s = sub.add_parser("serve", help="serve a *.lstar.zarr (Range + CORS) and print its URL")
     s.add_argument("store", help="path to a *.lstar.zarr store")
@@ -35,7 +40,7 @@ def main(argv=None):
 
     args = p.parse_args(argv)
     if args.cmd == "view":
-        view(args.store, viewer=args.viewer, host=args.host, port=args.port,
+        view(args.store, local=args.local, viewer=args.viewer, host=args.host, port=args.port,
              open_browser=not args.no_open, block=True)
     elif args.cmd == "serve":
         h = serve_dir(args.store, host=args.host, port=args.port)

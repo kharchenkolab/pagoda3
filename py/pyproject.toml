@@ -21,3 +21,8 @@ dev = ["pytest"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+# the vendored viewer bundle (server/build-bundle.sh writes src/pagoda3/_viewer before packaging;
+# it's gitignored, so this is a no-op in a bare checkout and ships the bundle in a built wheel)
+[tool.setuptools.package-data]
+pagoda3 = ["_viewer/**/*"]

@@ -4,15 +4,21 @@
     pagoda3.view(adata)                     # convert (via lstar) + precompute navigators, then serve
     pagoda3.view(adata, prepare=False)      # skip the navigator precompute (the viewer computes live)
 
-No repo checkout and no build step: the store is served locally with a tiny stdlib HTTP server
-(byte-range + CORS, see :mod:`pagoda3.serve`) and opened in the **hosted** viewer build — a static
-SPA at ``PAGODA3_VIEWER`` (default ``pklab``) — pointed at the local store via ``?store=``. The viewer
-reads the store cross-origin over range requests; nothing is uploaded.
+No repo checkout and no build step. Two modes:
 
-Remote / HPC: if the call runs over SSH (e.g. a JupyterHub/OOD kernel on a cluster node), there is no
-local browser and ``localhost`` on the node is not your laptop. The launcher detects this, skips the
-auto-open, and prints the ``ssh -L`` port-forward to run on your laptop so the viewer there can reach
-the node's store server.
+* **local** (default when a viewer bundle is available, see :mod:`pagoda3.bundle`): the viewer SPA *and*
+  the store are served from one local server (:func:`pagoda3.serve.serve_mounts`) under different paths
+  (``/`` and ``/store/``) — **same origin**, so no CORS, no ``https→http`` mixed content, and it works
+  offline. This is the robust path.
+* **hosted** (``local=False``, or when no bundle is present): the store is served locally and opened in
+  the hosted viewer build at ``PAGODA3_VIEWER`` (default ``pklab``) via ``?store=`` (a cross-origin read).
+
+Either way nothing is uploaded — the data is served from this machine.
+
+Remote / HPC: if the call runs over SSH (a JupyterHub/OOD kernel on a cluster node), there is no local
+browser and ``localhost`` on the node is not your laptop. The launcher detects this, skips the
+auto-open, and prints the ``ssh -L`` port-forward to run on your laptop. In **local** mode that single
+forwarded port carries both the viewer and the data.
 """
 import os
 import shutil
@@ -21,7 +27,7 @@ import time
 import webbrowser
 from urllib.parse import quote
 
-from .serve import serve_dir
+from .serve import serve_dir, serve_mounts
 
 DEFAULT_VIEWER = "https://pklab.med.harvard.edu/peterk/pagoda3/"
 
@@ -63,20 +69,36 @@ def _is_remote():
     return bool(os.environ.get("SSH_CONNECTION") or os.environ.get("SSH_CLIENT"))
 
 
-def view(obj, prepare=True, viewer=None, host="127.0.0.1", port=0, open_browser=True, block=False):
+def view(obj, prepare=True, local=None, viewer=None, host="127.0.0.1", port=0,
+         open_browser=True, block=False):
     """Open ``obj`` (an L* store path, an ``lstar.Dataset``, or an AnnData) in the pagoda3 viewer.
 
-    Returns the viewer URL. The local store server runs on a daemon thread and stays up for the life
-    of the process (so a notebook kernel keeps it alive). Pass ``block=True`` to keep a plain script
-    running.
+    ``local``: serve the viewer bundle + the store from one origin (no CORS / mixed-content; works
+    offline). ``None`` (default) uses local when a bundle is available, else the hosted viewer;
+    ``True`` forces it (and warns + falls back to hosted if no bundle is found); ``False`` forces the
+    hosted viewer.
+
+    Returns the viewer URL. The local server runs on a daemon thread and stays up for the life of the
+    process (so a notebook kernel keeps it alive). Pass ``block=True`` to keep a plain script running.
     """
-    viewer = (viewer or os.environ.get("PAGODA3_VIEWER") or DEFAULT_VIEWER).rstrip("/") + "/"
     store = _coerce_store(obj, prepare)
 
-    handle = serve_dir(store, host=host, port=port)
+    from .bundle import bundle_dir
+    bundle = None if local is False else bundle_dir()
+    use_local = bool(bundle) and local is not False
+    if local is True and not bundle:
+        print("pagoda3: no local viewer bundle found — using the hosted viewer instead.\n"
+              "         (build it with `npm run build` in web/, or install a packaged release.)")
+
+    if use_local:
+        # one origin: viewer bundle at /, store at /store/ -> relative same-origin ?store=
+        handle = serve_mounts([("/store/", store, False), ("/", bundle, True)], host=host, port=port)
+        url = handle.url() + "?store=/store/"
+    else:
+        viewer = (viewer or os.environ.get("PAGODA3_VIEWER") or DEFAULT_VIEWER).rstrip("/") + "/"
+        handle = serve_dir(store, host=host, port=port)
+        url = "%s?store=%s" % (viewer, quote(handle.url(browser_host="localhost"), safe=""))
     _ALIVE.append(handle)
-    store_url = handle.url(browser_host="localhost")              # the store is the server root
-    url = "%s?store=%s" % (viewer, quote(store_url, safe=""))
 
     print("pagoda3 viewer:", url)
     if _is_remote():

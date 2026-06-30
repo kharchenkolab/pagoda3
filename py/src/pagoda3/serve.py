@@ -1,15 +1,21 @@
-"""Standalone static server for L* zarr stores — Range + CORS, stdlib only.
+"""Standalone static server for the L* viewer — Range + CORS, stdlib only.
 
-The viewer is a static SPA that reads a ``*.lstar.zarr`` over HTTP byte-range requests; it may be
-loaded from a *different* origin (the hosted build at pklab) than the store it reads. This serves a
-local store directory with exactly the headers a cross-origin RANGE read needs — the preflight
-(``OPTIONS``) and the exposed ``Content-Range`` — so the hosted viewer can fetch a store sitting on
-``localhost``. (``http://localhost`` is a "potentially trustworthy" origin, so an ``https`` page may
-fetch it without tripping mixed-content blocking.) Python twin of ``server/staticzarr.mjs``.
+Two ways the viewer reaches its data, both served here:
 
-Runs in a daemon thread so :func:`serve_dir` returns immediately and the caller (a notebook kernel)
-stays interactive while the server keeps serving.
+* **cross-origin** (Phase 1): the viewer is loaded from a *different* origin (the hosted build) and
+  reads a store on ``localhost``. That needs the CORS bits a cross-origin RANGE read uses (the
+  ``OPTIONS`` preflight + the exposed ``Content-Range``). (``http://localhost`` is a "potentially
+  trustworthy" origin, so an ``https`` page may fetch it without tripping mixed-content blocking.)
+* **same-origin** (Phase 2): the viewer *bundle* and the store are served from this one server under
+  different path prefixes (``/`` and ``/store/``) — no CORS, no mixed content, works offline. This is
+  what :func:`serve_app` sets up.
+
+Python twin of ``server/staticzarr.mjs``. Runs on a daemon thread so the caller (a notebook kernel)
+stays interactive while the server keeps serving. Multiple mounts with longest-prefix match: the
+bundle mount falls back to ``index.html`` (SPA), the store mount stays strict so the reader sees a
+real 404 for an absent chunk.
 """
+import mimetypes
 import os
 import re
 import threading
@@ -18,19 +24,28 @@ from urllib.parse import unquote
 
 _RANGE = re.compile(r"bytes=(\d+)-(\d*)")
 _META = re.compile(r"(zarr\.json|\.zarray|\.zgroup|\.zattrs|\.zmetadata)$")
+# JS modules must be served with a JavaScript MIME type or the browser refuses to execute them.
+_MIME_FIX = {".js": "text/javascript", ".mjs": "text/javascript", ".cjs": "text/javascript",
+             ".json": "application/json", ".wasm": "application/wasm", ".css": "text/css"}
+
+
+def _content_type(path):
+    ext = os.path.splitext(path)[1].lower()
+    if ext in _MIME_FIX:
+        return _MIME_FIX[ext]
+    return mimetypes.guess_type(path)[0] or "application/octet-stream"
 
 
 class _Handler(BaseHTTPRequestHandler):
-    root = "."  # overridden per-server by a subclass
+    mounts = ()  # tuple of (prefix, root_dir, spa_fallback); set per-server by a subclass
 
     def _cors(self):
-        # allow any origin + the bits a cross-origin RANGE read needs (preflight + exposed range headers)
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Range, Content-Type")
         self.send_header("Access-Control-Expose-Headers",
                          "Content-Range, Content-Length, Accept-Ranges, Content-Encoding")
-        self.send_header("Access-Control-Max-Age", "86400")  # cache the preflight a day
+        self.send_header("Access-Control-Max-Age", "86400")
         self.send_header("Timing-Allow-Origin", "*")
         self.send_header("Accept-Ranges", "bytes")
 
@@ -46,11 +61,23 @@ class _Handler(BaseHTTPRequestHandler):
         self._serve(head=False)
 
     def _resolve(self):
-        rel = unquote(self.path.split("?")[0]).lstrip("/")
-        p = os.path.normpath(os.path.join(self.root, rel))
-        if p != self.root and not p.startswith(self.root + os.sep):
-            return None  # path traversal
-        return p
+        """Map the request path to a file via the longest matching mount; honor SPA fallback."""
+        path = unquote(self.path.split("?")[0])
+        for prefix, root, spa in self.mounts:                     # mounts are longest-prefix first
+            if path == prefix.rstrip("/") or path.startswith(prefix):
+                rel = path[len(prefix):].lstrip("/") if path.startswith(prefix) else ""
+                p = os.path.normpath(os.path.join(root, rel))
+                if p != root and not p.startswith(root + os.sep):
+                    return "forbidden"                            # path traversal
+                if os.path.isdir(p):
+                    p = os.path.join(p, "index.html")
+                if os.path.isfile(p):
+                    return p
+                if spa:                                           # SPA: unknown route -> index.html
+                    idx = os.path.join(root, "index.html")
+                    return idx if os.path.isfile(idx) else None
+                return None
+        return None
 
     def _fail(self, code):
         # CORS even on errors, so a cross-origin viewer can read the status (404/416 etc.)
@@ -61,9 +88,9 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _serve(self, head):
         p = self._resolve()
-        if p is None:
+        if p == "forbidden":
             return self._fail(403)
-        if not os.path.isfile(p):
+        if not p:
             return self._fail(404)
         size = os.path.getsize(p)
         start, end, status = 0, size - 1, 200
@@ -83,13 +110,14 @@ class _Handler(BaseHTTPRequestHandler):
         length = end - start + 1
         self.send_response(status)
         self._cors()
-        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Content-Type", _content_type(p))
         if status == 206:
             self.send_header("Content-Range", "bytes %d-%d/%d" % (start, end, size))
         self.send_header("Content-Length", str(length))
-        # chunk files are immutable per dataset version; metadata revalidates
+        # zarr chunks/assets are immutable per version; metadata + index.html revalidate
+        revalidate = _META.search(p) or p.endswith("index.html")
         self.send_header("Cache-Control",
-                         "no-cache" if _META.search(p) else "public, max-age=31536000, immutable")
+                         "no-cache" if revalidate else "public, max-age=31536000, immutable")
         self.end_headers()
         if head:
             return
@@ -116,7 +144,7 @@ class _Server(ThreadingHTTPServer):
 
 
 class ServeHandle:
-    """A running store server. ``url(name)`` builds the store URL; ``stop()`` shuts it down."""
+    """A running server. ``url(path)`` builds an absolute URL into it; ``stop()`` shuts it down."""
 
     def __init__(self, server, host, port):
         self.server = server
@@ -133,12 +161,27 @@ class ServeHandle:
         self.server.shutdown()
 
 
-def serve_dir(root, host="127.0.0.1", port=0):
-    """Serve ``root`` over HTTP (Range + CORS) on a daemon thread. ``port=0`` picks a free port.
-    Returns a :class:`ServeHandle`."""
-    root = os.path.abspath(root)
-    handler = type("_BoundHandler", (_Handler,), {"root": root})
+def serve_mounts(mounts, host="127.0.0.1", port=0):
+    """Serve several directories under path prefixes (Range + CORS) on a daemon thread.
+
+    ``mounts``: list of ``(prefix, dir)`` or ``(prefix, dir, spa_fallback)``. Longest prefix wins;
+    ``spa_fallback`` serves ``index.html`` for unknown routes under that mount. ``port=0`` → free port.
+    """
+    norm = []
+    for m in mounts:
+        prefix, root = m[0], os.path.abspath(m[1])
+        spa = m[2] if len(m) > 2 else False
+        if not prefix.startswith("/"):
+            prefix = "/" + prefix
+        norm.append((prefix, root, spa))
+    norm.sort(key=lambda m: len(m[0]), reverse=True)              # longest-prefix first
+    handler = type("_BoundHandler", (_Handler,), {"mounts": tuple(norm)})
     srv = _Server((host, port), handler)
     bound_port = srv.server_address[1]
     threading.Thread(target=srv.serve_forever, daemon=True, name="pagoda3-serve").start()
     return ServeHandle(srv, host, bound_port)
+
+
+def serve_dir(root, host="127.0.0.1", port=0):
+    """Serve ``root`` at the server root (Range + CORS). Returns a :class:`ServeHandle`."""
+    return serve_mounts([("/", root, False)], host=host, port=port)

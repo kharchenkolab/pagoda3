@@ -27,20 +27,31 @@ PAGODA3_DEFAULT_VIEWER <- "https://pklab.med.harvard.edu/peterk/pagoda3/"
 #'
 #' @param obj a `*.lstar.zarr` path, an `lstar_dataset`, or a Seurat/SCE object (converted via lstar).
 #' @param prepare also precompute the navigators with [write_viewer()] (default `TRUE`; faster first open).
-#' @param viewer viewer base URL (default `PAGODA3_VIEWER` env var or the hosted build).
+#' @param local serve the viewer bundle + store from one origin (no CORS/mixed-content; works offline).
+#'   `NA` (default) uses local when a bundle is available (see [bundle_dir()]), else the hosted viewer;
+#'   `TRUE` forces it (falls back to hosted with a message if no bundle); `FALSE` forces hosted.
+#' @param viewer viewer base URL for hosted mode (default `PAGODA3_VIEWER` env var or the hosted build).
 #' @param host store-server bind host (default `127.0.0.1`).
 #' @param port store-server port, or `0` for a free port.
 #' @param open whether to open the browser (default `TRUE`).
-#' @return the viewer URL, invisibly. The store server stays up for the life of the R session.
+#' @return the viewer URL, invisibly. The server stays up for the life of the R session.
 #' @export
-view <- function(obj, prepare = TRUE, viewer = NULL, host = "127.0.0.1", port = 0, open = TRUE) {
-  if (is.null(viewer)) viewer <- Sys.getenv("PAGODA3_VIEWER", PAGODA3_DEFAULT_VIEWER)
-  viewer <- paste0(sub("/$", "", viewer), "/")
+view <- function(obj, prepare = TRUE, local = NA, viewer = NULL, host = "127.0.0.1", port = 0, open = TRUE) {
   store <- .pagoda3_coerce_store(obj, prepare)
+  bundle <- if (isFALSE(local)) NA_character_ else bundle_dir()
+  use_local <- !is.na(bundle) && !isFALSE(local)
+  if (isTRUE(local) && is.na(bundle))
+    message("pagoda3: no local viewer bundle found - using the hosted viewer instead.")
 
-  h <- serve_dir(store, host = host, port = port)
-  store_url <- h$url()
-  u <- sprintf("%s?store=%s", viewer, utils::URLencode(store_url, reserved = TRUE))
+  if (use_local) {
+    h <- serve_app(bundle, store, host = host, port = port)
+    u <- paste0(h$url(), "?store=/store/")
+  } else {
+    if (is.null(viewer)) viewer <- Sys.getenv("PAGODA3_VIEWER", PAGODA3_DEFAULT_VIEWER)
+    viewer <- paste0(sub("/$", "", viewer), "/")
+    h <- serve_dir(store, host = host, port = port)
+    u <- sprintf("%s?store=%s", viewer, utils::URLencode(h$url(), reserved = TRUE))
+  }
 
   message("pagoda3 viewer: ", u)
   remote <- nzchar(Sys.getenv("SSH_CONNECTION")) || nzchar(Sys.getenv("SSH_CLIENT"))
