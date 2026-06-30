@@ -45,11 +45,9 @@ function buildReactome() {
 }
 
 // ---------- GO (GAF annotations + OBO term graph; annotations UP-PROPAGATED over is_a/part_of — the true-path rule) ----------
-function buildGO() {
-  if (!fs.existsSync("/tmp/goa_human.gaf.gz") || !fs.existsSync("/tmp/go-basic.obo")) { console.log("GO: inputs absent → skipping"); return; }
-  console.log("GO:");
-  // OBO → id → {name, ns, parents}; drop obsolete terms.
-  const term = new Map();
+// The OBO graph (GO term names + DAG) is species-agnostic — parse it ONCE and reuse across organisms.
+function loadOBO() {
+  const term = new Map();   // id → {name, ns, parents}; obsolete terms dropped
   for (const b of fs.readFileSync("/tmp/go-basic.obo", "utf8").split("\n[Term]")) {
     const id = (b.match(/^id: (GO:\d+)/m) || [])[1]; if (!id) continue;
     if (/^is_obsolete: true/m.test(b)) continue;
@@ -58,20 +56,24 @@ function buildGO() {
     const parents = [...b.matchAll(/^is_a: (GO:\d+)/mg)].map((m) => m[1]).concat([...b.matchAll(/^relationship: part_of (GO:\d+)/mg)].map((m) => m[1]));
     term.set(id, { name, ns, parents });
   }
-  // memoized ancestor closure over is_a + part_of (GO is a DAG)
-  const ancCache = new Map();
+  const ancCache = new Map();   // memoized ancestor closure over is_a + part_of (GO is a DAG)
   const anc = (id) => {
     if (ancCache.has(id)) return ancCache.get(id);
     const out = new Set(); ancCache.set(id, out);
     const t = term.get(id); if (t) for (const p of t.parents) if (term.has(p)) { out.add(p); for (const a of anc(p)) out.add(a); }
     return out;
   };
-  // GAF → direct annotations (skip NOT-qualified); col3 = symbol, col4 = qualifier, col5 = GO id
-  const gaf = zlib.gunzipSync(fs.readFileSync("/tmp/goa_human.gaf.gz")).toString("utf8");
-  // GAF col3 is usually the HGNC symbol, but TrEMBL entries put a UniProt accession or a "_HUMAN" mnemonic there —
-  // drop those so the gene space is honest symbols (they'd never match a dataset gene anyway).
+  return { term, anc };
+}
+
+// Build the three GO splits for ONE organism from its GAF (symbols in that organism's native nomenclature).
+function buildGO(organism, gafPath, { term, anc }) {
+  console.log(`GO (${organism}):`);
+  // GAF col3 is the gene symbol, but some entries put a UniProt accession or "_<SP>" mnemonic there — drop those so
+  // the gene space is honest symbols (they'd never match a dataset gene anyway).
   const UNIPROT = /^([OPQ][0-9][A-Z0-9]{3}[0-9]|[A-NR-Z][0-9]([A-Z][A-Z0-9]{2}[0-9]){1,2})$/;
-  const direct = new Map();
+  const gaf = zlib.gunzipSync(fs.readFileSync(gafPath)).toString("utf8");
+  const direct = new Map();   // GO id → Set<symbol> (direct annotations; NOT-qualified skipped)
   for (const line of gaf.split("\n")) {
     if (!line || line[0] === "!") continue;
     const c = line.split("\t"); const sym = c[2], qual = c[3] || "", go = c[4];
@@ -92,7 +94,7 @@ function buildGO() {
       if (genes.size < MIN || genes.size > MAX) continue;
       pathways[go] = { name: t.name, genes: [...genes].sort() }; genes.forEach((g) => allGenes.add(g)); kept++;
     }
-    writeColl(`go_${splitLow}_human`, { id: `go_${splitLow}_human`, label, source: "GO", split: splitLow.toUpperCase(), organism: "human", license: "GO/CC-BY-4.0", built: DATE, min: MIN, max: MAX, n_pathways: kept, n_genes: allGenes.size, pathways });
+    writeColl(`go_${splitLow}_${organism}`, { id: `go_${splitLow}_${organism}`, label, source: "GO", split: splitLow.toUpperCase(), organism, license: "GO/CC-BY-4.0", built: DATE, min: MIN, max: MAX, n_pathways: kept, n_genes: allGenes.size, pathways });
   }
 }
 
@@ -112,5 +114,8 @@ function writeManifest() {
 }
 
 buildReactome();
-buildGO();
+// GO: one shared OBO graph, then each organism whose GAF is present (GO distributes one GAF per source DB).
+const GO_GAFS = [["human", "/tmp/goa_human.gaf.gz"], ["mouse", "/tmp/mgi.gaf.gz"], ["rat", "/tmp/rgd.gaf.gz"], ["zebrafish", "/tmp/zfin.gaf.gz"], ["fly", "/tmp/fb.gaf.gz"], ["worm", "/tmp/wb.gaf.gz"], ["yeast", "/tmp/sgd.gaf.gz"]];
+if (fs.existsSync("/tmp/go-basic.obo")) { const obo = loadOBO(); for (const [org, gaf] of GO_GAFS) if (fs.existsSync(gaf)) buildGO(org, gaf, obo); }
+else console.log("GO: go-basic.obo absent → skipping");
 writeManifest();

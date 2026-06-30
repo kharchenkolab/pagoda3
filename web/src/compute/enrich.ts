@@ -55,7 +55,7 @@ export function enrich(query: string[], pathways: PathwaySet[], universe: Set<st
 export interface RankedGene { symbol: string; lfc?: number; meanA?: number; meanB?: number; score?: number; }
 export interface EnrichResult { direction: "up" | "down" | "all" | "ranked"; n: number; N: number; topN: number; rows: EnrichRow[]; }
 
-export function enrichRanked(ranked: RankedGene[], pathways: PathwaySet[], geneSpace: Set<string>, opts?: { topN?: number; direction?: "up" | "down" | "both"; minDetect?: number }): EnrichResult[] {
+export function enrichRanked(ranked: RankedGene[], pathways: PathwaySet[], geneSpace: Set<string>, opts?: { topN?: number; direction?: "up" | "down" | "both" | "ranked"; minDetect?: number }): EnrichResult[] {
   const topN = opts?.topN ?? 200, minDetect = opts?.minDetect ?? 0;
   // background = the TESTED genes detected above the floor (max group mean, or the score for unsigned lists), restricted
   // to the annotated space — the "world that could be a hit", so genes too sparsely observed to rank never enter it.

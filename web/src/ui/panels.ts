@@ -3,7 +3,7 @@ import { Ctx } from "../data/ctx.ts";
 import { EmbeddingView } from "../render/embedding.ts";
 import { colorsFor, focusMaskFor, categoryColorOf, setCodeValues } from "../render/colors.ts";
 import { loadCollection, listCollections, GeneSetDB, Collection } from "../compute/genesets.ts";
-import { enrichRanked, RankedGene } from "../compute/enrich.ts";
+import { enrichRanked, RankedGene, EnrichResult } from "../compute/enrich.ts";
 import { themeIsDark } from "../render/theme.ts";
 import { getStyle, resolveStyle } from "../render/style.ts";
 import { registerPanelType, getPanelType } from "./panel-registry.ts";
@@ -292,13 +292,18 @@ function enrichView(cap: EnrichCap, getRows: () => RankedGene[], rankedByFn: () 
   let db: GeneSetDB | null = null, last: EnrichResult[] = [];
   let collId: string = cap.persist?.enrColl || "";   // chosen collection id ("" ⇒ pick the default on first load)
   let collections: Collection[] = [];
-  // GO:BP is the preferred default (the most-used set for scRNA over-representation); else Reactome; else whatever's first.
-  const pickDefault = (cs: Collection[]) => (cs.find((c) => c.source === "GO" && c.split === "BP") || cs.find((c) => c.source === "Reactome") || cs[0])?.id || "";
+  let org = "human";                                 // detected dataset organism (filled in ensure() before the picker)
+  // GO:BP of the dataset's organism is the preferred default (the most-used set for scRNA ORA); else any GO:BP; else the
+  // organism's Reactome; else whatever's first.
+  const pickDefault = (cs: Collection[]) => (cs.find((c) => c.source === "GO" && c.split === "BP" && c.organism === org) || cs.find((c) => c.source === "GO" && c.split === "BP") || cs.find((c) => c.organism === org) || cs[0])?.id || "";
   const populateColl = () => {
     csel.innerHTML = "";
+    // the detected organism's collections first (clean labels); other organisms follow, suffixed " · <organism>" — a
+    // cross-organism pick stays reachable (with a mismatch warning) but is never the silent default.
+    const sorted = [...collections].sort((a, b) => (a.organism === org ? 0 : 1) - (b.organism === org ? 0 : 1));
     const bySource = new Map<string, Collection[]>();
-    for (const c of collections) { if (!bySource.has(c.source)) bySource.set(c.source, []); bySource.get(c.source)!.push(c); }
-    for (const [src, list] of bySource) { const og = document.createElement("optgroup"); og.label = src; for (const c of list) { const o = document.createElement("option"); o.value = c.id; o.textContent = c.label; og.appendChild(o); } csel.appendChild(og); }
+    for (const c of sorted) { if (!bySource.has(c.source)) bySource.set(c.source, []); bySource.get(c.source)!.push(c); }
+    for (const [src, list] of bySource) { const og = document.createElement("optgroup"); og.label = src; for (const c of list) { const o = document.createElement("option"); o.value = c.id; o.textContent = c.label + (c.organism !== org ? ` · ${c.organism}` : ""); og.appendChild(o); } csel.appendChild(og); }
     csel.value = collId;
   };
   // "keep" the current enrichment as a first-class session result (shows in the ledger; re-openable + CSV-exportable).
@@ -309,6 +314,7 @@ function enrichView(cap: EnrichCap, getRows: () => RankedGene[], rankedByFn: () 
     const results = enrichRanked(getRows(), db.pathways, db.geneSpace, { topN: st.topN, direction: st.dir, minDetect: 0 });
     last = results;
     body.innerHTML = "";
+    if (db.organism !== org) { const w = mk("div", "enrwarn"); w.textContent = `⚠ ${db.label} is ${db.organism}, but this data looks ${org} — symbols won't match (few or none tested).`; body.appendChild(w); }
     const flt = (getFilter() || "").toLowerCase();
     const single = results.length === 1;
     // "114 of top 150 tested" = of the top-N ranked genes, the ones in the background (detected + annotated). The
@@ -337,8 +343,8 @@ function enrichView(cap: EnrichCap, getRows: () => RankedGene[], rankedByFn: () 
   const ensure = () => {
     if (db) { render(); return; }
     if (collections.length) { loadColl(); return; }
-    listCollections().then((cs) => {   // Phase A: no organism filter yet (human-only); Phase C adds ctx.organism()
-      collections = cs;
+    Promise.all([ctx.organism(), listCollections()]).then(([o, cs]) => {   // organism gates the default + the picker order
+      org = o; collections = cs;
       if (!collId || !cs.find((c) => c.id === collId)) collId = pickDefault(cs);
       populateColl();
       loadColl();

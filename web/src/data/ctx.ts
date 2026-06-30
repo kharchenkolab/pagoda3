@@ -288,13 +288,29 @@ export class Ctx {
     return gs[0] || "leiden";
   }
 
+  // Best-guess ORGANISM from gene-symbol CASING — there's no species field in the store yet, and we stay symbol-keyed.
+  // HGNC symbols are all-caps (TP53, CD14); MGI/Title-case (Trp53, Cd14) ⇒ a non-human (mouse-style) organism. A few
+  // human "orf" symbols carry lowercase, so we go by the MAJORITY of a sample. Cached; defaults to human when ambiguous.
+  private _organism?: string;
+  async organism(): Promise<string> {
+    if (this._organism) return this._organism;
+    let lower = 0, upper = 0;
+    try {
+      const genes = await this.view.genes();
+      for (const g of genes.slice(0, 300)) { if (!/[A-Za-z]/.test(g)) continue; (/[a-z]/.test(g) ? lower++ : upper++); }
+    } catch { /* fall through to the default */ }
+    this._organism = lower > upper ? "mouse" : "human";   // Title/lower-case majority ⇒ mouse (the common non-human case)
+    return this._organism;
+  }
+
   // A data-driven dataset brief for the agent's system prompt — derived from the actual store, so
   // the agent never narrates a different dataset's story. Cached. Names the available groupings,
   // the cell types, and the sample/condition design (incl. the n-per-condition cacoa caveat).
   private agentBrief?: string;
   async describeForAgent(): Promise<string> {
     if (this.agentBrief) return this.agentBrief;
-    const parts: string[] = [`${this.n.toLocaleString()} cells, ${this.view.nGenes.toLocaleString()} genes (HGNC symbols)`];
+    const org = await this.organism();
+    const parts: string[] = [`${this.n.toLocaleString()} cells, ${this.view.nGenes.toLocaleString()} genes (${org === "human" ? "HGNC" : org} symbols)`];
     for (const g of this.groupings()) {
       const m = await this.metaOf(g) as any;
       const list = m.categories.slice(0, 24).join(", ");
