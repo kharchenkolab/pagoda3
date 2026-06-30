@@ -270,7 +270,7 @@ function enrichView(cap: EnrichCap, getRows: () => RankedGene[], rankedByFn: () 
   const dirLabel = (d: string) => d === "up" ? `▲ up in ${esc(aL)}` : d === "down" ? `▲ up in ${esc(bL)}` : d === "ranked" ? `ranked by ${esc(rankedByFn())}` : "enriched";
   let db: GeneSetDB | null = null, last: EnrichResult[] = [];
   // "keep" the current enrichment as a first-class session result (shows in the ledger; re-openable + CSV-exportable).
-  if (cap.record) { const keep = mk("button", "mini", "save to results") as HTMLButtonElement; keep.title = "save this enrichment to the session results (ledger) — re-openable + CSV-exportable"; ctrls.append(keep);
+  if (cap.record) { const keep = mk("button", "mini", "save to results") as HTMLButtonElement; keep.title = "save this enrichment to the session results (ledger) — re-openable + CSV-exportable"; keep.style.marginLeft = "auto"; ctrls.append(keep);
     keep.onclick = () => { const rows = last.flatMap((r) => r.rows.filter((x) => x.fdr < FDR_SHOW).map((x) => ({ ...x, direction: r.direction }))); if (!rows.length) return; cap.record!({ name: `Pathways · ${cap.sourceName || "genes"}`, kind: "enrich", summary: `${rows.length} pathway${rows.length === 1 ? "" : "s"} · ranked by ${rankedByFn()}`, bind: "enrich:pathways", rows }); }; }
   const render = () => {
     if (!db) return;
