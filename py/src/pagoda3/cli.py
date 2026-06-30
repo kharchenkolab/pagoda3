@@ -44,6 +44,10 @@ def main(argv=None):
     pub.add_argument("--data-only", dest="bundle", action="store_false",
                      help="write only the store (no viewer bundle); host it + point a viewer at it")
 
+    pk = sub.add_parser("pack", help="pack a store into one *.lstar.zarr.zip to drag into the viewer")
+    pk.add_argument("store", help="path to a *.lstar.zarr store")
+    pk.add_argument("out", nargs="?", default=None, help="output .zip (default <store>.zip)")
+
     args = p.parse_args(argv)
     if args.cmd == "view":
         view(args.store, local=args.local, viewer=args.viewer, host=args.host, port=args.port,
@@ -59,6 +63,9 @@ def main(argv=None):
     elif args.cmd == "publish":
         from .publish import publish
         publish(args.store, to=args.to, bundle=args.bundle)
+    elif args.cmd == "pack":
+        from .publish import pack
+        pack(args.store, out=args.out)
 
 
 if __name__ == "__main__":

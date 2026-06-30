@@ -217,6 +217,10 @@ export class EmbeddingView {
   private selCount() { let c = 0; for (let i = 0; i < this.n; i++) c += this.selected[i]; return c; }
   private redraw() { this.deck.setProps({ layers: this.layers() }); }
 
+  /** Release the GL context + animation loop — called when the app is torn down (e.g. opening a new
+   *  local dataset) so a removed canvas's deck doesn't keep ticking. */
+  finalize(): void { try { (this.deck as any).finalize?.(); } catch { /* already gone */ } }
+
   /** Show (or clear) a subtle locator ring at a data-space point — the cross-panel hover cue. */
   /** CELL hint: crosshairs at cell `i` in THIS panel's embedding (null clears). Each panel resolves the same
    *  cell to its own coords — so hovering a cell marks it in the before AND after embeddings at once. */

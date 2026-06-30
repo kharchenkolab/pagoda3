@@ -26,6 +26,30 @@ from .bundle import bundle_dir
 from .launch import DEFAULT_VIEWER, _coerce_store
 
 
+def pack(obj, out=None, prepare=True):
+    """Pack a dataset into a single-file ``*.lstar.zarr.zip`` (a zarr ZipStore) — one downloadable file
+    a non-coder can drag straight into the viewer (Phase 4). Entries are stored at the store root
+    (``.zmetadata``, ``fields/…``); the zip uses **no compression** (zarr chunks are already
+    compressed, so deflating again only burns CPU). Returns the output path.
+    """
+    import zipfile
+    store = _coerce_store(obj, prepare)
+    if out is None:
+        base = os.path.basename(store.rstrip("/"))
+        out = (base + ".zip") if base.endswith(".lstar.zarr") else "data.lstar.zarr.zip"
+    out = os.path.abspath(out)
+    n = 0
+    with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_STORED) as zf:
+        for root, _, files in os.walk(store):
+            for fn in files:
+                fp = os.path.join(root, fn)
+                zf.write(fp, os.path.relpath(fp, store))   # arcname relative to the store root
+                n += 1
+    print("pagoda3 packed → %s  (%d files, %.1f MB)" % (out, n, os.path.getsize(out) / 1e6))
+    print("  one file — open the viewer and drag it in (no install).")
+    return out
+
+
 def _bake_publish_meta(index_html, store_rel):
     """Make a published folder self-describing via <meta> tags the viewer reads:
       • pagoda3:store  — a bare URL self-loads the co-located store (clean `<host>/`, no `?store=` tail)
@@ -65,8 +89,8 @@ def publish(obj, to="./share", prepare=True, bundle=True, viewer=None):
             raise RuntimeError(
                 "publish(bundle=True): no viewer bundle found. Build it with server/build-bundle.sh "
                 "(or install a packaged release), or use bundle=False to publish the data only.")
-        # copy the bundle alongside the store; never drag the demo stores from a dev web/dist
-        shutil.copytree(bd, out, dirs_exist_ok=True, ignore=shutil.ignore_patterns("*.lstar.zarr"))
+        # copy the bundle alongside the store; never drag data (demo stores / packed zips) from web/dist
+        shutil.copytree(bd, out, dirs_exist_ok=True, ignore=shutil.ignore_patterns("*.lstar.zarr", "*.zip"))
         _bake_publish_meta(os.path.join(out, "index.html"), "store/")   # bare URL self-loads the store; no-agent
         print("pagoda3 published (self-contained) →", out)
         print("  drop this folder on any static host; share the bare URL:  <host-url>/")

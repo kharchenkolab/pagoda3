@@ -11,7 +11,7 @@ it converts external formats to L* and provides the compute kernels; pagoda3 own
 """
 from .viewer import write_viewer
 from .launch import view
-from .publish import publish
+from .publish import publish, pack
 
-__all__ = ["write_viewer", "view", "publish"]
+__all__ = ["write_viewer", "view", "publish", "pack"]
 __version__ = "0.0.1"

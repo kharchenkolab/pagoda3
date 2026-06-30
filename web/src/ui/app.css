@@ -497,3 +497,12 @@ select.inline{background:var(--inset);color:var(--text);border:1px solid var(--l
 .optbanner code{font-family:var(--mono);background:var(--inset);border:1px solid var(--line);border-radius:4px;padding:0 5px;font-size:10.5px}
 .optbanner .ob-x{flex:0 0 auto;cursor:pointer;opacity:.6;padding:0 4px}
 .optbanner .ob-x:hover{opacity:1}
+
+/* Phase 4: full-page drop target for opening a local .lstar.zarr(.zip) — shown only while dragging files in */
+#dropov{position:fixed;inset:0;z-index:200;display:none;align-items:center;justify-content:center;background:rgba(5,8,12,.66);backdrop-filter:blur(2px)}
+#dropov.show{display:flex}
+#dropov .dropbox{pointer-events:none;border:2px dashed var(--accent,#5b9);border-radius:16px;padding:38px 54px;text-align:center;background:var(--panel);box-shadow:0 12px 40px rgba(0,0,0,.45)}
+#dropov .dropic{font-size:34px;line-height:1;opacity:.8}
+#dropov .droptt{margin-top:12px;font-size:16px;font-weight:600;color:var(--fg)}
+#dropov .dropsub{margin-top:6px;font-size:11.5px;color:var(--dim)}
+#dropov .dropsub code{font-family:var(--mono);background:var(--inset);border:1px solid var(--line);border-radius:4px;padding:0 5px}

@@ -1,4 +1,7 @@
 import { openLstar, HttpStore } from "./data/store.ts";
+import type { LstarStore } from "./data/store.ts";
+import { localStore } from "./data/localstore.ts";
+import { installOpenLocal } from "./ui/openlocal.ts";
 import { LstarView } from "./data/view.ts";
 import { Coord } from "./data/coord.ts";
 import { Ctx } from "./data/ctx.ts";
@@ -17,8 +20,18 @@ const storeParam = new URLSearchParams(location.search).get("store") || metaStor
 // absolute ?store=https://… still wins, and a root-absolute /path/ still resolves against the origin.
 const STORE_URL = new URL(storeParam.endsWith("/") ? storeParam : storeParam + "/", location.href).href;
 
-async function boot() {
-  const ds = await openLstar(new HttpStore(STORE_URL));   // byte-range fast path + consolidated `.zmetadata` open
+// pools of the CURRENT dataset — disposed when we re-init onto a new one (open a local file)
+let _pools: ComputePool[] = [];
+
+// Build the whole stack (reader → view → coord → ctx → app) around `store` and mount it. Called once
+// for the URL/meta store, and again to swap in a dropped local file (Phase 4) — re-init disposes the
+// old workers + finalizes the old app so nothing keeps ticking against the replaced DOM.
+async function bootStore(store: LstarStore, opts: { applyLinks?: boolean } = {}) {
+  for (const p of _pools) { try { p.dispose(); } catch { /* */ } }
+  _pools = [];
+  try { (window as any).p2?.app?.dispose?.(); } catch { /* */ }
+
+  const ds = await openLstar(store as any);   // byte-range fast path + consolidated `.zmetadata` open
   const view = new LstarView(ds);
   // persisted user compute settings: per-side DE/HVG sample caps (approx ranking) + the read-cache memory budget.
   // Console: p2.setCompute({deCap:800, hvgCap:3000, cacheBudgetMB:512}). Lower caps = faster/cheaper, coarser ranking.
@@ -34,6 +47,7 @@ async function boot() {
     return { deCap: view.deCap, hvgCap: view.hvgCap, cacheBudgetMB: Math.round(((ds as any).readCacheStats?.().budget || 0) / 1048576) };
   };
   const computePool = new ComputePool();   // off-main-thread kernel pool; view dispatches to it when cross-origin isolated, else runs the same core inline
+  _pools.push(computePool);
   view.setComputePool(computePool);
   if (computePool.isolated) void computePool.ping().catch(() => { /* worker warm-up is best-effort; kernels fall back to the main thread */ });   // spawn + warm the worker at boot so the first real compute isn't cold
   const coord = new Coord();
@@ -41,20 +55,37 @@ async function boot() {
   await ctx.init();
   const app = new App(ctx);
   const widgetPool = new ComputePool();   // S5: untrusted widget runCompute code runs in its OWN workers (separate from the app kernel pool), with kernels over the shared SAB
+  _pools.push(widgetPool);
   app.widgetPool = widgetPool;
   if (widgetPool.isolated) void widgetPool.ping().catch(() => { /* best-effort warm */ });
   await app.mount(document.getElementById("app")!);
   // Phase 3a deep-links: an explicit ?view= (compact, inline) or ?session=<url> (full, fetched) reopens
-  // a shared view — applied AFTER mount so it overrides the auto-restored local session for this store.
-  const params = new URLSearchParams(location.search);
-  const sessionUrl = params.get("session"), viewTok = params.get("view");
-  if (sessionUrl) await app.applySessionUrl(new URL(sessionUrl, location.href).href).catch(() => {});
-  else if (viewTok) await app.applyViewLink(viewTok).catch(() => {});
+  // a shared view — applied AFTER mount so it overrides the auto-restored local session. Only on the
+  // first (URL) boot — a freshly dropped local dataset has no link to apply.
+  if (opts.applyLinks) {
+    const params = new URLSearchParams(location.search);
+    const sessionUrl = params.get("session"), viewTok = params.get("view");
+    if (sessionUrl) await app.applySessionUrl(new URL(sessionUrl, location.href).href).catch(() => {});
+    else if (viewTok) await app.applyViewLink(viewTok).catch(() => {});
+  }
   // Dev switch between the Anthropic agent and the local OpenAI-compatible model (vLLM/qwen3). No UI — flip it from
   // the console: p2.setProvider("openai"). getProvider() is read at the start of every ask, so the NEXT ask uses it
   // (no reload needed). See web/src/agent/providers.ts.
   const setProvider = (p: Provider) => { try { localStorage.setItem(PROVIDER_KEY, p === "openai" ? "openai" : "anthropic"); } catch { /* */ } return "agent provider → " + getProvider() + " (applies on next ask)"; };
-  (window as any).p2 = { ds, view, coord, ctx, app, getProvider, setProvider, setCompute, computePool, widgetPool };
+  // Phase 4: open a local store (a dropped/picked .zip, a folder handle, or a webkitdirectory FileList)
+  // by re-initing the whole app onto it — no server, nothing uploaded.
+  const openLocal = async (input: any) => {
+    const { store: ls, label } = await localStore(input);
+    await bootStore(ls);
+    try { (window as any).p2?.app?.toast?.("Opened " + label, "Read locally — nothing was uploaded."); } catch { /* */ }
+  };
+  (window as any).p2 = { ds, view, coord, ctx, app, getProvider, setProvider, setCompute, computePool, widgetPool, openLocal };
+  return app;
+}
+
+async function boot() {
+  await bootStore(new HttpStore(STORE_URL), { applyLinks: true });
+  installOpenLocal((input) => (window as any).p2.openLocal(input));   // drag a .lstar.zarr(.zip) anywhere to open it
 }
 
 boot().catch((e) => {

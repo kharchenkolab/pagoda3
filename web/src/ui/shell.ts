@@ -25,6 +25,7 @@ import { ResultRegistry, buildSessionEntities, type SessionEntity } from "./resu
 import { fieldBuckets } from "../data/fieldroles.ts";
 import { SESSION_KEY, WIDGETS_KEY, SavedWidget, SerAnnoLayer, Fingerprint, serializeSession, parseSession, serializeBundle, parseBundle, fingerprintMismatch, upsertWidget, loadWidgets, widgetHash, serializeWidgetFile, parseWidgetFile, WidgetFile } from "./persist.ts";
 import { encodeViewToken, decodeViewToken } from "./sharelink.ts";
+import { pickZip, pickFolder } from "./openlocal.ts";
 import { serializeCustomCollections, restoreCustomCollections } from "../compute/genesets.ts";
 
 // Item 2/C — the trust registry: source-hashes of widgets the user has authored or explicitly consented to run. Foreign
@@ -212,6 +213,14 @@ export class App {
     } });
     // first-run greeting — a shine on the Ask button inviting the user to try it (only for a FRESH session, not a restore)
     setTimeout(() => { if (!this.restoredSession) this.agent.armIntro(); }, 2600);
+  }
+
+  // Release heavy resources when the app is re-initialized onto a new dataset (opening a local file):
+  // finalize the embedding deck(s) + run widget-iframe teardowns so nothing keeps ticking against the
+  // DOM that bootStore is about to replace. (The compute pools are disposed by the caller in main.)
+  dispose(): void {
+    try { this.teardowns.forEach((f) => { try { f(); } catch { /* */ } }); this.teardowns = []; } catch { /* */ }
+    try { this.embeddings.forEach((e) => (e as any).finalize?.()); this.embeddings = []; } catch { /* */ }
   }
 
   $(id: string) { return document.getElementById(id)!; }
@@ -1942,6 +1951,8 @@ export class App {
         <div class="acrow"><span class="acava">G</span><div><div class="acname">Guest</div><div class="acsub">Local session · not signed in</div></div></div>
         <button class="acbtn" data-a="signin">Sign in</button>
         <button class="acbtn" data-a="ledger" style="margin-top:6px">▤ &nbsp;Session ledger</button>
+        <button class="acbtn" data-a="openzip" style="margin-top:6px">⤓ &nbsp;Open a data file (.zip)…</button>
+        <button class="acbtn" data-a="openfolder" style="margin-top:6px">▸ &nbsp;Open a data folder…</button>
         <div class="acicons">
           <button data-a="theme" title="${light ? "Light theme · switch to dark" : "Dark theme · switch to light"}">${light ? "☾" : "☀"}</button>
           <button data-a="share" title="Copy a link to this view">🔗</button>
@@ -1964,6 +1975,8 @@ export class App {
       else if (a === "export") { c.classList.remove("show"); void this.exportSessionToFile(); }
       else if (a === "import") { c.classList.remove("show"); void this.importSessionFromFile(); }
       else if (a === "ledger") { c.classList.remove("show"); this.openSessionLedger(); }
+      else if (a === "openzip") { c.classList.remove("show"); pickZip((f) => (window as any).p2?.openLocal?.(f)); }
+      else if (a === "openfolder") { c.classList.remove("show"); void pickFolder((inp) => (window as any).p2?.openLocal?.(inp)); }
       else if (a === "reset") { c.classList.remove("show"); this.confirmReset(); } });   // confirm first — reset wipes the saved session
     c.querySelectorAll<HTMLElement>("[data-std]").forEach((el) => el.onclick = () => { const s = standard[Number(el.dataset.std)]; if (s) { this.addPanel({ ...s.spec }); this.toast(`Added ${s.name}`, null); } c.classList.remove("show"); });
     c.querySelectorAll<HTMLElement>("[data-add]").forEach((el) => el.onclick = () => { const w = this.widgetLib.find((x) => x.id === el.dataset.add); if (w) { this.addWidgetPanel(w.source, w.name, w.controls, w.origin === "imported" ? "imported" : "authored"); this.toast(`Added widget “${w.name}”`, null); } c.classList.remove("show"); });

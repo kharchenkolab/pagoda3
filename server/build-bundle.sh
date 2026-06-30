@@ -18,8 +18,8 @@ for DEST in "$PY_DEST" "$R_DEST"; do
   echo "[build-bundle] vendoring -> ${DEST#$HERE/}"
   rm -rf "$DEST"
   mkdir -p "$DEST"
-  # everything except the demo stores (the user brings their own data)
-  rsync -a --exclude='*.lstar.zarr' "$WEB/dist/" "$DEST/"
+  # everything except data (the user brings their own): the demo stores + any packed zips
+  rsync -a --exclude='*.lstar.zarr' --exclude='*.zip' "$WEB/dist/" "$DEST/"
 done
 
 echo "[build-bundle] done. bundle size: $(du -sh "$PY_DEST" | cut -f1)"
