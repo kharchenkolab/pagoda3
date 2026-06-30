@@ -20,7 +20,7 @@ npx vite build --base="$BASE"
 
 echo "pushing bundle + gene-set assets (excluding the bulky dev *.lstar.zarr fixtures in public/) …"
 # --delete prunes stale hashed assets; --exclude protects the deployed *.lstar.zarr from deletion too.
-rsync -az --delete --exclude='*.lstar.zarr' dist/ "$DEST"
+rsync -az --delete --exclude='*.lstar.zarr' --exclude='*.zip' --exclude='share/' dist/ "$DEST"
 
 if [ "${1:-}" = "--sample" ]; then
   echo "pushing demo store real.lstar.zarr (~95M, no -z; zarr is already compressed) …"
