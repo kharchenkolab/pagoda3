@@ -16,6 +16,7 @@
     "@deck.gl/extensions": "^9.3.4",
     "@deck.gl/layers": "^9.1.0",
     "fflate": "^0.8.3",
+    "h5wasm": "^0.10.3",
     "zarrita": "^0.7.3"
   },
   "devDependencies": {

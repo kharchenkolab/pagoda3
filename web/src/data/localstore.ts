@@ -25,6 +25,19 @@ function rootify(files: Record<string, Uint8Array>): Record<string, Uint8Array> 
   return out;
 }
 
+// An in-memory read+write store (Map of key → bytes). Used to materialize a converted .h5ad as a real
+// in-memory L* store (lstar writeStore writes into it; openLstar reads it back).
+export class MemStore implements LstarStore {
+  files = new Map<string, Uint8Array>();
+  private norm(k: string) { return k[0] === "/" ? k.slice(1) : k; }
+  async get(key: string): Promise<Uint8Array | undefined> { return this.files.get(this.norm(key)); }
+  async set(key: string, value: Uint8Array): Promise<void> { this.files.set(this.norm(key), value); }
+  async getRange(key: string, start: number, end: number): Promise<Uint8Array | undefined> {
+    const v = this.files.get(this.norm(key));
+    return v ? v.subarray(start, end) : undefined;
+  }
+}
+
 export class ZipStore implements LstarStore {
   private files: Record<string, Uint8Array>;
   constructor(zipBytes: Uint8Array) {
@@ -102,7 +115,11 @@ export async function localStore(input: File | FileList | File[] | any): Promise
     return { store: await DirHandleStore.open(input), label: (input.name || "folder") };
   }
   if (input instanceof File) {
-    if (!/\.zip$/i.test(input.name)) throw new Error("Drop a *.lstar.zarr.zip file, or a .lstar.zarr folder.");
+    if (/\.h5ad$/i.test(input.name)) {
+      const { openH5ad } = await import("./h5ad.ts");   // lazy — code-splits the h5wasm WASM out of the main bundle
+      return { store: await openH5ad(input), label: input.name };
+    }
+    if (!/\.zip$/i.test(input.name)) throw new Error("Drop a .lstar.zarr.zip, a .lstar.zarr folder, or a .h5ad file.");
     return { store: new ZipStore(new Uint8Array(await input.arrayBuffer())), label: input.name };
   }
   // a FileList / File[] from <input webkitdirectory>

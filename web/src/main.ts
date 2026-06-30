@@ -27,9 +27,11 @@ let _pools: ComputePool[] = [];
 // for the URL/meta store, and again to swap in a dropped local file (Phase 4) — re-init disposes the
 // old workers + finalizes the old app so nothing keeps ticking against the replaced DOM.
 async function bootStore(store: LstarStore, opts: { applyLinks?: boolean } = {}) {
-  for (const p of _pools) { try { p.dispose(); } catch { /* */ } }
+  // open + prepare the NEW dataset first, while the old app/pools are still alive — only tear the old
+  // ones down once the new one is ready (no race against dispose; no blank screen if the open fails).
+  const oldPools = _pools;
+  const oldApp = (window as any).p2?.app;
   _pools = [];
-  try { (window as any).p2?.app?.dispose?.(); } catch { /* */ }
 
   const ds = await openLstar(store as any);   // byte-range fast path + consolidated `.zmetadata` open
   const view = new LstarView(ds);
@@ -53,6 +55,9 @@ async function bootStore(store: LstarStore, opts: { applyLinks?: boolean } = {})
   const coord = new Coord();
   const ctx = new Ctx(view, coord);
   await ctx.init();
+  // the new dataset is read + prepared — now retire the old one (its workers + deck) and take over #app
+  for (const p of oldPools) { try { p.dispose(); } catch { /* */ } }
+  try { oldApp?.dispose?.(); } catch { /* */ }
   const app = new App(ctx);
   const widgetPool = new ComputePool();   // S5: untrusted widget runCompute code runs in its OWN workers (separate from the app kernel pool), with kernels over the shared SAB
   _pools.push(widgetPool);
