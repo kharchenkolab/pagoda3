@@ -7,6 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview --port 8788",
+    "build:prod": "vite build --base=/peterk/pagoda3/",
+    "preview:prod": "vite preview --base=/peterk/pagoda3/ --port 8790 --strictPort",
     "test": "node --test"
   },
   "dependencies": {
