@@ -7,7 +7,11 @@ import { getProvider, PROVIDER_KEY, type Provider } from "./agent/providers.ts";
 import { ComputePool } from "./compute/pool.ts";
 import "./ui/example-panel.ts";   // an EXTERNAL panel module that self-registers (proves the panel registry — zero core edits)
 
-const storeParam = new URLSearchParams(location.search).get("store") || ((((import.meta as any).env?.BASE_URL) as string) || "/") + "real.lstar.zarr/";   // base-aware so the bare URL self-loads a real demo store under a subpath deploy (e.g. /peterk/pagoda3/)
+// store precedence: an explicit ?store= wins; else a <meta name="pagoda3:store"> baked into the page
+// (pagoda3.publish writes this so a published folder opens at a CLEAN bare URL — no ?store= tail); else
+// the base-aware demo default so the bare dev/deploy URL still self-loads real.lstar.zarr.
+const metaStore = (document.querySelector('meta[name="pagoda3:store"]') as HTMLMetaElement | null)?.content;
+const storeParam = new URLSearchParams(location.search).get("store") || metaStore || ((((import.meta as any).env?.BASE_URL) as string) || "/") + "real.lstar.zarr/";
 // resolve against the full document URL (not just origin) so a RELATIVE ?store=store/ works when the
 // app is hosted under a subpath (e.g. a published folder at https://host/myshare/ — Phase 3b); an
 // absolute ?store=https://… still wins, and a root-absolute /path/ still resolves against the origin.

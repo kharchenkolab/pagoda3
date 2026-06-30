@@ -26,6 +26,22 @@ from .bundle import bundle_dir
 from .launch import DEFAULT_VIEWER, _coerce_store
 
 
+def _bake_default_store(index_html, store_rel):
+    """Inject `<meta name="pagoda3:store" content="...">` so a bare URL self-loads the co-located store
+    (the viewer reads it when there's no `?store=`). Lets a published folder share as a clean `<host>/`."""
+    try:
+        with open(index_html, encoding="utf-8") as f:
+            html = f.read()
+        if "pagoda3:store" in html or "</head>" not in html:
+            return
+        tag = '<meta name="pagoda3:store" content="%s">' % store_rel
+        html = html.replace("</head>", "  " + tag + "\n</head>", 1)
+        with open(index_html, "w", encoding="utf-8") as f:
+            f.write(html)
+    except OSError:
+        pass  # non-fatal: without the tag the folder still works at <host>/?store=store/
+
+
 def publish(obj, to="./share", prepare=True, bundle=True, viewer=None):
     """Write a shareable folder for ``obj`` (an AnnData / lstar.Dataset / *.lstar.zarr path) at ``to``.
 
@@ -49,9 +65,10 @@ def publish(obj, to="./share", prepare=True, bundle=True, viewer=None):
                 "(or install a packaged release), or use bundle=False to publish the data only.")
         # copy the bundle alongside the store; never drag the demo stores from a dev web/dist
         shutil.copytree(bd, out, dirs_exist_ok=True, ignore=shutil.ignore_patterns("*.lstar.zarr"))
+        _bake_default_store(os.path.join(out, "index.html"), "store/")   # bare URL self-loads the store
         print("pagoda3 published (self-contained) →", out)
-        print("  drop this folder on any static host, then share:  <host-url>/?store=store/")
-        print("  same-origin — no install, no CORS, no firewall games. (open locally: pagoda3 serve %s → ?store=store/)" % out)
+        print("  drop this folder on any static host; share the bare URL:  <host-url>/")
+        print("  same-origin — no install, no CORS. (open locally: pagoda3 serve %s)" % out)
         return out
 
     viewer = (viewer or os.environ.get("PAGODA3_VIEWER") or DEFAULT_VIEWER).rstrip("/") + "/"
