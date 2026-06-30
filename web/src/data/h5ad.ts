@@ -24,15 +24,58 @@ const f32 = (a: any): Float32Array => Float32Array.from(a as any, Number); // f3
 // AnnData stores X as obs×var, almost always CSR (row=cell). L* `counts` is CSC (col=gene). A CSR
 // (cells×genes) shares memory with a CSC (genes×cells), so `cscToCsr(.., ngenes, ncells)` regroups it
 // into the CSC (cells×genes) we want. A csc_matrix is already that; a dense X is packed column-major.
+// Decode an HDF5 string dataset/array to JS strings (h5wasm usually returns strings; be robust to raw
+// bytes / BigInt too). Mirrors lstar's _str_arr.
+const asStrings = (v: any): string[] => v == null ? [] : Array.from(v as any, (x: any) =>
+  typeof x === "string" ? x : x instanceof Uint8Array ? new TextDecoder().decode(x).replace(/\0+$/, "") : String(x));
+
+// (fmt, shape) for an h5ad matrix group across format versions, or null if not sparse. Mirrors lstar's
+// _sparse_attrs: the modern `encoding-type`(csr_matrix/csc_matrix)+`shape`, AND the legacy
+// `h5sparse_format`/`h5sparse_shape` attrs of older h5ad (e.g. an old `raw/X`).
+function sparseFmt(node: H5): { fmt: "csr" | "csc"; shape: number[] } | null {
+  const a = node?.attrs || {};
+  const et = String(a["encoding-type"]?.value || "");
+  if (/csr|csc/.test(et)) return { fmt: et.includes("csc") ? "csc" : "csr", shape: Array.from(a["shape"]?.value || [], num) };
+  if (a["h5sparse_format"]) return { fmt: String(a["h5sparse_format"].value).includes("csc") ? "csc" : "csr", shape: Array.from(a["h5sparse_shape"]?.value || [], num) };
+  return null;
+}
+
+// An obs/var column → its viewer field shape, mirroring lstar's _read_column. Handles modern encodings
+// (categorical, nullable-integer, nullable-boolean) and plain datasets (bool/int/float, and plain string
+// columns → labels). Returns null for an encoding we don't surface.
+function readColumn(node: H5): { role: "label" | "measure"; values?: string[]; data?: Float32Array } | null {
+  if (!node) return null;
+  if (typeof node.keys === "function" && node.value === undefined) {   // a group (no own value): an encoded column
+    const et = String(enc(node) || "");
+    if (et === "categorical") {
+      const codes = node.get("codes").value as ArrayLike<number>;
+      const cats = asStrings(node.get("categories").value);
+      const values: string[] = new Array(codes.length);
+      for (let i = 0; i < codes.length; i++) { const c = Number(codes[i]); values[i] = (c >= 0 && c < cats.length) ? cats[c] : ""; }
+      return { role: "label", values };
+    }
+    if (et === "nullable-integer") return { role: "measure", data: f32(node.get("values").value) };
+    if (et === "nullable-boolean") return { role: "label", values: Array.from(node.get("values").value as any, (b: any) => (b ? "true" : "false")) };
+    return null;
+  }
+  const v = node.value;                                        // a plain dataset
+  if (v == null || !node.shape || node.shape.length !== 1) return null;
+  const first = (v as any)[0];
+  if (typeof first === "boolean") return { role: "label", values: Array.from(v as any, (b: any) => (b ? "true" : "false")) };
+  if (typeof first === "number" || typeof first === "bigint") return { role: "measure", data: f32(v) };
+  return { role: "label", values: asStrings(v) };              // string column → label
+}
+
 async function readCounts(M: any, node: H5, ncells: number, ngenes: number):
     Promise<{ data: ArrayLike<number>; indices: ArrayLike<number>; indptr: ArrayLike<number> } | null> {
-  const e = enc(node);
-  if (e === "csr_matrix") {
-    const r = M.cscToCsr(f32(node.get("data").value), i32(node.get("indices").value), i32(node.get("indptr").value), ngenes, ncells);
-    return { data: f32(r.data), indices: i32(r.indices), indptr: i32(r.indptr) };
-  }
-  if (e === "csc_matrix") {
-    return { data: f32(node.get("data").value), indices: i32(node.get("indices").value), indptr: i32(node.get("indptr").value) };
+  const sp = sparseFmt(node);
+  if (sp) {
+    const data = node.get("data").value, indices = node.get("indices").value, indptr = node.get("indptr").value;
+    if (sp.fmt === "csr") {
+      const r = M.cscToCsr(f32(data), i32(indices), i32(indptr), ngenes, ncells);
+      return { data: f32(r.data), indices: i32(r.indices), indptr: i32(r.indptr) };
+    }
+    return { data: f32(data), indices: i32(indices), indptr: i32(indptr) };
   }
   if (node.value && node.shape) {                 // dense obs×var (C-order) -> build CSC by column
     const dense = node.value as ArrayLike<number>;
@@ -115,26 +158,18 @@ export async function anndataSpec(f: H5): Promise<DatasetSpec> {
     }
   } catch { /* no obsm */ }
 
-  // obs columns: categorical -> label; numeric -> dense measure over cells
+  // obs columns → labels (categorical / nullable-boolean / string) or measures (numeric / nullable-integer),
+  // via the shared readColumn (mirrors lstar's _read_column). Categoricals become utf8 per-cell strings —
+  // the form the viewer's metadata() reads (an `encoding:"categorical"` field would read a missing `values`).
   try {
     const obs = f.get("obs");
-    const cols = (attr(obs, "column-order") as string[]) || obs.keys().filter((k: string) => k !== "_index");
+    const idxName = attr(obs, "_index") || "_index";
+    const cols = (attr(obs, "column-order") as string[]) || obs.keys().filter((k: string) => k !== idxName);
     for (const col of cols) {
-      if (col === "_index") continue;
-      const node = obs.get(col); if (!node) continue;
-      const e = enc(node);
-      if (e === "categorical") {
-        // store as a utf8 (per-cell string) label — the form the viewer's metadata() reads for labels
-        // (it expands strings → codes/categories itself); an `encoding:"categorical"` field would make it
-        // try a utf8 read of a non-existent `values` array.
-        const codes = node.get("codes").value as ArrayLike<number>;
-        const cats = node.get("categories").value as string[];
-        const values: string[] = new Array(codes.length);
-        for (let i = 0; i < codes.length; i++) { const c = codes[i] as number; values[i] = (c >= 0 && c < cats.length) ? cats[c] : ""; }
-        fields[col] = { role: "label", span: ["cells"], encoding: "utf8", values };
-      } else if ((e === "array" || node.value) && node.shape && node.shape.length === 1 && typeof (node.value as any)?.[0] === "number") {
-        fields[col] = { role: "measure", span: ["cells"], encoding: "dense", shape: [ncells], data: f32(node.value) };
-      }
+      if (col === idxName || col === "_index") continue;
+      const r = readColumn(obs.get(col));
+      if (r?.role === "label" && r.values) fields[col] = { role: "label", span: ["cells"], encoding: "utf8", values: r.values };
+      else if (r?.role === "measure" && r.data) fields[col] = { role: "measure", span: ["cells"], encoding: "dense", shape: [ncells], data: r.data };
     }
   } catch { /* no obs */ }
 

@@ -109,6 +109,31 @@ test("anndataSpec: legacy compound obs/var/obsm (pre-0.7 tables) read; int codes
   assert.deepEqual(Array.from((spec.fields.umap as any).data), [0, 1, 2, 3, 4, 5]);
 });
 
+test("anndataSpec: variant coverage — legacy h5sparse X, nullable-int/bool columns, plain string column (lstar parity)", async () => {
+  // X via the OLD h5sparse attrs (not encoding-type) — 3 cells × 2 genes CSR c0=[1,0] c1=[0,2] c2=[3,4]
+  const X = G({ data: D(Float32Array.from([1, 2, 3, 4]), [4]), indices: D(Int32Array.from([0, 1, 0, 1]), [4]), indptr: D(Int32Array.from([0, 1, 2, 4]), [4]) },
+              { h5sparse_format: "csr", h5sparse_shape: [3, 2] });
+  const obs = G({
+    _index: D(["c0", "c1", "c2"], [3]),
+    nGene: G({ values: D(Int32Array.from([5, 6, 7]), [3]) }, { "encoding-type": "nullable-integer" }),
+    passed: G({ values: D([true, false, true], [3]) }, { "encoding-type": "nullable-boolean" }),
+    sample: D(["A", "B", "A"], [3]),                       // a plain (non-categorical) string column → label
+  }, { "column-order": ["nGene", "passed", "sample"] });
+  const f = G({ X, obs, var: G({ _index: D(["g0", "g1"], [2]) }) });
+
+  const spec = await anndataSpec(f);
+  assert.equal(spec.axes.cells.labels.length, 3);
+  const c = spec.fields.counts as any;
+  assert.equal(c.encoding, "csc");
+  const B = [[0, 0], [0, 0], [0, 0]];
+  for (let g = 0; g < 2; g++) for (let k = Number(c.indptr[g]); k < Number(c.indptr[g + 1]); k++) B[c.indices[k]][g] = c.data[k];
+  assert.deepEqual(B, [[1, 0], [0, 2], [3, 4]]);
+  assert.equal((spec.fields.nGene as any).role, "measure");
+  assert.deepEqual(Array.from((spec.fields.nGene as any).data), [5, 6, 7]);
+  assert.deepEqual((spec.fields.passed as any).values, ["true", "false", "true"]);   // nullable-boolean → label
+  assert.deepEqual((spec.fields.sample as any).values, ["A", "B", "A"]);             // plain string → label
+});
+
 test("guardSize: refuses an oversized .h5ad, passes a small one", () => {
   const big = G({ X: G({ data: D(null, [300_000_000]) }, { "encoding-type": "csr_matrix", shape: [100000, 30000] }) });
   assert.throws(() => guardSize(big, 0), /too large/);
