@@ -17,6 +17,7 @@
     "@deck.gl/layers": "^9.1.0",
     "fflate": "^0.8.3",
     "h5wasm": "^0.10.3",
+    "umap-js": "^1.4.0",
     "zarrita": "^0.7.3"
   },
   "devDependencies": {

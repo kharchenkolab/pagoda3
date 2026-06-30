@@ -264,8 +264,23 @@ export async function openH5ad(file: File, onStage?: (m: string) => void): Promi
     guardSize(f, file.size);
     onStage?.("Parsing AnnData…");
     const spec = await anndataSpec(f);
-    if (!spec.fields.counts && !Object.values(spec.fields).some((x) => x.role === "embedding"))
+    const hasEmbedding = Object.values(spec.fields).some((x) => x.role === "embedding");
+    if (!spec.fields.counts && !hasEmbedding)
       throw new Error("No X/counts matrix or embedding found in this .h5ad.");
+    // A counts-only file (no obsm/UMAP/PCA) can't be plotted as-is — compute an embedding in-browser so it
+    // opens. Gated by cell count: above the limit, in-browser PCA+UMAP would hang the tab — say so plainly.
+    if (!hasEmbedding && spec.fields.counts) {
+      const cf: any = spec.fields.counts, [ncells, ngenes] = cf.shape, LIMIT = 30000;
+      if (ncells > LIMIT)
+        throw new Error(`This .h5ad has ${ncells.toLocaleString()} cells but no embedding (no UMAP/PCA in the file). ` +
+          `Computing one in the browser is only practical up to ~${LIMIT.toLocaleString()} cells. For a dataset this size, ` +
+          `precompute the layout once (scanpy: sc.pp.pca + sc.tl.umap; or pagoda3) and reopen the file.`);
+      const { computeEmbedding } = await import("../compute/embed.ts");   // lazy — code-splits umap-js out of the main bundle
+      onStage?.("No embedding in file — computing layout…");
+      const emb = await computeEmbedding({ data: cf.data, indices: cf.indices, indptr: cf.indptr }, ncells, ngenes, { onStage });
+      spec.axes.emb_umap = { labels: ["umap1", "umap2"], role: "coordinate" };
+      spec.fields.umap = { role: "embedding", span: ["cells", "emb_umap"], encoding: "dense", shape: [ncells, 2], data: emb.umap };
+    }
     onStage?.("Building in-memory store…");
     const store = new MemStore();
     await writeStore(store, spec);                 // uncompressed in-memory L* store
