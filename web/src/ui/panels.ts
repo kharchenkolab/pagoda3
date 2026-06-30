@@ -282,10 +282,12 @@ function enrichView(cap: EnrichCap, getRows: () => RankedGene[], rankedByFn: () 
   // the pathways-specific controls (top-N / direction / keep) live in the CARD BODY, not the panel header — the header
   // keeps only the genes⇄pathways toggle (common to both views), so switching back is always one click away.
   const ctrls = mk("div", "enrctrls"); el.appendChild(ctrls);
-  const csel = mk("select", "mini enrcoll") as HTMLSelectElement; csel.title = "gene-set collection";   // which source/split to enrich against (grouped by source)
+  const csel = mk("select", "mini enrcoll") as HTMLSelectElement; csel.title = "Gene-set collection to test against — grouped by source (GO, Reactome…). A “· organism” suffix marks a different species; use ＋.gmt to bring your own.";
   const imp = mk("button", "mini", "＋.gmt") as HTMLButtonElement; imp.title = "import a gene-set .gmt file (symbols) as a custom collection";
   const nsel = mk("select", "mini") as HTMLSelectElement; for (const v of [50, 100, 150, 200, 300]) { const o = document.createElement("option"); o.value = String(v); o.textContent = "top " + v; nsel.appendChild(o); } nsel.value = String(st.topN);
+  nsel.title = "How many top-ranked genes to test for over-representation (the query size). Larger = more sensitive but noisier; smaller = only the strongest.";
   const dsel = mk("select", "mini") as HTMLSelectElement; for (const [v, l] of [["ranked", "as ranked"], ["both", "up + down"], ["up", "up only"], ["down", "down only"]]) { const o = document.createElement("option"); o.value = v; o.textContent = l; dsel.appendChild(o); } dsel.value = st.dir;
+  dsel.title = "Which genes to test. “as ranked” follows the table's current sort (e.g. the top genes by logFC ↓); “up/down” split the contrast and test each direction separately (needs a signed logFC).";
   ctrls.append(csel, imp, nsel, dsel);
   const body = mk("div", "enrbody"); body.innerHTML = `<div class="enrempty">loading gene sets…</div>`; el.appendChild(body);
   nsel.onchange = () => { st.topN = +nsel.value; if (cap.persist) cap.persist.enrTopN = st.topN; render(); };
@@ -412,6 +414,7 @@ function geneTable(initial: any[], cols: GCol[], onPick: (symbol: string) => voi
   ev.el.style.display = "none"; wrap.appendChild(ev.el);   // sizing (fill / scroll) is CSS — .enrich + the .workbench fill rule
   const hdr = mk("div", "gthdr");
   const toggle = mk("div", "segtog"); const gBtn = mk("button", "mini", "genes") as HTMLButtonElement; const pBtn = mk("button", "mini", "pathways") as HTMLButtonElement; toggle.append(gBtn, pBtn);
+  gBtn.title = "the ranked gene table"; pBtn.title = "gene-set enrichment (over-representation) of the table's top genes — GO, Reactome, or your own .gmt";
   hdr.append(search, toggle);   // search to the LEFT of the toggle → the toggle keeps a fixed position across modes; the box stays visible and filters genes, or pathway NAMES in pathways mode
   search.oninput = () => { if (mode === "genes") render(); else ev.ensure(); };   // mode-aware: filter the gene table, or the pathway list
   const setMode = (m: "genes" | "pathways") => {
@@ -934,7 +937,7 @@ async function facetsBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltB
     buildBody(); w.appendChild(ov); (ov.querySelector(".fcnameinp") as HTMLInputElement).focus();
   };
 
-  const foot = mk("div", "facetfoot"); const cbtn = mk("button", "mini", "＋ create category"); cbtn.onclick = showCreateCard; foot.appendChild(cbtn); w.appendChild(foot);
+  const foot = mk("div", "facetfoot"); const cbtn = mk("button", "mini", "＋ create category"); cbtn.title = "create a new categorical field — from a gene/metadata expression, or by binding the current selection"; cbtn.onclick = showCreateCard; foot.appendChild(cbtn); w.appendChild(foot);
 
   search.oninput = () => render();
   render();
@@ -1023,7 +1026,8 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
   // persist the chosen view across re-renders (a Suggest/accept triggers fullRender; the view must NOT snap
   // back to "table"). Fall back to table if the persisted mode isn't available this render.
   let mode = (segItems.some(([m]) => m === (p as any).reconMode) ? (p as any).reconMode : "table") as "table" | "matrix" | "labels";
-  for (const [m, lbl] of segItems) { const b = mk("button", "mini" + (m === mode ? " on" : ""), lbl) as HTMLButtonElement; b.dataset.m = m; seg.appendChild(b); }
+  const reconTip: Record<string, string> = { table: "per-cluster table — name, top markers, rationale", matrix: "confusion matrix — how the annotation sources agree across clusters", labels: "the working-draft labels (rename / accept here)" };
+  for (const [m, lbl] of segItems) { const b = mk("button", "mini" + (m === mode ? " on" : ""), lbl) as HTMLButtonElement; b.dataset.m = m; b.title = reconTip[m] || lbl; seg.appendChild(b); }
   if (segItems.length >= 2) hdr.appendChild(seg);
   w.appendChild(hdr);
   const host = mk("div"); host.style.cssText = "flex:1 1 auto;min-height:0;overflow:auto"; w.appendChild(host);

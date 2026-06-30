@@ -2120,11 +2120,11 @@ export class App {
       // (prefilled with this selection as A) for the general case — two groups, unions, cross-field, cell-level or
       // paired pseudobulk. The composer replaced the old stateful group-B pin.
       sp.innerHTML = `<div class="head">${ids.length} cells · mostly ${top?.[0] || "?"}${byField}</div>` +
-        `<div class="it" data-a="ask"><span class="ic">⌘K</span>Ask about these…</div>` +
-        `<div class="it" data-a="de"><span class="ic">≢</span>Run DE vs. rest</div>` +
-        `<div class="it" data-a="compare"><span class="ic">⇄</span>Run custom DE…</div>` +
-        `<div class="it" data-a="subset"><span class="ic">⊙</span>Subset to these <span style="opacity:.5;margin-left:auto;font-size:10px">hide the rest</span></div>` +
-        `<div class="it" data-a="label"><span class="ic">✎</span>Save selection…</div>` +
+        `<div class="it" data-a="ask" title="ask the agent about this selection (opens chat)"><span class="ic">⌘K</span>Ask about these…</div>` +
+        `<div class="it" data-a="de" title="differential expression of this selection vs. all other cells — cell-level, ranking-grade (no p-value)"><span class="ic">≢</span>Run DE vs. rest</div>` +
+        `<div class="it" data-a="compare" title="open the DE composer — choose the comparison group; cell-level, or donor-level pseudobulk for a real p-value"><span class="ic">⇄</span>Run custom DE…</div>` +
+        `<div class="it" data-a="subset" title="restrict every panel to these cells; the rest are hidden until you release the subset"><span class="ic">⊙</span>Subset to these <span style="opacity:.5;margin-left:auto;font-size:10px">hide the rest</span></div>` +
+        `<div class="it" data-a="label" title="save this selection as a named cell set / a new category value"><span class="ic">✎</span>Save selection…</div>` +
         `<div class="it" data-a="clear"><span class="ic">✕</span>Clear selection</div>`;
       this.showSelpop();   // reveal at lastSelAnchor + arm the popover's own outside-dismiss listener
       const A = () => this.selToCellSet(sel, ids); const aL = this.selLabel(sel, ids);
