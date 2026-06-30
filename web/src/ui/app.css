@@ -170,11 +170,17 @@ button{font-family:inherit}
 .axis.hgene,.axis.hgrp{fill:var(--dim);opacity:.92;transition:opacity .1s} .hgene:hover,.hgrp:hover{opacity:1;fill:var(--cyan)}   /* dotplot axis labels — --dim (not --faint) so they hold contrast in both themes; full + cyan on hover */
 .hcell:hover{stroke:var(--text);stroke-width:1px}
 .prov{font-family:var(--mono);font-size:10px;color:var(--faint);padding:6px 11px;border-top:1px solid var(--line2)}
-.caveat{display:flex;gap:8px;padding:9px 11px;background:rgba(224,164,88,.08);border-left:3px solid var(--amber);font-size:12px;color:var(--dim);cursor:pointer}
-.caveat:hover{background:rgba(224,164,88,.14)}
+/* collapsed to a small ⚠ chip by DEFAULT; .expanded reveals the methodology + a dismiss ✕ */
+.caveat{display:flex;gap:7px;align-items:center;padding:3px 10px;background:rgba(224,164,88,.08);border-left:3px solid var(--amber);font-size:11px;color:var(--dim);cursor:pointer;opacity:.78}
+.caveat:hover{background:rgba(224,164,88,.14);opacity:1}
 .caveat b{color:var(--amber);white-space:nowrap}
-.caveat.collapsed{padding:3px 10px;opacity:.6;font-size:11px}
-.caveat.collapsed span{display:none}
+.caveat b::after{content:"▸";margin-left:5px;font-size:9px;opacity:.65}
+.caveat .cvtext,.caveat .cvx{display:none}
+.caveat.expanded{align-items:flex-start;gap:8px;padding:9px 11px;font-size:12px;opacity:1}
+.caveat.expanded b::after{content:"▾"}
+.caveat.expanded .cvtext{display:inline}
+.caveat.expanded .cvx{display:inline-flex;align-items:center;align-self:flex-start;margin-left:auto;background:none;border:0;color:var(--faint);cursor:pointer;font-size:13px;line-height:1;padding:0 1px}
+.caveat.expanded .cvx:hover{color:var(--amber)}
 .placeholder{border:1px dashed var(--bad);border-radius:9px;padding:12px;margin:11px;display:flex;flex-direction:column;gap:6px;background:rgba(224,122,122,.05)}
 .placeholder .phh{font-family:var(--mono);font-size:11px;color:var(--bad)} .placeholder .phr{font-size:12.5px}
 .placeholder .phspec{font-family:var(--mono);font-size:10.5px;color:var(--faint);background:var(--inset);border:1px solid var(--line);border-radius:6px;padding:5px 8px;word-break:break-all}

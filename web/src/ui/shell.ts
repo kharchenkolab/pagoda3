@@ -86,7 +86,8 @@ export class App {
   private reactorsStale = true;       // set when reactors are rebuilt (fullRender) → force one dispatch
   geneHoverSinks: ((sym: string | null) => void)[] = [];   // panels that highlight a gene's row on a coord geneHint
   colorChoices: [string, string][] = [...COLOR_OPTS];   // colour-by dropdown options, capped per class (see noteColor)
-  caveatsCollapsed = new Set<string>();   // caveat handles the user clicked to collapse (stay collapsed across renders)
+  caveatsExpanded = new Set<string>();    // caveat handles the user expanded (caveats show as a small ⚠ chip by default)
+  caveatsDismissed = new Set<string>();   // caveat handles the user dismissed entirely (don't render at all)
   // presence
   thread: any = null; threadDocked = false; nudgePending: any = null; apTimer: any = null; apIndex = 0; restoredSession = false;
   scope: Scope | null = null; askScope: Scope | null = null; hot = 0; filtered: any[] = []; lastSelAnchor: { left: number; top: number; right?: number } = { left: 0, top: 0 };
@@ -627,7 +628,7 @@ export class App {
     if (maxtog) sp.appendChild(maxtog); sp.appendChild(close);
     h.appendChild(sp); d.appendChild(h);
     const H = this.ctx.handleOf(p.bind);
-    if (H?.caveat) d.appendChild(this.caveatEl(p.bind, H.caveat));
+    if (H?.caveat && !(p.bind && this.caveatsDismissed.has(p.bind))) d.appendChild(this.caveatEl(p.bind, H.caveat));
     const b = mk("div", "pbody");
     // A panel body that throws (e.g. data this dataset lacks) must NOT abort the whole render — that would
     // leave the previous workspace's DOM stale. Catch it and show an in-panel notice instead.
@@ -1731,13 +1732,17 @@ export class App {
     }
   }
 
-  // A dismissable caveat banner — click anywhere on it to collapse to a small ⚠ chip (click again to restore).
-  // Kept per handle so it stays collapsed across re-renders; the methodology is one click away, never lost.
+  // A caveat banner — a small ⚠ chip by DEFAULT; click to expand the methodology, click again to re-collapse, or hit ✕
+  // to dismiss it entirely. State is per handle (bind) so it sticks across re-renders; the methodology is never lost
+  // unless explicitly dismissed.
   caveatEl(bind: string | undefined, text: string): HTMLElement {
-    const cv = mk("div", "caveat" + (bind && this.caveatsCollapsed.has(bind) ? " collapsed" : ""));
-    cv.innerHTML = `<b>⚠ caveat</b><span>${text}</span>`;
-    cv.title = "click to collapse / restore";
-    cv.onclick = () => { const c = cv.classList.toggle("collapsed"); if (bind) c ? this.caveatsCollapsed.add(bind) : this.caveatsCollapsed.delete(bind); };
+    const cv = mk("div", "caveat" + (bind && this.caveatsExpanded.has(bind) ? " expanded" : ""));
+    cv.innerHTML = `<b>⚠ caveat</b><span class="cvtext">${text}</span><button class="cvx" title="dismiss — don't show this caveat">✕</button>`;
+    cv.title = "click to expand / collapse the methodology";
+    cv.onclick = (e) => {
+      if ((e.target as HTMLElement).closest(".cvx")) { e.stopPropagation(); if (bind) this.caveatsDismissed.add(bind); cv.remove(); return; }   // ✕ → gone (this handle, this session)
+      const exp = cv.classList.toggle("expanded"); if (bind) exp ? this.caveatsExpanded.add(bind) : this.caveatsExpanded.delete(bind);
+    };
     return cv;
   }
 
@@ -1781,7 +1786,7 @@ export class App {
       sp.appendChild(ds); h.appendChild(sp); d.appendChild(h);
       if (p.q) d.appendChild(Object.assign(mk("div", "rq"), { textContent: "“" + p.q + "”" }));
       const H = this.ctx.handleOf(p.bind);
-      if (H?.caveat) d.appendChild(this.caveatEl(p.bind, H.caveat));
+      if (H?.caveat && !(p.bind && this.caveatsDismissed.has(p.bind))) d.appendChild(this.caveatEl(p.bind, H.caveat));
       const built = await bodyFor(p, this.ctx, this.hooks());
       if (built.headerControls) { const ctrls = mk("div", "rctrls"); ctrls.appendChild(built.headerControls); d.appendChild(ctrls); }   // expose the gene-table filter in the disposable card too (was pin-only) — search/sort the FULL gene set without pinning first
       const b = mk("div", "pbody"); b.appendChild(built.el); d.appendChild(b);
