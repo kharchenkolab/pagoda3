@@ -82,11 +82,31 @@ test("anndataSpec: named index (_index attr), dense X (intrinsic shape), wide ob
   assert.deepEqual(Array.from(pca.data), [0, 1, 4, 5, 8, 9]);
 });
 
-test("anndataSpec: legacy compound obs (a Dataset, not a group) throws an actionable error", async () => {
-  // pre-0.7 AnnData stored obs/var as compound HDF5 *tables*. A real h5wasm Dataset has no `keys()`.
-  const legacyObs: any = { value: null, shape: [3], attrs: {}, get: () => undefined };   // Dataset-like: no keys()
-  const f = G({ X: D(Float32Array.from([1, 0, 0, 2, 3, 4]), [3, 2], { "encoding-type": "array" }), obs: legacyObs });
-  await assert.rejects(() => anndataSpec(f), /legacy AnnData/i);
+test("anndataSpec: legacy compound obs/var/obsm (pre-0.7 tables) read; int codes + uns/<col>_categories → label", async () => {
+  // a compound Dataset: has `.dtype` (member descriptors) + `.value` (array of rows), NO `keys()`.
+  const CD = (dtype: any[], rows: any[], attrs: any = {}): any => ({ dtype, value: rows, attrs: mapAttrs(attrs), get: () => undefined });
+  const obs = CD([["index", "A8"], ["louvain", "<b"], ["nUMI", "<f"]],
+                 [["c0", 0, 1], ["c1", 1, 2], ["c2", 0, 7]], { _index: "index" });
+  const varc = CD([["index", "A4"]], [["g0"], ["g1"]], { _index: "index" });
+  const obsm = CD([["X_umap", "<f", [2]]], [[[0, 1]], [[2, 3]], [[4, 5]]]);            // array-typed member → embedding
+  const uns = G({ louvain_categories: D(["A", "B"], [2]) });                            // legacy categorical names
+  const X = D(Float32Array.from([1, 0, 0, 2, 3, 4]), [3, 2], { "encoding-type": "array" });   // dense c0=[1,0] c1=[0,2] c2=[3,4]
+  const f = G({ X, obs, var: varc, obsm, uns });
+
+  const spec = await anndataSpec(f);
+  assert.deepEqual(spec.axes.cells.labels, ["c0", "c1", "c2"]);
+  assert.deepEqual(spec.axes.genes.labels, ["g0", "g1"]);
+  const c = spec.fields.counts as any;
+  assert.equal(c.encoding, "csc");
+  const B = [[0, 0], [0, 0], [0, 0]];
+  for (let g = 0; g < 2; g++) for (let k = Number(c.indptr[g]); k < Number(c.indptr[g + 1]); k++) B[c.indices[k]][g] = c.data[k];
+  assert.deepEqual(B, [[1, 0], [0, 2], [3, 4]]);
+  // legacy categorical: int codes in obs + names in uns/louvain_categories → utf8 label
+  assert.deepEqual((spec.fields.louvain as any).values, ["A", "B", "A"]);
+  assert.equal((spec.fields.nUMI as any).role, "measure");
+  // compound obsm array member → 2D embedding
+  assert.deepEqual((spec.fields.umap as any).shape, [3, 2]);
+  assert.deepEqual(Array.from((spec.fields.umap as any).data), [0, 1, 2, 3, 4, 5]);
 });
 
 test("guardSize: refuses an oversized .h5ad, passes a small one", () => {

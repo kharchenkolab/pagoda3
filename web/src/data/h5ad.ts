@@ -63,16 +63,10 @@ export async function anndataSpec(f: H5): Promise<DatasetSpec> {
   // Legacy AnnData (pre-0.7) stored obs/var as compound HDF5 *tables* (a Dataset), not a group of
   // columns. We read the modern group layout; detect the old one and tell the user how to upgrade it
   // rather than failing deep inside the reader with an opaque "v3 array or group".
+  // Legacy AnnData (pre-0.7) stores obs/var/obsm as compound HDF5 *tables* (a Dataset), not groups of
+  // columns. A real h5wasm Group has `.keys()`; a compound Dataset doesn't — dispatch to the legacy reader.
   const obsNode = f.get("obs");
-  if (obsNode && typeof (obsNode as any).keys !== "function") {
-    throw new Error(
-      "This is a legacy AnnData file (pre-0.7: obs/var stored as compound HDF5 tables), which isn't read directly yet.\n" +
-      "Re-save it once with current anndata:\n" +
-      "    import anndata; a = anndata.read_h5ad(IN); a.write_h5ad(OUT)\n" +
-      "or convert it for the viewer:\n" +
-      "    lstar convert IN.h5ad OUT.lstar.zarr --viewer\n" +
-      "then open the result.");
-  }
+  if (obsNode && typeof (obsNode as any).keys !== "function") return legacyAnndataSpec(f, M);
   const Xnode = f.get("X");
   // A sparse X (group) carries its dims in a `shape` attr; a dense X (dataset) has no such attr — its
   // shape is intrinsic. Use the attr when present, else the dataset's own shape.
@@ -143,6 +137,92 @@ export async function anndataSpec(f: H5): Promise<DatasetSpec> {
       }
     }
   } catch { /* no obs */ }
+
+  return { kind: "sample", axes, fields, profiles: [] };
+}
+
+// ── legacy AnnData (pre-0.7) ──────────────────────────────────────────────────────────────────────
+// obs/var/obsm are compound HDF5 *tables*: ONE dataset whose rows are structs. h5wasm reads a compound
+// dataset's `.value` as an array of rows (each row = the member values in `.dtype` order; array-typed
+// members like X_umap come back as nested arrays) — plain JS values, already off the WASM heap. Categorical
+// obs columns are stored as integer CODES, with the category names in `uns/<col>_categories` (legacy idiom).
+function compoundMembers(node: any): { name: string; shape: number[] | null }[] {
+  const dt = node?.dtype;                                  // e.g. [["index","A16"],["louvain","<b"]] or [["X_pca","<f",[50]]]
+  if (!Array.isArray(dt)) return [];
+  return dt.map((m: any) => ({ name: String(m[0]), shape: Array.isArray(m[2]) ? m[2].map(Number) : null }));
+}
+
+async function legacyAnndataSpec(f: H5, M: any): Promise<DatasetSpec> {
+  // read a compound obs/var table → its row index (the cell/gene labels) + the non-index column descriptors
+  const readTable = (node: any) => {
+    const members = compoundMembers(node);
+    const rows = (node?.value as any[]) || [];
+    const want = attr(node, "_index");
+    let idx = members.findIndex((m) => m.name === want);
+    if (idx < 0) idx = members.findIndex((m) => /^_?index$/i.test(m.name));
+    if (idx < 0) idx = 0;
+    return { index: rows.map((r) => String(r[idx])), rows, cols: members.map((m, i) => ({ ...m, i })).filter((m) => m.i !== idx) };
+  };
+  const obs = readTable(f.get("obs"));
+  const varr = readTable(f.get("var"));
+  const ncells = obs.index.length, ngenes = varr.index.length;
+
+  const axes: Record<string, AxisSpec> = {
+    cells: { labels: obs.index, role: "observation" },
+    genes: { labels: varr.index, role: "feature" },
+  };
+  const fields: Record<string, FieldSpec> = {};
+
+  // counts: X (dense or sparse) — same matrix reader as the modern path
+  let countsNode = f.get("X");
+  try { const lc = f.get("layers/counts"); if (lc) countsNode = lc; } catch { /* */ }
+  if (countsNode) {
+    const csc = await readCounts(M, countsNode, ncells, ngenes);
+    if (csc) {
+      const s = csc.data as ArrayLike<number>; let raw = true;
+      for (let i = 0; i < Math.min(s.length, 5000); i++) if (s[i] !== Math.round(s[i] as number)) { raw = false; break; }
+      fields.counts = { role: "measure", span: ["cells", "genes"], encoding: "csc", state: raw ? "raw" : "lognorm",
+                        shape: [ncells, ngenes], data: csc.data, indices: csc.indices, indptr: csc.indptr };
+    }
+  }
+
+  // obs columns: categorical (int codes + uns/<name>_categories) → utf8 label; numeric → dense measure
+  const unsCats = (name: string): string[] | null => {
+    try { const v = f.get("uns/" + name + "_categories")?.value; return v ? Array.from(v as any, String) : null; } catch { return null; }
+  };
+  for (const c of obs.cols) {
+    if (c.shape) continue;                                 // array-typed members live in obsm, not obs
+    const vals = obs.rows.map((r) => r[c.i]);
+    const first = vals[0], cats = unsCats(c.name);
+    if (cats && typeof first === "number") {
+      fields[c.name] = { role: "label", span: ["cells"], encoding: "utf8",
+                         values: vals.map((code: number) => (code >= 0 && code < cats.length) ? cats[code] : "") };
+    } else if (typeof first === "number") {
+      fields[c.name] = { role: "measure", span: ["cells"], encoding: "dense", shape: [ncells], data: Float32Array.from(vals, Number) };
+    } else if (typeof first === "string") {
+      fields[c.name] = { role: "label", span: ["cells"], encoding: "utf8", values: vals.map(String) };
+    }
+  }
+
+  // obsm: a compound table whose members are arrays (X_umap[2], X_pca[50], …) → 2D embeddings (clamped to 2)
+  try {
+    const obsmNode: any = f.get("obsm");
+    if (obsmNode && typeof obsmNode.keys !== "function") {
+      const members = compoundMembers(obsmNode);
+      const rows = obsmNode.value as any[];
+      members.forEach((m, mi) => {
+        const dim = m.shape ? m.shape[0] : 0;
+        if (dim < 2) return;
+        const k = Math.min(dim, 2);
+        const name = m.name.replace(/^X_/, "").toLowerCase() || m.name;
+        const ax = "emb_" + name;
+        const data = new Float32Array(ncells * k);
+        for (let i = 0; i < ncells; i++) { const vec = rows[i]?.[mi] || []; for (let j = 0; j < k; j++) data[i * k + j] = Number(vec[j]); }
+        axes[ax] = { labels: Array.from({ length: k }, (_, i) => name + (i + 1)), role: "coordinate" };
+        fields[name] = { role: "embedding", span: ["cells", ax], encoding: "dense", shape: [ncells, k], data };
+      });
+    }
+  } catch { /* no obsm */ }
 
   return { kind: "sample", axes, fields, profiles: [] };
 }
