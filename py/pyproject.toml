@@ -12,6 +12,9 @@ license = { text = "MIT" }
 authors = [{ name = "Peter Kharchenko and the pagoda3 authors" }]
 dependencies = ["numpy", "scipy", "lstar"]
 
+[project.scripts]
+pagoda3 = "pagoda3.cli:main"
+
 [project.optional-dependencies]
 anndata = ["anndata"]
 dev = ["pytest"]

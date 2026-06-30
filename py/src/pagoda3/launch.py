@@ -1,78 +1,98 @@
-"""Local launcher: turn an object or an L* store into a running viewer in the browser.
+"""Local launcher: turn an object or an L* store into a running viewer in the browser — standalone.
 
-    pagoda3.view("sample.lstar.zarr")          # an existing L* store
-    pagoda3.view(adata)                          # an AnnData (converted via lstar)
-    pagoda3.view(adata, prepare=True)            # also precompute the navigators (faster first open)
+    pagoda3.view("sample.lstar.zarr")     # serve an existing L* store, open the viewer at it
+    pagoda3.view(adata)                     # convert (via lstar) + precompute navigators, then serve
+    pagoda3.view(adata, prepare=False)      # skip the navigator precompute (the viewer computes live)
 
-For now this drives the repo's Vite dev server (the same one `npm --prefix web run dev` starts):
-it places the store under web/public, ensures the dev server + agent proxy are up, and opens the
-browser at it. A standalone, bundled launcher (no repo checkout) is future packaging work.
+No repo checkout and no build step: the store is served locally with a tiny stdlib HTTP server
+(byte-range + CORS, see :mod:`pagoda3.serve`) and opened in the **hosted** viewer build — a static
+SPA at ``PAGODA3_VIEWER`` (default ``pklab``) — pointed at the local store via ``?store=``. The viewer
+reads the store cross-origin over range requests; nothing is uploaded.
+
+Remote / HPC: if the call runs over SSH (e.g. a JupyterHub/OOD kernel on a cluster node), there is no
+local browser and ``localhost`` on the node is not your laptop. The launcher detects this, skips the
+auto-open, and prints the ``ssh -L`` port-forward to run on your laptop so the viewer there can reach
+the node's store server.
 """
 import os
 import shutil
-import subprocess
+import tempfile
 import time
 import webbrowser
-from urllib.request import urlopen
+from urllib.parse import quote
 
-import lstar
+from .serve import serve_dir
 
-# repo root = .../pagoda3 (this file is pagoda3/py/src/pagoda3/launch.py)
-_REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-_WEB = os.path.join(_REPO, "web")
-_PUBLIC = os.path.join(_WEB, "public")
-_PORT = 8787
+DEFAULT_VIEWER = "https://pklab.med.harvard.edu/peterk/pagoda3/"
+
+# keep started servers (and their sockets) alive for the life of the process / kernel
+_ALIVE = []
 
 
 def _coerce_store(obj, prepare):
-    """Return a path to a *.lstar.zarr for `obj` (a path, an lstar.Dataset, or a convertible
-    object), writing under web/public. Anything lstar can read becomes viewable."""
-    from .viewer import write_viewer
+    """Return an absolute path to a ``*.lstar.zarr`` for ``obj``.
+
+    A path to an existing store is served *in place* (untouched). An ``lstar.Dataset`` or a
+    convertible object (AnnData, …) is converted, optionally extended with the viewer navigators,
+    and written to a fresh temp store.
+    """
     if isinstance(obj, str):
         if obj.rstrip("/").endswith(".lstar.zarr"):
-            return obj                                   # already an L* store
+            return os.path.abspath(obj.rstrip("/"))
         raise ValueError("pass a *.lstar.zarr path, or an in-memory object to convert")
-    # an lstar.Dataset, or convert a known external object
+    import lstar
+    from .viewer import write_viewer
     ds = obj if isinstance(obj, lstar.Dataset) else _convert(obj)
     if prepare:
         write_viewer(ds)
-    name = "view_%d.lstar.zarr" % (abs(hash(id(obj))) % 100000)
-    out = os.path.join(_PUBLIC, name)
-    if os.path.exists(out):
-        shutil.rmtree(out)
+    out = os.path.join(tempfile.mkdtemp(prefix="pagoda3-"), "view.lstar.zarr")
     lstar.write(ds, out)
     return out
 
 
 def _convert(obj):
+    import lstar
     cls = type(obj).__name__
-    if cls == "AnnData":
+    if cls in ("AnnData", "Raw"):
         return lstar.read_anndata(obj)
     raise TypeError("don't know how to convert a %s; convert to lstar.Dataset first" % cls)
 
 
-def _server_up(port=_PORT):
-    try:
-        urlopen("http://localhost:%d/" % port, timeout=0.5).read(1)
-        return True
-    except Exception:
-        return False
+def _is_remote():
+    """True when this kernel is on a remote host reached over SSH — no usable local browser."""
+    return bool(os.environ.get("SSH_CONNECTION") or os.environ.get("SSH_CLIENT"))
 
 
-def view(obj, prepare=False, open_browser=True):
-    """Open `obj` (an L* store path, an lstar.Dataset, or an AnnData) in the pagoda3 viewer."""
-    store = os.path.abspath(_coerce_store(obj, prepare))
-    under_public = os.path.commonpath([store, _PUBLIC]) == _PUBLIC
-    rel = "/" + os.path.relpath(store, _PUBLIC) if under_public else store
-    if not _server_up():
-        subprocess.Popen(["npm", "--prefix", "web", "run", "dev"], cwd=_REPO,
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        for _ in range(60):
-            if _server_up():
-                break
-            time.sleep(0.5)
-    url = "http://localhost:%d/?store=%s" % (_PORT, rel)
-    if open_browser:
-        webbrowser.open(url)
+def view(obj, prepare=True, viewer=None, host="127.0.0.1", port=0, open_browser=True, block=False):
+    """Open ``obj`` (an L* store path, an ``lstar.Dataset``, or an AnnData) in the pagoda3 viewer.
+
+    Returns the viewer URL. The local store server runs on a daemon thread and stays up for the life
+    of the process (so a notebook kernel keeps it alive). Pass ``block=True`` to keep a plain script
+    running.
+    """
+    viewer = (viewer or os.environ.get("PAGODA3_VIEWER") or DEFAULT_VIEWER).rstrip("/") + "/"
+    store = _coerce_store(obj, prepare)
+
+    handle = serve_dir(store, host=host, port=port)
+    _ALIVE.append(handle)
+    store_url = handle.url(browser_host="localhost")              # the store is the server root
+    url = "%s?store=%s" % (viewer, quote(store_url, safe=""))
+
     print("pagoda3 viewer:", url)
+    if _is_remote():
+        print("  remote session — on YOUR machine run:")
+        print("    ssh -N -L %d:localhost:%d <this-host>" % (handle.port, handle.port))
+        print("  then open the URL above in your browser.")
+    elif open_browser:
+        try:
+            webbrowser.open(url)
+        except Exception:
+            pass
+
+    if block:
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            handle.stop()
     return url
