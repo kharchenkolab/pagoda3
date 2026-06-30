@@ -7,7 +7,7 @@ import { getProvider, PROVIDER_KEY, type Provider } from "./agent/providers.ts";
 import { ComputePool } from "./compute/pool.ts";
 import "./ui/example-panel.ts";   // an EXTERNAL panel module that self-registers (proves the panel registry — zero core edits)
 
-const storeParam = new URLSearchParams(location.search).get("store") || "/sample.lstar.zarr/";
+const storeParam = new URLSearchParams(location.search).get("store") || ((((import.meta as any).env?.BASE_URL) as string) || "/") + "sample_np.lstar.zarr/";   // base-aware so the bare URL self-loads a sample under a subpath deploy (e.g. /peterk/pagoda3/)
 const STORE_URL = new URL(storeParam.endsWith("/") ? storeParam : storeParam + "/", location.origin).href;
 
 async function boot() {

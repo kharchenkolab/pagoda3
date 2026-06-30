@@ -34,11 +34,15 @@ export function parseGeneSetDoc(raw: string | any, meta?: Partial<Collection>): 
 // Back-compat: with no index.json present, assume the one bundled Reactome-human asset (the pre-registry world).
 const DEFAULT_MANIFEST: Collection[] = [{ id: "reactome_human", label: "Reactome", source: "Reactome", organism: "human", license: "CC0", file: "reactome_human.json" }];
 
+// Same-origin asset root = Vite's configured base, so /genesets resolves under a SUBPATH deploy (e.g. /peterk/pagoda3/).
+// Dev base "/" → "" → /genesets; built with --base=/peterk/pagoda3/ → /peterk/pagoda3/genesets. Empty in node tests.
+const ASSET_BASE = ((((import.meta as any).env?.BASE_URL) as string) || "/").replace(/\/$/, "");
+
 let manifestP: Promise<Collection[]> | null = null;
 // Session-imported collections (Phase D, BYO .gmt) live here — not in the manifest, merged into listCollections.
 const custom = new Map<string, GeneSetDB>();
 
-export function loadManifest(base = ""): Promise<Collection[]> {
+export function loadManifest(base = ASSET_BASE): Promise<Collection[]> {
   if (!manifestP) {
     manifestP = fetch(`${base}/genesets/index.json`)
       .then((r) => (r.ok ? r.json() : null))
@@ -49,7 +53,7 @@ export function loadManifest(base = ""): Promise<Collection[]> {
 }
 
 // The picker's source of truth: bundled collections (optionally filtered to an organism) + any session-imported ones.
-export function listCollections(filter?: { organism?: string }, base = ""): Promise<Collection[]> {
+export function listCollections(filter?: { organism?: string }, base = ASSET_BASE): Promise<Collection[]> {
   return loadManifest(base).then((all) => {
     const bundled = filter?.organism ? all.filter((c) => c.organism === filter.organism) : all;
     const customCs: Collection[] = [...custom.values()].map((d) => ({ id: d.id, label: d.label, source: d.source, organism: d.organism, split: d.split, nPathways: d.nPathways, nGenes: d.geneSpace.size, custom: true }));
@@ -77,7 +81,7 @@ async function fetchCollectionText(base: string, file: string): Promise<string> 
 
 const cache = new Map<string, Promise<GeneSetDB>>();
 // Load one collection by id (manifest-bundled or session-custom). Cached; a failure isn't cached so a retry can succeed.
-export function loadCollection(id: string, base = ""): Promise<GeneSetDB> {
+export function loadCollection(id: string, base = ASSET_BASE): Promise<GeneSetDB> {
   if (custom.has(id)) return Promise.resolve(custom.get(id)!);
   let p = cache.get(id);
   if (!p) {
