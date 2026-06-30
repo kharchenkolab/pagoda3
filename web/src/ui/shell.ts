@@ -25,7 +25,7 @@ import { ResultRegistry, buildSessionEntities, type SessionEntity } from "./resu
 import { fieldBuckets } from "../data/fieldroles.ts";
 import { SESSION_KEY, WIDGETS_KEY, SavedWidget, SerAnnoLayer, Fingerprint, serializeSession, parseSession, serializeBundle, parseBundle, fingerprintMismatch, upsertWidget, loadWidgets, widgetHash, serializeWidgetFile, parseWidgetFile, WidgetFile } from "./persist.ts";
 import { encodeViewToken, decodeViewToken } from "./sharelink.ts";
-import { pickZip, pickFolder } from "./openlocal.ts";
+import { pickFile, pickFolder } from "./openlocal.ts";
 import { serializeCustomCollections, restoreCustomCollections } from "../compute/genesets.ts";
 
 // Item 2/C — the trust registry: source-hashes of widgets the user has authored or explicitly consented to run. Foreign
@@ -1951,8 +1951,8 @@ export class App {
         <div class="acrow"><span class="acava">G</span><div><div class="acname">Guest</div><div class="acsub">Local session · not signed in</div></div></div>
         <button class="acbtn" data-a="signin">Sign in</button>
         <button class="acbtn" data-a="ledger" style="margin-top:6px">▤ &nbsp;Session ledger</button>
-        <button class="acbtn" data-a="openzip" style="margin-top:6px">⤓ &nbsp;Open a data file (.zip)…</button>
-        <button class="acbtn" data-a="openfolder" style="margin-top:6px">▸ &nbsp;Open a data folder…</button>
+        <button class="acbtn" data-a="openfile" style="margin-top:6px">⤓ &nbsp;Open a data file (.h5ad / .zip)…</button>
+        <button class="acbtn" data-a="openfolder" style="margin-top:6px">▸ &nbsp;Open a data folder (.lstar.zarr)…</button>
         <div class="acicons">
           <button data-a="theme" title="${light ? "Light theme · switch to dark" : "Dark theme · switch to light"}">${light ? "☾" : "☀"}</button>
           <button data-a="share" title="Copy a link to this view">🔗</button>
@@ -1975,7 +1975,7 @@ export class App {
       else if (a === "export") { c.classList.remove("show"); void this.exportSessionToFile(); }
       else if (a === "import") { c.classList.remove("show"); void this.importSessionFromFile(); }
       else if (a === "ledger") { c.classList.remove("show"); this.openSessionLedger(); }
-      else if (a === "openzip") { c.classList.remove("show"); pickZip((f) => (window as any).p2?.openLocal?.(f)); }
+      else if (a === "openfile") { c.classList.remove("show"); pickFile((f) => (window as any).p2?.openLocal?.(f)); }
       else if (a === "openfolder") { c.classList.remove("show"); void pickFolder((inp) => (window as any).p2?.openLocal?.(inp)); }
       else if (a === "reset") { c.classList.remove("show"); this.confirmReset(); } });   // confirm first — reset wipes the saved session
     c.querySelectorAll<HTMLElement>("[data-std]").forEach((el) => el.onclick = () => { const s = standard[Number(el.dataset.std)]; if (s) { this.addPanel({ ...s.spec }); this.toast(`Added ${s.name}`, null); } c.classList.remove("show"); });
