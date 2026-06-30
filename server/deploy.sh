@@ -9,7 +9,7 @@
 #
 # Usage:
 #   server/deploy.sh            # build + push the app bundle (+ gene-set assets); protects the deployed sample store
-#   server/deploy.sh --sample   # also (re)push the bare-URL demo store sample_np.lstar.zarr (~95M)
+#   server/deploy.sh --sample   # also (re)push the bare-URL demo store real.lstar.zarr (~95M)
 set -euo pipefail
 BASE=/peterk/pagoda3/
 DEST=pklab:public_html/pagoda3/
@@ -23,8 +23,8 @@ echo "pushing bundle + gene-set assets (excluding the bulky dev *.lstar.zarr fix
 rsync -az --delete --exclude='*.lstar.zarr' dist/ "$DEST"
 
 if [ "${1:-}" = "--sample" ]; then
-  echo "pushing demo store sample_np.lstar.zarr (~95M, no -z; zarr is already compressed) …"
-  rsync -a dist/sample_np.lstar.zarr "$DEST"
+  echo "pushing demo store real.lstar.zarr (~95M, no -z; zarr is already compressed) …"
+  rsync -a dist/real.lstar.zarr "$DEST"
 fi
 
 echo "done → https://pklab.med.harvard.edu/peterk/pagoda3/"

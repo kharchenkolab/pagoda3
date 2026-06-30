@@ -203,7 +203,7 @@ export class App {
     // connect the live planner if its backend is reachable — checks the ACTIVE provider (Anthropic OAuth, or the
     // local vLLM model) and labels with the real model so "live on …" never lies about which model is driving.
     const prov = getProvider();
-    checkLive(prov).then((ok) => { this.agent.live = ok; if (ok) {
+    checkLive(prov).then((ok) => { this.agent.live = ok; this.renderAskBtn(); if (ok) {   // reflect online/offline on the Ask pip
       const model = prov === "openai" ? providerModel(prov) : "Opus";
       this.toast("Live agent connected · " + model, prov === "openai"
         ? "A LOCAL OpenAI-compatible model (vLLM) is driving the agent — switch back with p2.setProvider('anthropic')."
@@ -2006,7 +2006,9 @@ export class App {
       return `<div id="acfstat" style="margin-bottom:7px">${this.credStatusHtml()}</div><input id="acfk" type="password" autocomplete="off" class="acwsearch" placeholder="paste Anthropic API key…"><div id="acfdet" class="acsub" style="margin-top:5px;min-height:13px"></div><div class="acsub" style="margin-top:7px;opacity:.7;line-height:1.45">Stored only in this browser — requests go straight to Anthropic. A subscription OAuth token works too; it just expires after a few hours.</div>`;
     };
     const render = () => {
+      const offReason = resolveMode(getProvider()) === "proxy" ? "the bundled proxy isn't reachable from here" : resolveMode(getProvider()) === "off" ? "the copilot is turned off" : "the credential is missing or expired";
       card.innerHTML = `<div style="font-size:15px;font-weight:600;margin-bottom:3px">Agent connection</div>
+        ${!this.agent.live ? `<div class="acsub" style="margin:0 0 11px;padding:7px 10px;border-radius:8px;background:rgba(226,80,74,.12);border-left:2px solid var(--bad,#e2504a);color:var(--bad,#e2504a);line-height:1.45">No live agent — ${offReason}. Pick a connection below, or run the viewer without a copilot.</div>` : ""}
         <div class="acsub" style="margin-bottom:12px;line-height:1.45">Where the copilot sends requests. Data, compute, and rendering always run in your browser.</div>
         <div style="display:flex;flex-direction:column;gap:6px">${MODES.map((m) => `<div class="acfmode" data-m="${m.id}" style="display:flex;align-items:center;gap:11px;padding:9px 11px;border:0.5px solid ${sel === m.id ? "var(--cyan,#78e0ff)" : "var(--line)"};border-radius:8px;cursor:pointer;background:${sel === m.id ? "var(--inset)" : "transparent"}"><div style="flex:1;min-width:0"><div style="font-size:13.5px;font-weight:500">${m.title}</div><div class="acsub">${m.sub}</div></div>${m.badge ? `<span style="font-size:11px;padding:2px 8px;border-radius:8px;background:${m.bad ? "rgba(224,164,88,.15)" : "rgba(90,191,143,.15)"};color:${m.bad ? "var(--amber,#e0a458)" : "var(--good,#5abf8f)"};white-space:nowrap">${m.badge}</span>` : ""}<span style="visibility:${sel === m.id ? "visible" : "hidden"};color:var(--cyan,#78e0ff)">✓</span></div>`).join("")}</div>
         <div style="margin-top:13px;border-top:0.5px solid var(--line);padding-top:13px">${body()}</div>
@@ -2038,7 +2040,7 @@ export class App {
       else if (!loadCred()) { this.toast("Paste an API key or token first", null); return; }
     }
     close();
-    void checkLive(getProvider()).then((ok) => { this.agent.live = ok; });
+    void checkLive(getProvider()).then((ok) => { this.agent.live = ok; this.renderAskBtn(); });
     const m = resolveMode(getProvider());
     this.toast("Agent connection updated", m === "off" ? "Copilot is off — the viewer works on its own." : "Mode: " + (m === "oauth" ? "OAuth token" : m === "key" ? "API key" : m) + (m === "proxy" || m === "local" ? "" : " · browser-direct"));
   }
@@ -2100,9 +2102,12 @@ export class App {
   renderAskBtn() {
     const b = this.$("askBtn");
     if (this.agent?.running) { b.className = "tb pip working stop"; b.title = "stop the agent"; b.innerHTML = `<span class="stopsq"></span>Stop${this.pipLabel ? ` · ${this.pipLabel}` : ""}`; return; }
-    b.title = ""; b.className = "tb pip" + (this.pipState && this.pipState !== "idle" ? " " + this.pipState : "");
+    const busy = this.pipState === "working" || this.pipState === "listening" || this.pipState === "nudge";
+    const down = !busy && !!this.agent && !this.agent.live;   // no live agent backend (off / unreachable proxy / no/expired cred)
+    b.className = "tb pip" + (busy ? " " + this.pipState : down ? " down" : this.pipState === "intro" ? " intro" : "");
+    b.title = down ? "Agent offline — click to set up a connection" : "";
     const main = this.pipState === "working" ? "Working" + (this.pipLabel ? " · " + this.pipLabel : "") : this.pipState === "listening" ? "Listening…" : "Ask";
-    const right = this.pipState === "nudge" ? `<span class="nbadge">${this.pipLabel || "!"}</span>` : (!this.pipState || this.pipState === "idle" || this.pipState === "listening" || this.pipState === "intro") ? `<span class="kbd">⌘K</span>` : "";
+    const right = this.pipState === "nudge" ? `<span class="nbadge">${this.pipLabel || "!"}</span>` : (!busy ? `<span class="kbd">⌘K</span>` : "");
     b.innerHTML = `<span class="dot"></span>${main}${right}`;
   }
 
@@ -2494,7 +2499,7 @@ export class App {
 
   // ---------- wiring ----------
   wire() {
-    this.$("askBtn").onclick = () => { if (this.agent.running) { this.agent.stopLive(); return; } if (this.nudgePending) this.agent.openNudge(); else this.openPalette(); };
+    this.$("askBtn").onclick = () => { if (this.agent.running) { this.agent.stopLive(); return; } if (!this.agent.live) { this.showAgentConfig(); return; } if (this.nudgePending) this.agent.openNudge(); else this.openPalette(); };   // offline → the connection card, not a palette that would fall to the mock planner
     this.$("lockBtn").onclick = () => { this.locked = !this.locked; this.$("lockBtn").classList.toggle("on", this.locked); this.$("lockBtn").textContent = this.locked ? "🔒 Layout" : "🔓 Layout"; this.toast(this.locked ? "Layout locked" : "Layout unlocked", this.locked ? "The agent will route bigger changes to the rail instead of touching your workbench." : null); };
     this.$("acctBtn").onclick = (e) => { e.stopPropagation(); const c = this.$("acct"); if (c.classList.contains("show")) c.classList.remove("show"); else this.openAccountMenu(); };
     this.applyTheme((localStorage.getItem("p2-theme") as "light" | "dark") || "dark");   // restore the saved preference
@@ -2519,7 +2524,7 @@ export class App {
     // (pointerdown-based, in showSelpop/hideSelpop) so it isn't entangled here.
     document.addEventListener("click", (e) => { if (!this.$("ctx").contains(e.target as Node)) this.$("ctx").classList.remove("show"); const ac = this.$("acct"); if (!ac.contains(e.target as Node) && (e.target as HTMLElement).id !== "acctBtn" && !this.$("acctBtn").contains(e.target as Node)) ac.classList.remove("show"); });
     document.addEventListener("keydown", (e) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); this.openPalette(); }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); if (this.agent.live) this.openPalette(); else this.showAgentConfig(); }
       else if (e.key === "Escape") { this.closePalette(); this.hideSelpop(); this.$("ctx").classList.remove("show"); }
     });
     this.coord.subscribe((_s, changed) => {
