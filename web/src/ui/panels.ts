@@ -2,7 +2,7 @@ import { mk, S } from "./dom.ts";
 import { Ctx } from "../data/ctx.ts";
 import { EmbeddingView } from "../render/embedding.ts";
 import { colorsFor, focusMaskFor, categoryColorOf, setCodeValues } from "../render/colors.ts";
-import { loadCollection, listCollections, GeneSetDB, Collection } from "../compute/genesets.ts";
+import { loadCollection, listCollections, parseGmt, registerCustomCollection, GeneSetDB, Collection } from "../compute/genesets.ts";
 import { enrichRanked, RankedGene, EnrichResult } from "../compute/enrich.ts";
 import { themeIsDark } from "../render/theme.ts";
 import { getStyle, resolveStyle } from "../render/style.ts";
@@ -64,6 +64,7 @@ export interface PanelHooks {
   focusCategory: (field: string, value: string) => void;       // restrict the workspace to a metadata value (focus + chip)
   addPanel: (spec: any) => void;                               // add a panel to the workbench (e.g. → composition hand-off)
   recordResult: (r: any) => void;                              // keep a computed result (e.g. a gene-set enrichment) in the session ledger
+  importGeneSet?: (db: GeneSetDB) => void;                      // a BYO .gmt collection was imported → persist it + notify
   openSelectionMenu: (anchor: { left: number; top: number; right?: number }) => void;   // open the selection ops menu (DE/label/ask); `right` right-aligns it to a right-side trigger
   onConfigurePanel: (panelId: number, patch: any) => void;     // a panel reconfiguring itself (e.g. dismissing pinned genes)
   registerGeneHover: (fn: (sym: string | null) => void) => void;   // a panel that highlights a gene's row on cross-panel geneHint
@@ -273,7 +274,7 @@ function pathwayCards(body: HTMLElement, rows: any[], score: (name: string, gene
 // rows: the sort IS the query (background coupled to the same test = the tested+detected genes ∩ annotated). `getRows`
 // returns the live ordered rows when the user flips to this view; `rankedByFn` names the active sort (shown prominently).
 // Clicking a pathway scores cells by its overlap-gene signature. Lazy-loads the bundled Reactome asset once.
-interface EnrichCap { ctx: Ctx; aLabel?: string; bLabel?: string; defaultRank?: string; record?: (r: any) => void; sourceName?: string; persist?: any; }   // persist = the Panel, so the view mode + top-N/dir ride through a re-render
+interface EnrichCap { ctx: Ctx; aLabel?: string; bLabel?: string; defaultRank?: string; record?: (r: any) => void; sourceName?: string; persist?: any; onImport?: (db: GeneSetDB) => void; }   // persist = the Panel (view mode + top-N/dir ride through a re-render); onImport persists a BYO .gmt
 function enrichView(cap: EnrichCap, getRows: () => RankedGene[], rankedByFn: () => string, st: { topN: number; dir: "ranked" | "up" | "down" | "both" }, getFilter: () => string): { el: HTMLElement; ensure: () => void } {
   const ctx = cap.ctx, aL = cap.aLabel || "A", bL = cap.bLabel || "B", FDR_SHOW = 0.1;
   const esc = (s: string) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]!));
@@ -282,9 +283,10 @@ function enrichView(cap: EnrichCap, getRows: () => RankedGene[], rankedByFn: () 
   // keeps only the genes⇄pathways toggle (common to both views), so switching back is always one click away.
   const ctrls = mk("div", "enrctrls"); el.appendChild(ctrls);
   const csel = mk("select", "mini enrcoll") as HTMLSelectElement; csel.title = "gene-set collection";   // which source/split to enrich against (grouped by source)
+  const imp = mk("button", "mini", "＋.gmt") as HTMLButtonElement; imp.title = "import a gene-set .gmt file (symbols) as a custom collection";
   const nsel = mk("select", "mini") as HTMLSelectElement; for (const v of [50, 100, 150, 200, 300]) { const o = document.createElement("option"); o.value = String(v); o.textContent = "top " + v; nsel.appendChild(o); } nsel.value = String(st.topN);
   const dsel = mk("select", "mini") as HTMLSelectElement; for (const [v, l] of [["ranked", "as ranked"], ["both", "up + down"], ["up", "up only"], ["down", "down only"]]) { const o = document.createElement("option"); o.value = v; o.textContent = l; dsel.appendChild(o); } dsel.value = st.dir;
-  ctrls.append(csel, nsel, dsel);
+  ctrls.append(csel, imp, nsel, dsel);
   const body = mk("div", "enrbody"); body.innerHTML = `<div class="enrempty">loading gene sets…</div>`; el.appendChild(body);
   nsel.onchange = () => { st.topN = +nsel.value; if (cap.persist) cap.persist.enrTopN = st.topN; render(); };
   dsel.onchange = () => { st.dir = dsel.value as any; if (cap.persist) cap.persist.enrDir = st.dir; render(); };
@@ -334,6 +336,20 @@ function enrichView(cap: EnrichCap, getRows: () => RankedGene[], rankedByFn: () 
     loadCollection(collId).then((d) => { db = d; render(); }).catch((e) => { body.innerHTML = `<div class="enrempty">Couldn't load gene sets: ${esc(e.message)}.<br>Build them with <code>node server/build_genesets.mjs</code>.</div>`; });
   };
   csel.onchange = () => { collId = csel.value; if (cap.persist) cap.persist.enrColl = collId; db = null; loadColl(); };
+  imp.onclick = () => {
+    const inp = Object.assign(document.createElement("input"), { type: "file", accept: ".gmt,.txt" }) as HTMLInputElement;
+    inp.onchange = async () => {
+      const f = inp.files?.[0]; if (!f) return;
+      try {
+        const gdb = parseGmt(await f.text(), { name: f.name.replace(/\.(gmt|txt)$/i, ""), organism: org });
+        if (!gdb.nPathways) { body.innerHTML = `<div class="enrempty">No gene sets found in ${esc(f.name)} — expected .gmt lines (name⇥description⇥gene⇥gene…).</div>`; return; }
+        registerCustomCollection(gdb); cap.onImport?.(gdb);   // persist into the session + toast
+        collections = await listCollections(); collId = gdb.id; if (cap.persist) cap.persist.enrColl = collId;
+        populateColl(); db = null; loadColl();
+      } catch (e) { body.innerHTML = `<div class="enrempty">Couldn't read ${esc(f.name)}: ${esc((e as Error).message)}.</div>`; }
+    };
+    inp.click();
+  };
   async function scorePathway(name: string, genes: string[]) {
     if (!genes.length) return;
     let acc: Float32Array | null = null, cnt = 0;
@@ -417,7 +433,7 @@ function variableGenesBody(p: Panel, ctx: Ctx, hooks: PanelHooks): BuiltBody {
   const gt = geneTable([], [
     { key: "symbol", label: "gene", get: (r: any) => r.symbol },
     { key: "score", label: "overdispersion", num: true, get: (r: any) => r.score ?? 0, fmt: (v: number) => v.toFixed(2), cls: () => "up" },
-  ], hooks.onGeneClick, { ctx, defaultRank: "overdispersion ↓", record: hooks.recordResult, sourceName: p.title || "variable genes", persist: p });
+  ], hooks.onGeneClick, { ctx, defaultRank: "overdispersion ↓", record: hooks.recordResult, onImport: hooks.importGeneSet, sourceName: p.title || "variable genes", persist: p });
   const w = mk("div"); w.style.cssText = "position:absolute;inset:0;display:flex;flex-direction:column;overflow:hidden";
   const scope = mk("div", "vgscope");
   const bar = mk("div", "fetchbar");   // thin data-fetch progress bar — determinate (csrRows runs) or indeterminate (whole-matrix)
@@ -479,7 +495,7 @@ function deBody(p: Panel, ctx: Ctx, hooks: PanelHooks): BuiltBody {
   }
   // The gene table IS the query-staging surface: sort it (logFC ↑/↓, p, a group mean), then flip the header's
   // Genes ⇄ Pathways toggle to enrich that exact order. Enrichment is the other face of the same table.
-  return geneTable(rows, cols, hooks.onGeneClick, { ctx, aLabel: p.aLabel, bLabel: p.bLabel, defaultRank: "logFC ↓", record: hooks.recordResult, sourceName: p.title, persist: p });
+  return geneTable(rows, cols, hooks.onGeneClick, { ctx, aLabel: p.aLabel, bLabel: p.bLabel, defaultRank: "logFC ↓", record: hooks.recordResult, onImport: hooks.importGeneSet, sourceName: p.title, persist: p });
 }
 
 // A ranked gene list with a single score column (e.g. scope-aware overdispersion).
@@ -487,7 +503,7 @@ function geneListBody(p: Panel, ctx: Ctx, hooks: PanelHooks): BuiltBody {
   return geneTable(p.rows || [], [
     { key: "symbol", label: "gene", get: (r) => r.symbol },
     { key: "score", label: p.cap || "score", num: true, get: (r) => r.score ?? 0, fmt: (v) => v.toFixed(2), cls: () => "up" },
-  ], hooks.onGeneClick, { ctx, defaultRank: (p.cap || "score") + " ↓", record: hooks.recordResult, sourceName: p.title, persist: p });
+  ], hooks.onGeneClick, { ctx, defaultRank: (p.cap || "score") + " ↓", record: hooks.recordResult, onImport: hooks.importGeneSet, sourceName: p.title, persist: p });
 }
 
 async function compositionBody(panel: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltBody> {

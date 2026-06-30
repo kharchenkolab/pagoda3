@@ -24,6 +24,7 @@ import { pseudobulkDECore, pseudobulkPairedDECore } from "../compute/odcore.ts";
 import { ResultRegistry, buildSessionEntities, type SessionEntity } from "./results.ts";
 import { fieldBuckets } from "../data/fieldroles.ts";
 import { SESSION_KEY, WIDGETS_KEY, SavedWidget, SerAnnoLayer, Fingerprint, serializeSession, parseSession, serializeBundle, parseBundle, fingerprintMismatch, upsertWidget, loadWidgets, widgetHash, serializeWidgetFile, parseWidgetFile, WidgetFile } from "./persist.ts";
+import { serializeCustomCollections, restoreCustomCollections } from "../compute/genesets.ts";
 
 // Item 2/C — the trust registry: source-hashes of widgets the user has authored or explicitly consented to run. Foreign
 // widgets that arrive via an imported session file are NOT here, so they're GATED (rendered as a consent placeholder)
@@ -251,7 +252,7 @@ export class App {
   }
   persistSession() {
     const userWS = this.wsOrder.filter((n) => !this.builtinWS.has(n) && this.WS[n]).map((n) => ({ name: n, ws: this.WS[n] }));
-    const base = { store: this.currentStore(), fingerprint: this.datasetFingerprint(), currentWS: this.currentWS, colorBy: this.coord.state.colorBy, canvas: this.captureLayout(), userWS, annotation: this.serializeAnnotation(), catColors: serializeCategoryColors(), style: (this.coord.state as any).style, customPalette: serializeCustomPalette(), results: this.results.serialize() };
+    const base = { store: this.currentStore(), fingerprint: this.datasetFingerprint(), currentWS: this.currentWS, colorBy: this.coord.state.colorBy, canvas: this.captureLayout(), userWS, annotation: this.serializeAnnotation(), catColors: serializeCategoryColors(), style: (this.coord.state as any).style, customPalette: serializeCustomPalette(), results: this.results.serialize(), customGeneSets: serializeCustomCollections() };
     // Quota ladder (~5MB localStorage): full doc → drop the chat log → drop RESULT ROWS (keep each result as a
     // re-runnable stub: spec + provenance + summary survive, the rows don't — re-open re-runs it) → give up. Each rung
     // sheds the next-biggest droppable thing while keeping the session reopenable. The portable FILE export keeps everything.
@@ -271,6 +272,7 @@ export class App {
     restoreCustomPalette((doc as any).customPalette);   // a user-defined numeric gradient (view layer)
     if (doc.annotation && !fingerprintMismatch(doc.fingerprint, this.datasetFingerprint())) this.restoreAnnotation(doc.annotation);   // cell-indexed → only when the dataset still aligns
     this.results.restore((doc as any).results);   // gene-indexed rows + a re-runnable spec — safe to restore for the same store (re-run is guarded if a referenced set no longer resolves)
+    restoreCustomCollections((doc as any).customGeneSets);   // BYO .gmt collections — symbol-keyed, dataset-agnostic, so no fingerprint gate
     this.restoreConversation(doc.conversation);   // the chat log survives a reload (not cell-indexed → no fingerprint gate)
     this.restoredSession = true;   // a prior session was restored → this is NOT a fresh start, so skip the first-run intro shine
     this.fullRender();
@@ -287,7 +289,7 @@ export class App {
   // ---- the portable session DOCUMENT (file) — see persist.ts. A bundle = the session + the widget library it uses.
   buildBundle(): string {
     const userWS = this.wsOrder.filter((n) => !this.builtinWS.has(n) && this.WS[n]).map((n) => ({ name: n, ws: this.WS[n] }));
-    const session = parseSession(serializeSession({ store: this.currentStore(), fingerprint: this.datasetFingerprint(), currentWS: this.currentWS, colorBy: this.coord.state.colorBy, canvas: this.captureLayout(), userWS, annotation: this.serializeAnnotation(), conversation: this.serializeConversation(), catColors: serializeCategoryColors(), style: (this.coord.state as any).style, customPalette: serializeCustomPalette(), results: this.results.serialize() }))!;
+    const session = parseSession(serializeSession({ store: this.currentStore(), fingerprint: this.datasetFingerprint(), currentWS: this.currentWS, colorBy: this.coord.state.colorBy, canvas: this.captureLayout(), userWS, annotation: this.serializeAnnotation(), conversation: this.serializeConversation(), catColors: serializeCategoryColors(), style: (this.coord.state as any).style, customPalette: serializeCustomPalette(), results: this.results.serialize(), customGeneSets: serializeCustomCollections() }))!;
     return serializeBundle({ session, widgets: this.widgetLib, savedAt: Date.now() });
   }
   applyBundle(raw: string): { ok: boolean; msg: string } {
@@ -460,6 +462,7 @@ export class App {
       focusCategory: (field, value) => { const r = this.focusFromOp({ dim: field, value }); if (!r.error) { this.fullRender(); this.checkpoint(`focus · ${field}=${value}`, "Restricted the workspace to a metadata value — release with the focus chip."); } },
       addPanel: (spec) => { this.addPanel(spec); this.fullRender(); },
       recordResult: (r: any) => { const it = this.results.add({ name: r.name, kind: r.kind, spec: r.spec || { stat: r.kind }, who: "user", when: Date.now(), summary: r.summary, bind: r.bind || "enrich:pathways", rows: r.rows }); this.fullRender(); this.toast(`Kept “${it.name}” in session results`, "It's in the session ledger — re-open, export to CSV, or delete from there."); },
+      importGeneSet: (db: any) => { this.scheduleSave(); this.fullRender(); this.toast(`Imported “${db.label}” — ${db.nPathways} gene set${db.nPathways === 1 ? "" : "s"}`, "Saved with the session; pick it from the collection menu in any enrichment view."); },   // persist a BYO .gmt into the session doc
       openSelectionMenu: (anchor) => { this.lastSelAnchor = anchor; this.openSelpop(); },   // ops menu for the current selection (facet/lasso/etc.)
       onConfigurePanel: (id, patch) => this.configurePanel(id, patch),
       registerGeneHover: (fn) => this.geneHoverSinks.push(fn),

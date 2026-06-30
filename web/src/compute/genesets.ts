@@ -79,3 +79,30 @@ export function loadCollection(id: string, base = ""): Promise<GeneSetDB> {
 export function registerCustomCollection(db: GeneSetDB): string { custom.set(db.id, db); return db.id; }
 export function customCollections(): GeneSetDB[] { return [...custom.values()]; }
 export function clearCustomCollections(): void { custom.clear(); }
+
+// Parse a .gmt (each line: name \t description \t gene1 \t gene2 …) into a custom GeneSetDB. SYMBOL-only; a .gmt carries
+// no organism, so the caller supplies the dataset's. id is namespaced "custom:<slug>" so it never collides with bundled.
+export function parseGmt(text: string, opts: { name: string; organism?: string }): GeneSetDB {
+  const pathways: PathwaySet[] = [];
+  const geneSpace = new Set<string>();
+  for (const line of text.split(/\r?\n/)) {
+    if (!line.trim() || line[0] === "#") continue;
+    const cols = line.split("\t");
+    const name = (cols[0] || "").trim(); if (!name) continue;
+    const genes = cols.slice(2).map((g) => g.trim()).filter(Boolean);   // col0 = name, col1 = description, rest = genes
+    if (!genes.length) continue;
+    pathways.push({ id: name, name, genes });
+    for (const g of genes) geneSpace.add(g);
+  }
+  const slug = opts.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 40) || "set";
+  return { id: `custom:${slug}`, label: opts.name, source: "Custom", organism: opts.organism || "human", pathways, geneSpace, nPathways: pathways.length };
+}
+
+// Serialize / restore the in-memory custom collections for the session document (so a BYO .gmt survives a reload).
+export function serializeCustomCollections(): any[] {
+  return customCollections().map((d) => ({ id: d.id, label: d.label, source: d.source, organism: d.organism, split: d.split, pathways: Object.fromEntries(d.pathways.map((p) => [p.id, { name: p.name, genes: p.genes }])) }));
+}
+export function restoreCustomCollections(arr?: any[] | null): void {
+  if (!Array.isArray(arr)) return;
+  for (const o of arr) { try { registerCustomCollection(parseGeneSetDoc(o, { id: o.id, label: o.label, source: o.source || "Custom", organism: o.organism, split: o.split })); } catch { /* skip malformed */ } }
+}

@@ -1,7 +1,7 @@
 // Unit tests for the gene-set collection registry. Run: `node --test src/compute/genesets.test.ts`.
 import { test } from "node:test";
 import assert from "node:assert";
-import { parseGeneSetDoc, registerCustomCollection, listCollections, loadCollection, clearCustomCollections } from "./genesets.ts";
+import { parseGeneSetDoc, registerCustomCollection, listCollections, loadCollection, clearCustomCollections, parseGmt, serializeCustomCollections, restoreCustomCollections, customCollections } from "./genesets.ts";
 
 test("parseGeneSetDoc: builds pathway array + union gene space; drops empty sets", () => {
   const db = parseGeneSetDoc(JSON.stringify({
@@ -32,5 +32,26 @@ test("registerCustomCollection: a session collection shows in listCollections + 
   assert.ok(mine && mine.custom === true && mine.source === "Custom");
   const loaded = await loadCollection("custom:mine");             // resolves from the in-memory registry, no fetch
   assert.equal(loaded.nPathways, 1); assert.deepEqual([...loaded.geneSpace].sort(), ["A", "B"]);
+  clearCustomCollections();
+});
+
+test("parseGmt: name⇥desc⇥genes → a Custom collection; comment/blank lines + empty sets dropped", () => {
+  const gmt = ["MY_SIG\tmy description\tTP53\tBRCA1\tEGFR", "# comment", "", "EMPTY\tdesc", "OTHER\t\tCD8A\tCD4"].join("\n");
+  const db = parseGmt(gmt, { name: "My panel.gmt", organism: "human" });
+  assert.equal(db.source, "Custom"); assert.equal(db.organism, "human"); assert.match(db.id, /^custom:/);
+  assert.equal(db.nPathways, 2);                                   // EMPTY (no genes) dropped
+  assert.deepEqual(db.pathways.find((p) => p.id === "MY_SIG")!.genes, ["TP53", "BRCA1", "EGFR"]);
+  assert.ok(db.geneSpace.has("CD8A"));
+});
+
+test("custom collections round-trip through serialize/restore (session persistence)", () => {
+  clearCustomCollections();
+  registerCustomCollection(parseGmt("S\tx\tA\tB\tC", { name: "sig" }));
+  const ser = serializeCustomCollections();
+  clearCustomCollections(); assert.equal(customCollections().length, 0);
+  restoreCustomCollections(ser);
+  const back = customCollections();
+  assert.equal(back.length, 1); assert.equal(back[0].label, "sig"); assert.equal(back[0].nPathways, 1);
+  assert.deepEqual([...back[0].geneSpace].sort(), ["A", "B", "C"]);
   clearCustomCollections();
 });
