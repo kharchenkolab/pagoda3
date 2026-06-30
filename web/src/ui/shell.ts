@@ -1600,23 +1600,11 @@ export class App {
     const named = namedA || (input.B ? !!catRefOf(Bexpr!) : false);
     const titleOf = (sys: string) => named ? sys : (input.title || sys);
 
-    // CLUSTER vs REST → the store's PRECOMPUTED 1-vs-rest markers (markers_<grouping>). Instant, NO matrix read — these
-    // ARE the cluster-vs-rest DE. Reading the whole matrix to compare a cluster against everything is bytes-bound (the
-    // 456MB cell-major copy); the precomputed markers exist exactly so this is free. Fires only when A is a single
-    // grouping value, B is unspecified (= rest), and the store carries that grouping's markers.
-    if (input.stat === "de" && !input.B && (input.A as any)?.category?.grouping) {
-      const g = (input.A as any).category.grouping, val = (input.A as any).category.value;
-      if (ctx.view.ds.hasField(`markers_${g}_lfc`)) {
-        const rows0 = (await ctx.view.markers(g, 1e9)).get(val);
-        if (rows0?.length) {
-          const rows = rows0.map((r: any) => ({ gene: r.gene, symbol: r.symbol, lfc: r.lfc, p: r.padj }));
-          place({ type: "DeTable", title: titleOf(`${aL} vs rest`), cap: "1-vs-rest markers", bind: "de:markers", aLabel: aL, bLabel: "rest", rows });
-          record("markers", titleOf(`${aL} vs rest`), "1-vs-rest markers", "de:markers", rows, aL, "rest");
-          const up = rows.filter((r: any) => r.lfc > 0).slice(0, 8).map((r: any) => r.symbol).join(", ");
-          return { ok: `DE ${aL} vs rest from the store's precomputed 1-vs-rest markers — instant, no recompute. Up in ${aL}: ${up}. (To recompute at the cell level, compare ${aL} against a SPECIFIC other group instead of rest.)` };
-        }
-      }
-    }
+    // CLUSTER vs REST recomputes at the cell level (below), like any contrast — we deliberately DON'T shortcut to the
+    // store's precomputed 1-vs-rest markers. Those are a thin top-N list (logFC + p, NO per-gene means), so they can't
+    // supply the detected-gene background that downstream enrichment needs (the marker list itself becomes the universe,
+    // which is already cluster-biased). subsampleDE subsamples + byte-range-reads, so cluster-vs-everything is cheap; B =
+    // {complement: A} (= rest) was already resolved above. (`ctx.view.markers()` still serves the annotation/label UIs.)
 
     // PSEUDOBULK (donor-level): aggregate A and B to per-REPLICATE means, t-test ACROSS replicates → REAL p-values.
     if (input.stat === "pseudobulk") {
