@@ -39,6 +39,10 @@ export async function checkLive(provider?: string): Promise<boolean> {
   if (agentOff()) return false;                                  // explicit "no copilot"
   if (provider === "openai") { if (localCfg()?.url) return true; }   // a configured local endpoint = reachable browser-direct
   else if (loadCred()) return true;                              // a pasted credential = reachable browser-direct (no proxy)
+  // A static deploy with no proxy can declare it (publish bakes <meta name="pagoda3:agent" content="off">):
+  // skip the /health probe so a shared artifact's console isn't littered with 404s. A pasted credential
+  // (above) still works, and the user can still set one up via the agent panel.
+  try { if (document.querySelector('meta[name="pagoda3:agent"]')?.getAttribute("content") === "off") return false; } catch { /* no DOM (tests) — fall through */ }
   try { const r = await fetch(proxyBase() + "/health" + (provider ? "?provider=" + encodeURIComponent(provider) : "")); const j = await r.json(); return !!j.ok; } catch { return false; }
 }
 

@@ -26,20 +26,22 @@ from .bundle import bundle_dir
 from .launch import DEFAULT_VIEWER, _coerce_store
 
 
-def _bake_default_store(index_html, store_rel):
-    """Inject `<meta name="pagoda3:store" content="...">` so a bare URL self-loads the co-located store
-    (the viewer reads it when there's no `?store=`). Lets a published folder share as a clean `<host>/`."""
+def _bake_publish_meta(index_html, store_rel):
+    """Make a published folder self-describing via <meta> tags the viewer reads:
+      • pagoda3:store  — a bare URL self-loads the co-located store (clean `<host>/`, no `?store=` tail)
+      • pagoda3:agent  — "off": no proxy here, so skip the /health probe (keeps the shared console clean)."""
     try:
         with open(index_html, encoding="utf-8") as f:
             html = f.read()
         if "pagoda3:store" in html or "</head>" not in html:
             return
-        tag = '<meta name="pagoda3:store" content="%s">' % store_rel
-        html = html.replace("</head>", "  " + tag + "\n</head>", 1)
+        tags = ('<meta name="pagoda3:store" content="%s">\n'
+                '  <meta name="pagoda3:agent" content="off">') % store_rel
+        html = html.replace("</head>", "  " + tags + "\n</head>", 1)
         with open(index_html, "w", encoding="utf-8") as f:
             f.write(html)
     except OSError:
-        pass  # non-fatal: without the tag the folder still works at <host>/?store=store/
+        pass  # non-fatal: without the tags the folder still works at <host>/?store=store/
 
 
 def publish(obj, to="./share", prepare=True, bundle=True, viewer=None):
@@ -65,7 +67,7 @@ def publish(obj, to="./share", prepare=True, bundle=True, viewer=None):
                 "(or install a packaged release), or use bundle=False to publish the data only.")
         # copy the bundle alongside the store; never drag the demo stores from a dev web/dist
         shutil.copytree(bd, out, dirs_exist_ok=True, ignore=shutil.ignore_patterns("*.lstar.zarr"))
-        _bake_default_store(os.path.join(out, "index.html"), "store/")   # bare URL self-loads the store
+        _bake_publish_meta(os.path.join(out, "index.html"), "store/")   # bare URL self-loads the store; no-agent
         print("pagoda3 published (self-contained) →", out)
         print("  drop this folder on any static host; share the bare URL:  <host-url>/")
         print("  same-origin — no install, no CORS. (open locally: pagoda3 serve %s)" % out)
