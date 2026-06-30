@@ -114,6 +114,29 @@ export async function anndataSpec(f: H5): Promise<DatasetSpec> {
   return { kind: "sample", axes, fields, profiles: [] };
 }
 
+// Estimate the in-memory peak from cheap shape metadata (no data read) and refuse files too big to
+// open in the browser — which loads the WHOLE matrix — pointing instead at the server-side path. Peak
+// ≈ the matrix as f32 data + i32 indices (≈8 B/nnz) held a few times over (JS arrays, kernel, the
+// MemStore copy) plus the file bytes already in the WASM heap.
+const PEAK_PER_NNZ = 8 * 3;        // ~3 concurrent copies of (data+indices)
+const HARD_LIMIT = 2.0e9;          // ~2 GB est. peak → refuse (a browser tab gets shaky past this)
+const SOFT_LIMIT = 0.8e9;          // ~0.8 GB → warn but proceed
+export function guardSize(f: H5, fileBytes: number): void {
+  const X = f.get("X");
+  let nnz = 0;
+  try { const dn = X?.get?.("data"); if (dn?.shape) nnz = Number(dn.shape[0]); } catch { /* dense or absent */ }
+  if (!nnz) { const s = Array.from(attr(X, "shape") || X?.shape || [], num); if (s.length === 2) nnz = s[0] * s[1]; }
+  const est = nnz * PEAK_PER_NNZ + (fileBytes || 0);
+  const gb = (est / 1e9).toFixed(1);
+  if (est > HARD_LIMIT) {
+    throw new Error(
+      `This .h5ad needs ~${gb} GB in memory — too large to open in the browser, which loads the whole file. ` +
+      `Convert it once and open the optimized store instead:  pagoda3.view(adata)  (Python/R), or  ` +
+      `lstar convert in.h5ad out.lstar.zarr --viewer  then open out.lstar.zarr.`);
+  }
+  if (est > SOFT_LIMIT) console.warn(`[pagoda3] opening a large .h5ad (~${gb} GB in memory) — may be slow; for big data prefer pagoda3.view() / lstar convert.`);
+}
+
 /** Open a .h5ad File as an in-memory L* store (browser). */
 export async function openH5ad(file: File): Promise<LstarStore> {
   const h5: any = await import("h5wasm");   // namespace: FS / ready / File are live bindings (set after ready)
@@ -123,6 +146,7 @@ export async function openH5ad(file: File): Promise<LstarStore> {
   let f: H5;
   try {
     f = new h5.File(name, "r");
+    guardSize(f, file.size);
     const spec = await anndataSpec(f);
     if (!spec.fields.counts && !Object.values(spec.fields).some((x) => x.role === "embedding"))
       throw new Error("No X/counts matrix or embedding found in this .h5ad.");

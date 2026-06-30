@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert";
-import { anndataSpec } from "./h5ad.ts";
+import { anndataSpec, guardSize } from "./h5ad.ts";
 import { MemStore } from "./localstore.ts";
 import { writeStore } from "../../../../lstar/js/core/writer.ts";
 import { openLstar } from "./store.ts";
@@ -48,4 +48,11 @@ test("anndataSpec: CSR X → CSC counts (orientation), categorical→utf8 label,
   assert.equal(ds.field("umap")?.role, "embedding");
   const e = await ds.fieldDense("umap");
   assert.deepEqual([e.shape[0], e.shape[1]], [3, 2]);
+});
+
+test("guardSize: refuses an oversized .h5ad, passes a small one", () => {
+  const big = G({ X: G({ data: D(null, [300_000_000]) }, { "encoding-type": "csr_matrix", shape: [100000, 30000] }) });
+  assert.throws(() => guardSize(big, 0), /too large/);
+  const small = G({ X: G({ data: D(null, [1000]) }, { "encoding-type": "csr_matrix", shape: [100, 40] }) });
+  assert.doesNotThrow(() => guardSize(small, 0));
 });
