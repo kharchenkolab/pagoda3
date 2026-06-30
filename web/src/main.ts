@@ -2,6 +2,7 @@ import { openLstar, HttpStore } from "./data/store.ts";
 import type { LstarStore } from "./data/store.ts";
 import { localStore } from "./data/localstore.ts";
 import { installOpenLocal } from "./ui/openlocal.ts";
+import { showLoading, setLoadingStatus, hideLoading, showLoadError } from "./ui/loading.ts";
 import { LstarView } from "./data/view.ts";
 import { Coord } from "./data/coord.ts";
 import { Ctx } from "./data/ctx.ts";
@@ -55,6 +56,14 @@ async function bootStore(store: LstarStore, opts: { applyLinks?: boolean } = {})
   const coord = new Coord();
   const ctx = new Ctx(view, coord);
   await ctx.init();
+  // The default colour is `meta:leiden`; if this dataset has no `leiden` field (a dropped .h5ad may have
+  // `louvain`, or anything), fall back to a categorical it DOES have — before mount, so the embedding panel
+  // renders with the right field selected. A valid colour, or one a session will restore, is left as-is.
+  try {
+    const cb = coord.state.colorBy, mf = cb.startsWith("meta:") ? cb.slice(5) : "";
+    const cats = ctx.categoricalFields();
+    if (mf && !cats.includes(mf)) { const target = cats.includes(ctx.defaultGrouping()) ? ctx.defaultGrouping() : cats[0]; if (target) coord.setColor("meta:" + target); }
+  } catch { /* */ }
   // the new dataset is read + prepared — now retire the old one (its workers + deck) and take over #app
   for (const p of oldPools) { try { p.dispose(); } catch { /* */ } }
   try { oldApp?.dispose?.(); } catch { /* */ }
@@ -80,9 +89,17 @@ async function bootStore(store: LstarStore, opts: { applyLinks?: boolean } = {})
   // Phase 4: open a local store (a dropped/picked .zip, a folder handle, or a webkitdirectory FileList)
   // by re-initing the whole app onto it — no server, nothing uploaded.
   const openLocal = async (input: any) => {
-    const { store: ls, label } = await localStore(input);
-    await bootStore(ls);
-    try { (window as any).p2?.app?.toast?.("Opened " + label, "Read locally — nothing was uploaded."); } catch { /* */ }
+    const title = input?.name || (input?.[0]?.webkitRelativePath || "").split("/")[0] || "dataset";
+    showLoading(title);                                  // a modal with a spinner + status — opening parses the whole file in-browser
+    try {
+      const { store: ls, label } = await localStore(input, setLoadingStatus);
+      setLoadingStatus("Opening viewer…");
+      await bootStore(ls);
+      hideLoading();
+      try { (window as any).p2?.app?.toast?.("Opened " + label, "Read locally — nothing was uploaded."); } catch { /* */ }
+    } catch (e: any) {
+      showLoadError(title, String(e?.message || e));     // surface the real reason instead of failing silently
+    }
   };
   (window as any).p2 = { ds, view, coord, ctx, app, getProvider, setProvider, setCompute, computePool, widgetPool, openLocal };
   return app;

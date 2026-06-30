@@ -29,6 +29,13 @@ export class Ctx {
     this.embedding = this.embeddings.get("umap") || [...this.embeddings.values()][0] || await this.view.embedding("umap");
     // warm the common labels
     for (const f of ["leiden", "cell_type", "sample", "condition", "patient", "outcome"]) if (this.view.ds.hasField(f)) await this.metaOf(f);
+    // …and any other categorical label fields the store carries (e.g. `louvain` from an .h5ad), so an
+    // arbitrary dataset is colourable/faceted by its OWN clusterings out of the box, not just the names above.
+    for (const nm of this.view.ds.fieldNames()) {
+      if (this.meta.has(nm)) continue;
+      const f: any = this.view.ds.field(nm);
+      if (f && f.role === "label") { try { await this.metaOf(nm); } catch { /* not categorical — skip */ } }
+    }
     // default field roles: cell_type is an annotation source out of the box; the agent/user reclassify the rest
     if (this.view.ds.hasField("cell_type")) this.fieldRoles.set("cell_type", "annotation");
   }

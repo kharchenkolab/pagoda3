@@ -109,18 +109,22 @@ export class FileListStore implements LstarStore {
 }
 
 /** Build a local store from a dropped/picked thing: a .zip File, a FileSystemDirectoryHandle, or a
- *  webkitdirectory FileList. Returns the store + a short label for the UI. */
-export async function localStore(input: File | FileList | File[] | any): Promise<{ store: LstarStore; label: string }> {
+ *  webkitdirectory FileList. Returns the store + a short label for the UI. `onStage` reports progress
+ *  for the slow in-browser paths (h5ad parse, zip unpack). */
+export async function localStore(input: File | FileList | File[] | any, onStage?: (msg: string) => void): Promise<{ store: LstarStore; label: string }> {
   if (input && typeof input.getFile !== "function" && (input.kind === "directory" || typeof input.getDirectoryHandle === "function")) {
     return { store: await DirHandleStore.open(input), label: (input.name || "folder") };
   }
   if (input instanceof File) {
     if (/\.h5ad$/i.test(input.name)) {
       const { openH5ad } = await import("./h5ad.ts");   // lazy — code-splits the h5wasm WASM out of the main bundle
-      return { store: await openH5ad(input), label: input.name };
+      return { store: await openH5ad(input, onStage), label: input.name };
     }
     if (!/\.zip$/i.test(input.name)) throw new Error("Drop a .lstar.zarr.zip, a .lstar.zarr folder, or a .h5ad file.");
-    return { store: new ZipStore(new Uint8Array(await input.arrayBuffer())), label: input.name };
+    onStage?.("Reading file…");
+    const bytes = new Uint8Array(await input.arrayBuffer());
+    onStage?.("Unpacking archive…");
+    return { store: new ZipStore(bytes), label: input.name };
   }
   // a FileList / File[] from <input webkitdirectory>
   const arr = Array.from(input as any) as File[];

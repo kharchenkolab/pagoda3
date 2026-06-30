@@ -46,14 +46,41 @@ async function readCounts(M: any, node: H5, ncells: number, ngenes: number):
   return null;
 }
 
+// An AnnData dataframe stores its row labels in a *named* column, with the group's `_index` attr giving
+// that column's name (commonly "_index" or "index"). Reading a hardcoded "_index" child misses real
+// files — resolve the name from the attr, then fall back to a literal "_index" child.
+function dfIndex(grp: H5): string[] {
+  if (!grp || typeof grp.get !== "function") return [];
+  const name = attr(grp, "_index") || "_index";
+  const node = grp.get(name) || grp.get("_index");
+  const v = node?.value;
+  return v ? Array.from(v as any, String) : [];
+}
+
 /** Map an opened h5wasm AnnData file to an L* DatasetSpec (pure — no h5wasm import; testable in node). */
 export async function anndataSpec(f: H5): Promise<DatasetSpec> {
   const M = await createLstarKernels();
+  // Legacy AnnData (pre-0.7) stored obs/var as compound HDF5 *tables* (a Dataset), not a group of
+  // columns. We read the modern group layout; detect the old one and tell the user how to upgrade it
+  // rather than failing deep inside the reader with an opaque "v3 array or group".
+  const obsNode = f.get("obs");
+  if (obsNode && typeof (obsNode as any).keys !== "function") {
+    throw new Error(
+      "This is a legacy AnnData file (pre-0.7: obs/var stored as compound HDF5 tables), which isn't read directly yet.\n" +
+      "Re-save it once with current anndata:\n" +
+      "    import anndata; a = anndata.read_h5ad(IN); a.write_h5ad(OUT)\n" +
+      "or convert it for the viewer:\n" +
+      "    lstar convert IN.h5ad OUT.lstar.zarr --viewer\n" +
+      "then open the result.");
+  }
   const Xnode = f.get("X");
-  const shape = Array.from(attr(Xnode, "shape") || [], num);
+  // A sparse X (group) carries its dims in a `shape` attr; a dense X (dataset) has no such attr — its
+  // shape is intrinsic. Use the attr when present, else the dataset's own shape.
+  let shape = Array.from(attr(Xnode, "shape") || [], num);
+  if (shape.length !== 2 && Array.isArray((Xnode as any)?.shape)) shape = Array.from((Xnode as any).shape, num);
   // obs/var indices give the canonical cell/gene labels + counts
-  const cells = (f.get("obs/_index")?.value as string[]) || [];
-  const genes = (f.get("var/_index")?.value as string[]) || [];
+  const cells = dfIndex(f.get("obs"));
+  const genes = dfIndex(f.get("var"));
   const ncells = cells.length || num(shape[0]) || 0;
   const ngenes = genes.length || num(shape[1]) || 0;
 
@@ -83,8 +110,14 @@ export async function anndataSpec(f: H5): Promise<DatasetSpec> {
       if (sh.length !== 2 || sh[0] !== ncells || sh[1] < 2) continue;
       const name = key.replace(/^X_/, "").toLowerCase() || key;
       const ax = "emb_" + name;
-      axes[ax] = { labels: Array.from({ length: sh[1] }, (_, i) => name + (i + 1)), role: "coordinate" };
-      fields[name] = { role: "embedding", span: ["cells", ax], encoding: "dense", shape: [ncells, sh[1]], data: f32(node.value) };
+      // The viewer scatters in 2D — keep the first two components (PC1/PC2, UMAP1/2). This also avoids a
+      // wide obsm like X_pca[n,50] becoming a 50-column "embedding" (and wasting that much memory).
+      const k = Math.min(sh[1], 2);
+      const full = f32(node.value);
+      let data = full;
+      if (k !== sh[1]) { data = new Float32Array(ncells * k); for (let i = 0; i < ncells; i++) for (let j = 0; j < k; j++) data[i * k + j] = full[i * sh[1] + j]; }
+      axes[ax] = { labels: Array.from({ length: k }, (_, i) => name + (i + 1)), role: "coordinate" };
+      fields[name] = { role: "embedding", span: ["cells", ax], encoding: "dense", shape: [ncells, k], data };
     }
   } catch { /* no obsm */ }
 
@@ -137,19 +170,23 @@ export function guardSize(f: H5, fileBytes: number): void {
   if (est > SOFT_LIMIT) console.warn(`[pagoda3] opening a large .h5ad (~${gb} GB in memory) — may be slow; for big data prefer pagoda3.view() / lstar convert.`);
 }
 
-/** Open a .h5ad File as an in-memory L* store (browser). */
-export async function openH5ad(file: File): Promise<LstarStore> {
+/** Open a .h5ad File as an in-memory L* store (browser). `onStage` reports progress for the modal. */
+export async function openH5ad(file: File, onStage?: (m: string) => void): Promise<LstarStore> {
+  onStage?.("Loading HDF5 reader…");
   const h5: any = await import("h5wasm");   // namespace: FS / ready / File are live bindings (set after ready)
   await h5.ready;
   const name = "/" + (file.name || "data.h5ad");
+  onStage?.("Reading file…");
   h5.FS.writeFile(name, new Uint8Array(await file.arrayBuffer()));
   let f: H5;
   try {
     f = new h5.File(name, "r");
     guardSize(f, file.size);
+    onStage?.("Parsing AnnData…");
     const spec = await anndataSpec(f);
     if (!spec.fields.counts && !Object.values(spec.fields).some((x) => x.role === "embedding"))
       throw new Error("No X/counts matrix or embedding found in this .h5ad.");
+    onStage?.("Building in-memory store…");
     const store = new MemStore();
     await writeStore(store, spec);                 // uncompressed in-memory L* store
     return store;
