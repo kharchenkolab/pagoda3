@@ -2,7 +2,7 @@ import { mk, S } from "./dom.ts";
 import { Ctx } from "../data/ctx.ts";
 import { EmbeddingView } from "../render/embedding.ts";
 import { colorsFor, focusMaskFor, categoryColorOf, setCodeValues } from "../render/colors.ts";
-import { loadGeneSets, GeneSetDB } from "../compute/genesets.ts";
+import { loadCollection, listCollections, GeneSetDB, Collection } from "../compute/genesets.ts";
 import { enrichRanked, RankedGene } from "../compute/enrich.ts";
 import { themeIsDark } from "../render/theme.ts";
 import { getStyle, resolveStyle } from "../render/style.ts";
@@ -281,14 +281,26 @@ function enrichView(cap: EnrichCap, getRows: () => RankedGene[], rankedByFn: () 
   // the pathways-specific controls (top-N / direction / keep) live in the CARD BODY, not the panel header — the header
   // keeps only the genes⇄pathways toggle (common to both views), so switching back is always one click away.
   const ctrls = mk("div", "enrctrls"); el.appendChild(ctrls);
+  const csel = mk("select", "mini enrcoll") as HTMLSelectElement; csel.title = "gene-set collection";   // which source/split to enrich against (grouped by source)
   const nsel = mk("select", "mini") as HTMLSelectElement; for (const v of [50, 100, 150, 200, 300]) { const o = document.createElement("option"); o.value = String(v); o.textContent = "top " + v; nsel.appendChild(o); } nsel.value = String(st.topN);
   const dsel = mk("select", "mini") as HTMLSelectElement; for (const [v, l] of [["ranked", "as ranked"], ["both", "up + down"], ["up", "up only"], ["down", "down only"]]) { const o = document.createElement("option"); o.value = v; o.textContent = l; dsel.appendChild(o); } dsel.value = st.dir;
-  ctrls.append(nsel, dsel);
+  ctrls.append(csel, nsel, dsel);
   const body = mk("div", "enrbody"); body.innerHTML = `<div class="enrempty">loading gene sets…</div>`; el.appendChild(body);
   nsel.onchange = () => { st.topN = +nsel.value; if (cap.persist) cap.persist.enrTopN = st.topN; render(); };
   dsel.onchange = () => { st.dir = dsel.value as any; if (cap.persist) cap.persist.enrDir = st.dir; render(); };
   const dirLabel = (d: string) => d === "up" ? `genes up in ${esc(aL)}` : d === "down" ? `genes up in ${esc(bL)}` : d === "ranked" ? `genes ranked by ${esc(rankedByFn())}` : "enriched genes";
   let db: GeneSetDB | null = null, last: EnrichResult[] = [];
+  let collId: string = cap.persist?.enrColl || "";   // chosen collection id ("" ⇒ pick the default on first load)
+  let collections: Collection[] = [];
+  // GO:BP is the preferred default (the most-used set for scRNA over-representation); else Reactome; else whatever's first.
+  const pickDefault = (cs: Collection[]) => (cs.find((c) => c.source === "GO" && c.split === "BP") || cs.find((c) => c.source === "Reactome") || cs[0])?.id || "";
+  const populateColl = () => {
+    csel.innerHTML = "";
+    const bySource = new Map<string, Collection[]>();
+    for (const c of collections) { if (!bySource.has(c.source)) bySource.set(c.source, []); bySource.get(c.source)!.push(c); }
+    for (const [src, list] of bySource) { const og = document.createElement("optgroup"); og.label = src; for (const c of list) { const o = document.createElement("option"); o.value = c.id; o.textContent = c.label; og.appendChild(o); } csel.appendChild(og); }
+    csel.value = collId;
+  };
   // "keep" the current enrichment as a first-class session result (shows in the ledger; re-openable + CSV-exportable).
   if (cap.record) { const keep = mk("button", "mini", "save to results") as HTMLButtonElement; keep.title = "save this enrichment to the session results (ledger) — re-openable + CSV-exportable"; keep.style.marginLeft = "auto"; ctrls.append(keep);
     keep.onclick = () => { const rows = last.flatMap((r) => r.rows.filter((x) => x.fdr < FDR_SHOW).map((x) => ({ ...x, direction: r.direction }))); if (!rows.length) return; cap.record!({ name: `Pathways · ${cap.sourceName || "genes"}`, kind: "enrich", summary: `${rows.length} pathway${rows.length === 1 ? "" : "s"} · genes ranked by ${rankedByFn()}`, bind: "enrich:pathways", rows }); }; }
@@ -302,7 +314,7 @@ function enrichView(cap: EnrichCap, getRows: () => RankedGene[], rankedByFn: () 
     // "114 of top 150 tested" = of the top-N ranked genes, the ones in the background (detected + annotated). The
     // reference (pathways · background size) merges onto the SAME line for a single direction; the up/down split shares
     // one reference line on top, then a per-direction line each.
-    const ref = `${db.nPathways.toLocaleString()} Reactome pathways · ${(results[0]?.N || 0).toLocaleString()}-gene background`;
+    const ref = `${db.nPathways.toLocaleString()} ${esc(db.label)} gene sets · ${(results[0]?.N || 0).toLocaleString()}-gene background`;
     if (!single) { const m = mk("div", "enrmeta"); m.textContent = ref; body.appendChild(m); }
     for (const res of results) {
       const sig = res.rows.filter((r) => r.fdr < FDR_SHOW && (!flt || r.name.toLowerCase().includes(flt))).slice(0, 20);
@@ -311,13 +323,27 @@ function enrichView(cap: EnrichCap, getRows: () => RankedGene[], rankedByFn: () 
       pathwayCards(body, sig, scorePathway);
     }
   };
+  const loadColl = () => {
+    body.innerHTML = `<div class="enrempty">loading gene sets…</div>`;
+    loadCollection(collId).then((d) => { db = d; render(); }).catch((e) => { body.innerHTML = `<div class="enrempty">Couldn't load gene sets: ${esc(e.message)}.<br>Build them with <code>node server/build_genesets.mjs</code>.</div>`; });
+  };
+  csel.onchange = () => { collId = csel.value; if (cap.persist) cap.persist.enrColl = collId; db = null; loadColl(); };
   async function scorePathway(name: string, genes: string[]) {
     if (!genes.length) return;
     let acc: Float32Array | null = null, cnt = 0;
     for (const g of genes) { const e = await ctx.view.geneExpression(g).catch(() => null); if (!e) continue; if (!acc) acc = new Float32Array(e.values.length); for (let i = 0; i < acc.length; i++) acc[i] += e.values[i]; cnt++; }
     if (acc && cnt) { for (let i = 0; i < acc.length; i++) acc[i] /= cnt; const label = "sig: " + name.slice(0, 32); setCodeValues(label, acc); ctx.coord.setColor("code:" + label); }
   }
-  const ensure = () => { if (db) { render(); return; } loadGeneSets("human").then((d) => { db = d; render(); }).catch((e) => { body.innerHTML = `<div class="enrempty">Couldn't load gene sets: ${esc(e.message)}.<br>Build them with <code>node server/build_genesets.mjs</code>.</div>`; }); };
+  const ensure = () => {
+    if (db) { render(); return; }
+    if (collections.length) { loadColl(); return; }
+    listCollections().then((cs) => {   // Phase A: no organism filter yet (human-only); Phase C adds ctx.organism()
+      collections = cs;
+      if (!collId || !cs.find((c) => c.id === collId)) collId = pickDefault(cs);
+      populateColl();
+      loadColl();
+    }).catch((e) => { body.innerHTML = `<div class="enrempty">Couldn't load gene sets: ${esc(e.message)}.</div>`; });
+  };
   return { el, ensure };
 }
 

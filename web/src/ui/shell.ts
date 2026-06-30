@@ -1755,7 +1755,7 @@ export class App {
     // panel-LOCAL persisted UI state (facet expand-set/sort/brush, record collapse) must ride through the same
     // reconstruct — else a workspace switch (which JSON-clones the canvas, then rebuilds via newPanel) silently
     // resets it. Carried as ad-hoc (p as any) fields so they don't need to bloat the Panel type.
-    for (const k of ["facetOpen", "facetSort", "facetBrush", "enrTopN", "enrDir", "enrMode", "rankedBy"] as const) if ((p as any)[k] !== undefined) (np as any)[k] = (p as any)[k];
+    for (const k of ["facetOpen", "facetSort", "facetBrush", "enrTopN", "enrDir", "enrMode", "enrColl", "rankedBy"] as const) if ((p as any)[k] !== undefined) (np as any)[k] = (p as any)[k];
     return np;
   }
 
