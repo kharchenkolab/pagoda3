@@ -14,9 +14,12 @@ type H5 = any;   // an opened h5wasm File / Group (duck-typed; we never import h
 const attr = (it: H5, k: string) => it?.attrs?.[k]?.value;
 const enc = (it: H5) => attr(it, "encoding-type");
 const num = (v: any) => (typeof v === "bigint" ? Number(v) : v);
-// h5wasm `.value` (and the WASM kernel's output) are VIEWS into WASM heap — copy them out before the
-// file is closed / the shared kernel heap is reused, or the bytes go garbage after the store is built.
-const cp = (a: any): any => (a && typeof a.slice === "function" && a.BYTES_PER_ELEMENT) ? a.slice() : a;
+// Copy out of WASM heap (h5wasm `.value` / kernel output are heap views, invalid after close/reuse) AND
+// right-size: AnnData uses int64 indices/indptr (BigInt64Array) for large matrices, which the int32 WASM
+// kernel can't take — and f64 X wastes half the RAM. So sparse index/ptr -> Int32Array (values are
+// cell/gene indices, always < 2^31 for browser-feasible data) and counts -> Float32Array.
+const i32 = (a: any): Int32Array => Int32Array.from(a as any, Number);   // int32 | int64(BigInt) -> int32
+const f32 = (a: any): Float32Array => Float32Array.from(a as any, Number); // f32 | f64 -> f32
 
 // AnnData stores X as obs×var, almost always CSR (row=cell). L* `counts` is CSC (col=gene). A CSR
 // (cells×genes) shares memory with a CSC (genes×cells), so `cscToCsr(.., ngenes, ncells)` regroups it
@@ -25,11 +28,11 @@ async function readCounts(M: any, node: H5, ncells: number, ngenes: number):
     Promise<{ data: ArrayLike<number>; indices: ArrayLike<number>; indptr: ArrayLike<number> } | null> {
   const e = enc(node);
   if (e === "csr_matrix") {
-    const r = M.cscToCsr(node.get("data").value, node.get("indices").value, node.get("indptr").value, ngenes, ncells);
-    return { data: cp(r.data), indices: cp(r.indices), indptr: cp(r.indptr) };
+    const r = M.cscToCsr(f32(node.get("data").value), i32(node.get("indices").value), i32(node.get("indptr").value), ngenes, ncells);
+    return { data: f32(r.data), indices: i32(r.indices), indptr: i32(r.indptr) };
   }
   if (e === "csc_matrix") {
-    return { data: cp(node.get("data").value), indices: cp(node.get("indices").value), indptr: cp(node.get("indptr").value) };
+    return { data: f32(node.get("data").value), indices: i32(node.get("indices").value), indptr: i32(node.get("indptr").value) };
   }
   if (node.value && node.shape) {                 // dense obs×var (C-order) -> build CSC by column
     const dense = node.value as ArrayLike<number>;
@@ -81,7 +84,7 @@ export async function anndataSpec(f: H5): Promise<DatasetSpec> {
       const name = key.replace(/^X_/, "").toLowerCase() || key;
       const ax = "emb_" + name;
       axes[ax] = { labels: Array.from({ length: sh[1] }, (_, i) => name + (i + 1)), role: "coordinate" };
-      fields[name] = { role: "embedding", span: ["cells", ax], encoding: "dense", shape: [ncells, sh[1]], data: cp(node.value) as ArrayLike<number> };
+      fields[name] = { role: "embedding", span: ["cells", ax], encoding: "dense", shape: [ncells, sh[1]], data: f32(node.value) };
     }
   } catch { /* no obsm */ }
 
@@ -103,7 +106,7 @@ export async function anndataSpec(f: H5): Promise<DatasetSpec> {
         for (let i = 0; i < codes.length; i++) { const c = codes[i] as number; values[i] = (c >= 0 && c < cats.length) ? cats[c] : ""; }
         fields[col] = { role: "label", span: ["cells"], encoding: "utf8", values };
       } else if ((e === "array" || node.value) && node.shape && node.shape.length === 1 && typeof (node.value as any)?.[0] === "number") {
-        fields[col] = { role: "measure", span: ["cells"], encoding: "dense", shape: [ncells], data: cp(node.value) as ArrayLike<number> };
+        fields[col] = { role: "measure", span: ["cells"], encoding: "dense", shape: [ncells], data: f32(node.value) };
       }
     }
   } catch { /* no obs */ }
