@@ -99,6 +99,7 @@ button{font-family:inherit}
 .mini.on{color:var(--cyan);border-color:var(--cyan)}   /* an engaged view-option toggle (labels / legend) */
 .segtog{display:inline-flex;gap:0;margin-right:2px}     /* heatmap/dotplot segmented toggle */
 .segtog .mini{border-radius:0} .segtog .mini:first-child{border-radius:6px 0 0 6px} .segtog .mini:last-child{border-radius:0 6px 6px 0;border-left:0}
+.segtog .mini:only-child{border-radius:6px;border-left:1px solid var(--line)}   /* a lone segmented button (e.g. restore, or a sole expand axis) reads as a normal pill */
 /* metadata facet panel */
 .facetsub{font-size:9px;letter-spacing:1.2px;text-transform:uppercase;color:var(--faint);padding:9px 10px 3px;position:sticky;top:0;background:var(--panel);z-index:1}
 .facetf{display:flex;align-items:center;gap:6px;padding:5px 8px 5px 10px;cursor:pointer;border-top:1px solid var(--line2)}

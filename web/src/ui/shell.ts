@@ -594,10 +594,11 @@ export class App {
       sp.appendChild(legBtn);
       sp.appendChild(winSel);
     }
-    // Adaptive maximize — show only the moves that make sense for how the panel is sitting now. A lone panel already
-    // fills the canvas (no control). A maximized panel (full width OR own-the-column tall) offers a single restore.
-    // Otherwise the two-zone expander: ↔ spans the columns, ↕ owns the column (full height). The two are opposite
-    // shapes, so engaging one releases the other — and there's never a redundant direction on screen.
+    // Adaptive maximize — show only the moves that make sense for how the panel is ACTUALLY sitting (per the layout
+    // plan, not just its flags). A lone panel already fills the canvas (no control). An explicitly maximized panel
+    // (full-width OR own-the-column tall) offers a single restore. Otherwise the expander: ↔ to span the columns, and
+    // ↕ to own the column — but ↕ is dropped when the panel already fills its column (sole occupant), so a full-height
+    // panel never shows a redundant vertical handle.
     const lone = this.canvas.length === 1;
     let maxtog: HTMLElement | null = null;
     if (!lone) {
@@ -608,10 +609,13 @@ export class App {
         maxtog.appendChild(rest);
       } else {
         const wBtn = Object.assign(mk("button", "mini", "↔"), { title: "maximize width (span columns)" }) as HTMLButtonElement;
-        const tBtn = Object.assign(mk("button", "mini", "↕"), { title: "maximize height (own the column)" }) as HTMLButtonElement;
         wBtn.onclick = () => { p.full = true; p.tall = false; this.fullRender(); this.checkpoint("widen · " + p.title, "You resized a panel — the layout is yours to shape."); };
-        tBtn.onclick = () => { p.tall = true; p.full = false; this.fullRender(); this.checkpoint("heighten · " + p.title, "You resized a panel — the layout is yours to shape."); };
-        maxtog.appendChild(wBtn); maxtog.appendChild(tBtn);
+        maxtog.appendChild(wBtn);
+        if (!this.planCanvas().geom.get(p.id)?.fullHeight) {       // hide ↕ when the panel is already the sole occupant of its column
+          const tBtn = Object.assign(mk("button", "mini", "↕"), { title: "maximize height (own the column)" }) as HTMLButtonElement;
+          tBtn.onclick = () => { p.tall = true; p.full = false; this.fullRender(); this.checkpoint("heighten · " + p.title, "You resized a panel — the layout is yours to shape."); };
+          maxtog.appendChild(tBtn);
+        }
       }
     }
     const close = Object.assign(mk("button", "dismiss ico", "✕"), { title: "remove" }) as HTMLButtonElement;   // the shared light × (matches the Answers card)
@@ -698,37 +702,59 @@ export class App {
   // Place the canvas into an N-column grid. The column count grows to fit the layout's deepest pin — default 2
   // (the friendly auto-balance width), but pin a panel to col 2 and the grid becomes three columns, so "three
   // side-by-side columns" is just col 0/1/2 (capped at MAX_COLS so a stray pin can't shred it into slivers).
-  // Unpinned panels drop into the SHORTEST column so a new one doesn't pile onto a full one and scroll off; each
-  // column's last panel spans the leftover rows so there's never an empty hole. `full` panels span the width. A
-  // `tall` panel OWNS its column (full height, sole occupant): phase 1 reserves a column for each tall panel, phase 2
-  // stacks the rest into the columns that remain, and the leftover-rows pass stretches each owned column to the bottom.
-  layoutCanvas(wb: HTMLElement) {
+  // Pure layout PLANNER — the single source of truth for where each panel sits. `layoutCanvas` applies it to the DOM,
+  // and a panel header consults it so the maximize control reflects the panel's ACTUAL geometry (a panel that already
+  // fills its column — sole occupant, or explicitly tall — must not offer a redundant ↕). Rules: unpinned panels drop
+  // into the SHORTEST column; each column's last panel spans the leftover rows (no holes); `full` panels span the
+  // width; a `tall` panel OWNS its column (phase 1 reserves it; the rest stack into the columns that remain).
+  planCanvas(): { ncol: number; geom: Map<number, { gridColumn: string; gridRow: string; col: number; fullWidth: boolean; fullHeight: boolean }> } {
+    const geom = new Map<number, { gridColumn: string; gridRow: string; col: number; fullWidth: boolean; fullHeight: boolean }>();
     const lone = this.canvas.length === 1;
     const pins = this.canvas.filter((p) => !p.full && typeof p.col === "number" && p.col >= 0).map((p) => p.col!);
     const ncol = Math.min(MAX_COLS, Math.max(2, ...(pins.length ? pins.map((c) => c + 1) : [2])));
-    wb.style.gridTemplateColumns = `repeat(${ncol}, 1fr)`;
     // phase 1 — reserve a column per tall panel (honour its pin if free, else the lowest free column).
     const ownedBy: (number | null)[] = new Array(ncol).fill(null);
     if (!lone) for (const p of this.canvas) {
       if (p.full || !p.tall) continue;
-      let col = (typeof p.col === "number" && p.col >= 0 && ownedBy[Math.min(ncol - 1, p.col)] == null) ? Math.min(ncol - 1, p.col) : ownedBy.indexOf(null);
+      const col = (typeof p.col === "number" && p.col >= 0 && ownedBy[Math.min(ncol - 1, p.col)] == null) ? Math.min(ncol - 1, p.col) : ownedBy.indexOf(null);
       if (col < 0) continue;   // more tall panels than columns — this one falls through to normal stacking below
       ownedBy[col] = p.id;
     }
     const rowAt = new Array<number>(ncol).fill(1);                 // next free row in each column
-    const last: (HTMLElement | null)[] = new Array(ncol).fill(null);
+    const colOf = new Map<number, number>();                      // panel id -> column (-1 = full-width)
+    const startRow = new Map<number, number>();
+    const lastInCol: (number | null)[] = new Array(ncol).fill(null);
     for (const p of this.canvas) {
-      const el = wb.querySelector<HTMLElement>(`.panel[data-pid="${p.id}"]`); if (!el) continue;
-      if (p.full || lone) { const r = Math.max(...rowAt); el.style.gridColumn = "1 / -1"; el.style.gridRow = String(r); delete el.dataset.col; rowAt.fill(r + 1); last.fill(null); continue; }
+      if (p.full || lone) { const r = Math.max(...rowAt); colOf.set(p.id, -1); startRow.set(p.id, r); geom.set(p.id, { gridColumn: "1 / -1", gridRow: String(r), col: -1, fullWidth: true, fullHeight: false }); rowAt.fill(r + 1); lastInCol.fill(null); continue; }
       const tcol = ownedBy.indexOf(p.id);
-      if (tcol >= 0) { el.style.gridColumn = String(tcol + 1); el.style.gridRow = "1"; el.dataset.col = String(tcol); last[tcol] = el; continue; }   // tall: top of its own column; stretched to the bottom below
+      if (tcol >= 0) { colOf.set(p.id, tcol); startRow.set(p.id, 1); lastInCol[tcol] = p.id; continue; }   // tall: top of its own column; spanned to the bottom below
       let col: number;
       if (typeof p.col === "number" && p.col >= 0) col = Math.min(ncol - 1, p.col);       // an explicit pin wins (even into an owned column)
       else { let best = -1, bestRow = Infinity; for (let c = 0; c < ncol; c++) { if (ownedBy[c] != null) continue; if (rowAt[c] < bestRow) { bestRow = rowAt[c]; best = c; } } col = best >= 0 ? best : rowAt.indexOf(Math.min(...rowAt)); }
-      el.style.gridColumn = String(col + 1); el.style.gridRow = String(rowAt[col]++); el.dataset.col = String(col); last[col] = el;
+      colOf.set(p.id, col); startRow.set(p.id, rowAt[col]++); lastInCol[col] = p.id;
     }
     const maxRow = Math.max(1, Math.max(...rowAt) - 1);
-    for (let c = 0; c < ncol; c++) { const el = last[c]; if (el && (ownedBy[c] != null || rowAt[c] - 1 < maxRow)) el.style.gridRow = String(el.style.gridRow).split(" /")[0] + " / " + (maxRow + 1); }
+    const colCount = new Array<number>(ncol).fill(0);
+    for (const [, c] of colOf) if (c >= 0) colCount[c]++;
+    for (const p of this.canvas) {
+      if (geom.has(p.id)) continue;                                // full-width / lone already placed
+      const col = colOf.get(p.id)!, sr = startRow.get(p.id)!;
+      const owned = ownedBy[col] === p.id, isLast = lastInCol[col] === p.id;
+      const end = (owned || (isLast && sr - 1 < maxRow)) ? maxRow + 1 : sr + 1;
+      const gridRow = (end === sr + 1 && !owned) ? String(sr) : `${sr} / ${end}`;   // single-row panels keep a bare row number
+      geom.set(p.id, { gridColumn: String(col + 1), gridRow, col, fullWidth: false, fullHeight: colCount[col] === 1 });   // sole occupant of its column ⇒ already full height
+    }
+    return { ncol, geom };
+  }
+
+  layoutCanvas(wb: HTMLElement) {
+    const { ncol, geom } = this.planCanvas();
+    wb.style.gridTemplateColumns = `repeat(${ncol}, 1fr)`;
+    for (const p of this.canvas) {
+      const el = wb.querySelector<HTMLElement>(`.panel[data-pid="${p.id}"]`); const g = geom.get(p.id); if (!el || !g) continue;
+      el.style.gridColumn = g.gridColumn; el.style.gridRow = g.gridRow;
+      if (g.col >= 0) el.dataset.col = String(g.col); else delete el.dataset.col;
+    }
   }
 
   // Move a dragged panel next to a target, into the target's column (so you can drop a panel UNDER another to
