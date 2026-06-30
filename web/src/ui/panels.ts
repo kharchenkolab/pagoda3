@@ -259,8 +259,10 @@ function pathwayCards(body: HTMLElement, rows: any[], score: (name: string, gene
     const w = Math.max(3, Math.round(-Math.log10(Math.max(r.fdr ?? 1, 1e-300)) / maxL * 100));
     const chips = (r.genes || []).map((g: string) => `<span class="enrchip">${esc(g)}</span>`).join("");
     const row = mk("div", "enrrow");
-    row.innerHTML = `<div class="enrhead"><span class="enrname" title="${esc(r.name)}">${esc(r.name)}</span><span class="enrfdr">FDR ${(r.fdr ?? 1).toExponential(1)}</span></div>`
-      + `<div class="enrdetail"><div class="enrbarrow"><span class="enrbar"><span class="enrbarfill" style="width:${w}%"></span></span><span class="enrkm">${r.k}/${r.m} genes · ${(r.fold ?? 0).toFixed(0)}× enriched</span></div><div class="enrchips">${chips}</div><button class="enrscore">◐ colour cells by this signature</button></div>`;
+    // the significance bar lives in the THIN row (fixed-width track) so every pathway's bar is visible + comparable at a
+    // glance; the head is name + bar + FDR. Expanding reveals only the EXTRA detail (counts, fold, genes, score action).
+    row.innerHTML = `<div class="enrhead"><span class="enrname" title="${esc(r.name)}">${esc(r.name)}</span><span class="enrbar" title="−log10 FDR"><span class="enrbarfill" style="width:${w}%"></span></span><span class="enrfdr">${(r.fdr ?? 1).toExponential(1)}</span></div>`
+      + `<div class="enrdetail"><div class="enrkm">${r.k}/${r.m} genes · ${(r.fold ?? 0).toFixed(0)}× enriched · FDR ${(r.fdr ?? 1).toExponential(1)}</div><div class="enrchips">${chips}</div><button class="enrscore">◐ colour cells by this signature</button></div>`;
     (row.querySelector(".enrhead") as HTMLElement).onclick = () => row.classList.toggle("exp");
     (row.querySelector(".enrscore") as HTMLElement).onclick = (e) => { e.stopPropagation(); score(r.name, r.genes || []); };
     body.appendChild(row);
