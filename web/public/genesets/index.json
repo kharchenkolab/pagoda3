@@ -1,0 +1,82 @@
+{
+  "v": 1,
+  "built": "2026-06-30",
+  "collections": [
+    {
+      "id": "go_bp_human",
+      "label": "GO:BP",
+      "source": "GO",
+      "organism": "human",
+      "split": "BP",
+      "license": "GO/CC-BY-4.0",
+      "file": "go_bp_human.json",
+      "nPathways": 7792,
+      "nGenes": 16019
+    },
+    {
+      "id": "go_bp_mouse",
+      "label": "GO:BP",
+      "source": "GO",
+      "organism": "mouse",
+      "split": "BP",
+      "license": "GO/CC-BY-4.0",
+      "file": "go_bp_mouse.json",
+      "nPathways": 8589,
+      "nGenes": 17268
+    },
+    {
+      "id": "go_cc_human",
+      "label": "GO:CC",
+      "source": "GO",
+      "organism": "human",
+      "split": "CC",
+      "license": "GO/CC-BY-4.0",
+      "file": "go_cc_human.json",
+      "nPathways": 1174,
+      "nGenes": 10930
+    },
+    {
+      "id": "go_cc_mouse",
+      "label": "GO:CC",
+      "source": "GO",
+      "organism": "mouse",
+      "split": "CC",
+      "license": "GO/CC-BY-4.0",
+      "file": "go_cc_mouse.json",
+      "nPathways": 1164,
+      "nGenes": 12140
+    },
+    {
+      "id": "go_mf_human",
+      "label": "GO:MF",
+      "source": "GO",
+      "organism": "human",
+      "split": "MF",
+      "license": "GO/CC-BY-4.0",
+      "file": "go_mf_human.json",
+      "nPathways": 2035,
+      "nGenes": 14158
+    },
+    {
+      "id": "go_mf_mouse",
+      "label": "GO:MF",
+      "source": "GO",
+      "organism": "mouse",
+      "split": "MF",
+      "license": "GO/CC-BY-4.0",
+      "file": "go_mf_mouse.json",
+      "nPathways": 2117,
+      "nGenes": 15050
+    },
+    {
+      "id": "reactome_human",
+      "label": "Reactome",
+      "source": "Reactome",
+      "organism": "human",
+      "license": "CC0",
+      "file": "reactome_human.json",
+      "nPathways": 2121,
+      "nGenes": 10984
+    }
+  ]
+}

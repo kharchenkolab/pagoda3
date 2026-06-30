@@ -1,1 +1,4 @@
-public/genesets/
+# gene-set collections: ship the gzipped assets (*.json.gz) + the manifest (index.json); the raw .json are bulky and
+# regenerable (node server/build_genesets.mjs) → ignored. The viewer fetches the .gz and inflates it client-side.
+public/genesets/*.json
+!public/genesets/index.json

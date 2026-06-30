@@ -57,6 +57,24 @@ export function listCollections(filter?: { organism?: string }, base = ""): Prom
   });
 }
 
+// Fetch a collection's JSON text. The committed asset is GZIPPED (<file>.gz) and inflated in the browser via the native
+// DecompressionStream — the same "compressed static, decompress client-side" model as the zarr chunks, so it needs no
+// host gzip config and works on any dumb static host. The gzip magic-byte check (1f 8b) also makes it correct if a host
+// transparently Content-Encodes the file (the browser already inflated → just decode); falls back to the raw <file>.
+async function fetchCollectionText(base: string, file: string): Promise<string> {
+  if (typeof DecompressionStream !== "undefined") {
+    const r = await fetch(`${base}/genesets/${file}.gz`);
+    if (r.ok) {
+      const buf = new Uint8Array(await r.arrayBuffer());
+      if (buf[0] === 0x1f && buf[1] === 0x8b) return new Response(new Blob([buf]).stream().pipeThrough(new DecompressionStream("gzip"))).text();
+      return new TextDecoder().decode(buf);   // a host already inflated it (Content-Encoding) → these are the JSON bytes
+    }
+  }
+  const r2 = await fetch(`${base}/genesets/${file}`);   // fall back to the raw .json (no DecompressionStream, or no .gz)
+  if (!r2.ok) throw new Error(`HTTP ${r2.status}`);
+  return r2.text();
+}
+
 const cache = new Map<string, Promise<GeneSetDB>>();
 // Load one collection by id (manifest-bundled or session-custom). Cached; a failure isn't cached so a retry can succeed.
 export function loadCollection(id: string, base = ""): Promise<GeneSetDB> {
@@ -67,7 +85,7 @@ export function loadCollection(id: string, base = ""): Promise<GeneSetDB> {
       .then((all) => {
         const c = all.find((x) => x.id === id) || DEFAULT_MANIFEST.find((x) => x.id === id);
         if (!c || !c.file) throw new Error(`unknown gene-set collection "${id}"`);
-        return fetch(`${base}/genesets/${c.file}`).then((r) => { if (!r.ok) throw new Error(`no gene sets for ${id} (HTTP ${r.status})`); return r.text(); }).then((raw) => parseGeneSetDoc(raw, c));
+        return fetchCollectionText(base, c.file).then((raw) => parseGeneSetDoc(raw, c));
       })
       .catch((e) => { cache.delete(id); throw e; });
     cache.set(id, p);
