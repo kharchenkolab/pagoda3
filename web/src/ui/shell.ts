@@ -2145,7 +2145,7 @@ export class App {
       if (ref.kind === "category") { this.noteColor("meta:" + ref.name); this.coord.setColor("meta:" + ref.name); this.switchWS("Metadata", true); }
       else if (ref.kind === "annotation") this.switchWS("Annotate", true);
       else if (ref.kind === "result") { const r = this.results.get(ref.id!); if (r) {
-        if (r.kind === "enrich") this.addPanel({ type: "GeneList", title: r.name, cap: "enriched pathways", bind: "enrich:pathways", rows: r.rows.map((x: any) => ({ symbol: x.name, score: -Math.log10(Math.max(x.fdr, 1e-300)) })) });   // snapshot: pathways ranked by −log10 FDR
+        if (r.kind === "enrich") this.addPanel({ type: "Enrichment", title: r.name, cap: r.summary, bind: "enrich:pathways", rows: r.rows });   // read-only pathway snapshot (not a gene table)
         else this.addPanel({ type: r.kind === "hvg" ? "GeneList" : "DeTable", title: r.name, cap: r.summary, bind: r.bind, aLabel: r.aLabel, bLabel: r.bLabel, rows: r.rows });
         this.fullRender(); } }
       else if (ref.kind === "app") { const w = this.widgetLib.find((x) => x.id === ref.id); if (w) { this.addWidgetPanel(w.source, w.name, w.controls, w.origin === "imported" ? "imported" : "authored"); this.fullRender(); } }

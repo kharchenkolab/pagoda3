@@ -437,9 +437,9 @@ tr.gene{cursor:pointer} tr.gene:hover{background:var(--inset)} tr.gene.on{backgr
 /* in a workbench (canvas) panel the body fills its cell, so make the gene table a flex column that FILLS it and let the
    scroll area (gscroll / enrich, both overflow:auto) grow to the panel height instead of stopping at 480px. Direct-child
    selectors so VariableGenes (absolute-positioned) is unaffected. */
-.workbench .pbody:has(>.gtable){display:flex;flex-direction:column}   /* make ONLY gene-table bodies a flex column (other panels untouched) so flex:1 fills definite OR full-panel heights */
+.workbench .pbody:has(>.gtable),.workbench .pbody:has(>.enrich){display:flex;flex-direction:column}   /* make ONLY gene-table / enrichment bodies a flex column (other panels untouched) so flex:1 fills definite OR full-panel heights */
 .workbench .pbody>.gtable{flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
-.workbench .pbody>.gtable>.gscroll,.workbench .pbody>.gtable>.enrich{max-height:none;flex:1 1 auto}
+.workbench .pbody>.gtable>.gscroll,.workbench .pbody>.gtable>.enrich,.workbench .pbody>.enrich{max-height:none;flex:1 1 auto}
 .gmore{font-size:10px;color:var(--faint);padding:4px 8px 2px;font-family:var(--mono)} .gmore:empty{display:none}
 .gtable thead th{position:sticky;top:0;background:var(--panel)}
 th.sortable{cursor:pointer;user-select:none} th.sortable:hover{color:var(--text)} th.sorted{color:var(--cyan)}

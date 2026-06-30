@@ -1672,6 +1672,29 @@ registerPanelType({ type: "AnnoRecord", body: annoRecordBody, agent: true });
 registerPanelType({ type: "GeneList", body: (p, ctx, hooks) => geneListBody(p, ctx, hooks), agent: true });
 
 registerPanelType({ type: "VariableGenes", body: variableGenesBody, agent: true });
+
+// A SAVED enrichment, re-opened from the session ledger: a READ-ONLY pathway list (the recorded rows — name, FDR, fold,
+// overlap genes), NOT a gene table. No toggle / recompute (it's a snapshot); clicking a pathway still scores its
+// signature. The LIVE enrichment lives folded into a gene table (enrichView); this is just the stored artifact.
+function enrichmentPanelBody(p: Panel, ctx: Ctx): BuiltBody {
+  const el = mk("div", "enrich"); const esc = (s: string) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]!));
+  const body = mk("div", "enrbody"); el.appendChild(body);
+  const rows: any[] = ((p as any).rows || []).slice().sort((a: any, b: any) => (a.fdr ?? 1) - (b.fdr ?? 1));
+  const meta = mk("div", "enrmeta"); meta.textContent = p.cap || `${rows.length} pathways`; body.appendChild(meta);
+  const maxL = Math.max(...rows.map((r) => -Math.log10(Math.max(r.fdr ?? 1, 1e-300))), 1);
+  for (const r of rows) {
+    const w = Math.max(3, Math.round(-Math.log10(Math.max(r.fdr ?? 1, 1e-300)) / maxL * 100));
+    const chips = (r.genes || []).slice(0, 8).map((g: string) => `<span class="enrchip">${esc(g)}</span>`).join("") + (r.k > 8 ? `<span class="enrmore">+${r.k - 8}</span>` : "");
+    const row = mk("div", "enrrow");
+    row.innerHTML = `<div class="enrtop"><span class="enrname">${esc(r.name)}</span><span class="enrfdr">FDR ${(r.fdr ?? 1).toExponential(1)}</span></div><div class="enrbarrow"><span class="enrbar"><span class="enrbarfill" style="width:${w}%"></span></span><span class="enrkm">${r.k}/${r.m} · ${(r.fold ?? 0).toFixed(0)}×</span></div><div class="enrchips">${chips}</div>`;
+    row.title = "colour cells by this pathway's signature";
+    row.onclick = async () => { const genes: string[] = r.genes || []; if (!genes.length) return; let acc: Float32Array | null = null, cnt = 0; for (const g of genes) { const e = await ctx.view.geneExpression(g).catch(() => null); if (!e) continue; if (!acc) acc = new Float32Array(e.values.length); for (let i = 0; i < acc.length; i++) acc[i] += e.values[i]; cnt++; } if (acc && cnt) { for (let i = 0; i < acc.length; i++) acc[i] /= cnt; const label = "sig: " + r.name.slice(0, 32); setCodeValues(label, acc); ctx.coord.setColor("code:" + label); } };
+    body.appendChild(row);
+  }
+  return { el };
+}
+registerPanelType({ type: "Enrichment", body: (p, ctx) => enrichmentPanelBody(p, ctx), agent: false });
+
 registerPanelType({ type: "Widget", body: widgetBody, agent: true });
 registerPanelType({ type: "Note", body: (p) => { const d = mk("div", "notebody"); d.innerHTML = p.text || ""; d.style.cssText = "font-size:12.5px;line-height:1.5"; return { el: d }; }, agent: true });
 registerPanelType({ type: "SplitHeat", body: (p) => splitHeatBody(p) });   // app-created only (not agent-addable) — matches the old REGISTRY which omitted it
