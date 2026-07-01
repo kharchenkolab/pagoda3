@@ -85,6 +85,7 @@ export class App {
   trustedWidgets = new Set<string>(); // source-hashes the user authored/consented to run (Item 2/C); foreign imports gate
   widgetPool?: import("../compute/pool.ts").ComputePool;   // S5: off-thread, terminable worker for widget runCompute (kernels over the shared SAB); set by main.ts
   private _saveTimer: any = null;     // debounce for session persistence
+  private _railCloseTimer: any = null;   // auto-close the Answers rail a beat after it goes empty (see renderRail)
   private lastSel: any;               // last selection dispatched to reactors — skip re-dispatch on colour-only repaints
   private reactorsStale = true;       // set when reactors are rebuilt (fullRender) → force one dispatch
   geneHoverSinks: ((sym: string | null) => void)[] = [];   // panels that highlight a gene's row on a coord geneHint
@@ -221,6 +222,7 @@ export class App {
   // DOM that bootStore is about to replace. (The compute pools are disposed by the caller in main.)
   dispose(): void {
     if (this._saveTimer) { clearTimeout(this._saveTimer); this._saveTimer = null; }   // don't let a pending save re-persist the OLD dataset over the new one
+    if (this._railCloseTimer) { clearTimeout(this._railCloseTimer); this._railCloseTimer = null; }   // a pending rail auto-close must not fire against the replaced app
     try { this.teardowns.forEach((f) => { try { f(); } catch { /* */ } }); this.teardowns = []; } catch { /* */ }
     try { this.embeddings.forEach((e) => (e as any).finalize?.()); this.embeddings = []; } catch { /* */ }
   }
@@ -1890,7 +1892,15 @@ export class App {
       if (H?.prov) d.appendChild(Object.assign(mk("div", "prov"), { textContent: "◆ " + H.prov }));
       rb.appendChild(d); if (built.afterAttach) built.afterAttach();
     }
-    if (this.rail.length || this.proposal) this.setRail(true);
+    if (this.rail.length || this.proposal) {
+      this.setRail(true);
+      if (this._railCloseTimer) { clearTimeout(this._railCloseTimer); this._railCloseTimer = null; }   // content arrived → cancel any pending auto-close
+    } else if (this.$("rail").classList.contains("open") && !this._railCloseTimer) {
+      // Empty but still open — e.g. the agent added then removed/pinned its answers, or the last card was cleared
+      // programmatically (only the manual dismiss/pin paths close it eagerly). Auto-close after a beat so an empty
+      // rail doesn't linger; a fresh answer within the window cancels it (the branch above), so agent churn won't flicker.
+      this._railCloseTimer = setTimeout(() => { this._railCloseTimer = null; if (!this.rail.length && !this.proposal) this.setRail(false); }, 2000);
+    }
     await this.repaint();
   }
 
