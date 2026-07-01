@@ -627,6 +627,24 @@ export class App {
         sp.appendChild(cm);
       }
     }
+    if (p.type === "Heatmap") {
+      // per-panel GROUPING picker — which categorical the dotplot/heatmap computes markers over (clusters, cell
+      // type, any annotation). Switching re-derives markers for that grouping IN PLACE (markers are precomputed
+      // for stored groupings, computed 1-vs-rest on the fly for an annotation layer), so a Markers panel can follow
+      // a fresh annotation instead of the agent opening a second panel beside the cluster one.
+      const s = document.createElement("select"); s.className = "inline"; s.dataset.pid = String(p.id);
+      s.title = "group cells by — markers are shown per group";
+      const cur = p.group || this.ctx.defaultGrouping();
+      // OFFER every annotation-like categorical (clusters, cell type, any annotation/derived layer), not just the
+      // marker-PREcomputed ones: markers are computed 1-vs-rest on the fly for anything without a stored table, so a
+      // plain obs `cell_type` or a fresh annotation is groupable too. metadataFields' "annotation" bucket is exactly
+      // this set (excludes numeric covariates + single-value design fields like sample/condition) and is synchronous.
+      const gs = this.ctx.metadataFields().filter((f) => f.kind === "categorical" && f.group === "annotation").map((f) => f.name);
+      if (!gs.includes(cur)) gs.unshift(cur);   // keep the current grouping selectable even if it fell outside the set
+      s.innerHTML = gs.map((g) => `<option value="${g}"${g === cur ? " selected" : ""}>${handleLabel("meta:" + g)}</option>`).join("");
+      s.onchange = () => this.configurePanel(p.id, { group: s.value });
+      sp.appendChild(s);
+    }
     if (p.type === "Embedding") {
       // view-option toggles — PER-PANEL display (this embedding only; panels are independent). data-pid lets
       // syncToggles() refresh each button against its own panel; the closures read the live value so repeated
@@ -861,10 +879,10 @@ export class App {
   // Deep per-panel view control — the agent's configure_panel verb (and the path the per-panel UI will use).
   // Merges a view patch into ONE panel's spec and repaints in place; other panels untouched. A per-panel
   // override wins over the global coord default AND over the agent's set_color (explicit/user authority).
-  configurePanel(panelId: number, patch: Partial<PanelView> & { heatMode?: "heat" | "dot"; genes?: string[] }) {
+  configurePanel(panelId: number, patch: Partial<PanelView> & { heatMode?: "heat" | "dot"; genes?: string[]; group?: string }) {
     const p = this.canvas.find((z) => z.id === panelId) || this.rail.find((z) => z.id === panelId);
     if (!p) return;
-    const rebuild = this.applyPanelModel(p, { colorBy: patch.colorBy, scope: patch.scope, embedding: patch.embedding, colormap: patch.colormap, heatMode: patch.heatMode, genes: patch.genes });
+    const rebuild = this.applyPanelModel(p, { colorBy: patch.colorBy, scope: patch.scope, embedding: patch.embedding, colormap: patch.colormap, heatMode: patch.heatMode, genes: patch.genes, group: patch.group });
     if (rebuild) this.fullRender(); else { this.repaint(); this.syncColorSelects(); this.syncToggles(); }   // keep every control in step
   }
 
@@ -1821,7 +1839,20 @@ export class App {
 
   // ---------- rail ----------
   setRail(open: boolean) { this.$("rail").classList.toggle("open", open); this.$("railBtn").classList.toggle("on", open); }
-  async renderRail() {
+  // renderRail rebuilds the whole rail from `this.rail`, awaiting bodyFor() per card. addRail (agent.ts) fires it
+  // un-awaited after every push, so a burst of pushes (the annotation flow adds several answers in quick succession)
+  // used to overlap: each run cleared innerHTML and then appended after its awaits, interleaving into DUPLICATED cards
+  // (3 model entries → 9 DOM cards). Latch it: while one render is in flight, later calls just mark it dirty, and the
+  // in-flight run loops once more at the end — collapsing a burst into a single correct trailing render.
+  private _railRendering = false;
+  private _railDirty = false;
+  async renderRail(): Promise<void> {
+    if (this._railRendering) { this._railDirty = true; return; }
+    this._railRendering = true;
+    try { do { this._railDirty = false; await this._renderRailInner(); } while (this._railDirty); }
+    finally { this._railRendering = false; }
+  }
+  private async _renderRailInner() {
     const rb = this.$("railbody"); rb.innerHTML = "";
     if (this.proposal) {
       const d = mk("div", "rcard proposal");

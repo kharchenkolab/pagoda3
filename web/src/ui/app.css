@@ -196,7 +196,7 @@ button{font-family:inherit}
 .railhd .t{font-family:var(--mono);font-size:10px;letter-spacing:1.4px;color:var(--dim)}
 .railhd .x{margin-left:auto;color:var(--faint);cursor:pointer;font-size:14px}
 .railbody{overflow:auto;padding:11px;display:flex;flex-direction:column;gap:11px}
-.rcard{background:var(--inset);border:1px solid #34465e;border-radius:10px;overflow:hidden;animation:slidein .28s ease}
+.rcard{background:var(--inset);border:1px solid #34465e;border-radius:10px;overflow:hidden;animation:slidein .28s ease;flex:0 0 auto}   /* keep each answer at its natural height — the RAIL scrolls; without this, flex-shrink squeezes every card thinner as the stack grows (the "compressed with every addition" bug) */
 @keyframes slidein{from{opacity:0;transform:translateX(10px)}to{opacity:1;transform:none}}
 .rch{display:flex;align-items:center;gap:7px;padding:7px 9px;border-bottom:1px solid var(--line2)}
 .rch .rt{font-family:var(--mono);font-size:9px;letter-spacing:.8px;color:var(--cyan)}
@@ -208,7 +208,7 @@ button{font-family:inherit}
 .dismiss:hover{color:var(--text);border-color:var(--line2)}
 .dismiss.ico{padding:0;width:22px;height:22px}   /* icon-only close (× everywhere) — the shared look you preferred */
 .rq{padding:5px 9px;font-size:11px;color:var(--dim);font-style:italic;border-bottom:1px solid var(--line2)}
-.rcard .pbody{padding:9px} .rcard .embpanel .pbody{height:240px}
+.rcard .pbody{padding:9px;max-height:340px;overflow:auto} .rcard .embpanel .pbody{height:240px}   /* cap a tall answer (e.g. a long gene table) so one card can't dominate the rail; it scrolls inside instead */
 .proposal{border:1px solid var(--amber);background:rgba(224,164,88,.06)} .proposal .rch .rt{color:var(--amber)}
 .proposal .body{padding:10px} .proposal h4{margin:0 0 5px;font-size:12.5px;color:var(--amber)}
 .diff{font-family:var(--mono);font-size:11px;color:var(--dim);margin-bottom:10px;line-height:1.6}
