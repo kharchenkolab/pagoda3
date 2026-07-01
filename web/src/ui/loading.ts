@@ -67,7 +67,8 @@ function ensure(): HTMLDivElement {
     /* card mode shows Cancel on the LEFT and OK on the RIGHT throughout the run; the disabled state (set in JS) says which is actionable — Cancel while running, OK when done */
     #ldov.card:not(.err) .ldcancel{display:inline-block;margin-right:auto}
     #ldov.card:not(.err) .ldok{display:inline-block}
-    #ldov.err .ldclose{display:inline-block}`;
+    #ldov.err .ldclose{display:inline-block}
+    #ldov.err.hasretry .ldretry{display:inline-block}`;   /* retry ("Try it anyway") is class-driven — NOT an inline style — so leaving the error state (→ loading card) actually hides it */
   document.head.appendChild(style);
   const d = document.createElement("div");
   d.id = "ldov";
@@ -112,7 +113,7 @@ function renderSteps(): void {
 /** SMALL mode: a spinner + one status line. */
 export function showLoading(title: string, status = "Reading file…"): void {
   const d = ensure();
-  d.classList.remove("err", "card", "done");
+  d.classList.remove("err", "card", "done", "hasretry");
   steps.clear();
   d.querySelector(".ldtitle")!.textContent = title;
   d.querySelector(".ldstatus")!.textContent = status;
@@ -125,7 +126,7 @@ export function setLoadingStatus(status: string): void { if (el) el.querySelecto
 /** CARD mode: switch the overlay to a checklist. `onCancel` wires the Cancel button (mid-run). */
 export function beginChecklist(title: string, subtitle: string, onCancel?: () => void): void {
   const d = ensure();
-  d.classList.remove("err", "done"); d.classList.add("show", "card");
+  d.classList.remove("err", "done", "hasretry"); d.classList.add("show", "card");
   steps.clear();
   d.querySelector(".ldbigtitle")!.textContent = title;
   d.querySelector(".ldbigsub")!.textContent = subtitle;
@@ -153,7 +154,7 @@ export function finishChecklist(onOk?: () => void): void {
 }
 
 /** Hide the overlay (success dismissed, or an error closed). */
-export function hideLoading(): void { if (el) el.classList.remove("show", "err", "card", "done"); }
+export function hideLoading(): void { if (el) el.classList.remove("show", "err", "card", "done", "hasretry"); }
 
 /** Error state with the real message + a Close button; `retry` adds an override (e.g. "Try it anyway"). */
 export function showLoadError(title: string, message: string, retry?: { label: string; run: () => void }): void {
@@ -162,7 +163,7 @@ export function showLoadError(title: string, message: string, retry?: { label: s
   d.querySelector(".ldstatus")!.textContent = "";
   d.querySelector(".lderr")!.textContent = message;
   const rb = d.querySelector<HTMLButtonElement>(".ldretry")!;
-  if (retry) { rb.textContent = retry.label; rb.onclick = () => { hideLoading(); retry.run(); }; rb.style.display = "inline-block"; }
-  else rb.style.display = "none";
+  if (retry) { rb.textContent = retry.label; rb.onclick = () => { hideLoading(); retry.run(); }; d.classList.add("hasretry"); }
+  else d.classList.remove("hasretry");
   d.classList.remove("done", "card"); d.classList.add("show", "err");   // fall back to the titled small+error layout even if a card was showing
 }
