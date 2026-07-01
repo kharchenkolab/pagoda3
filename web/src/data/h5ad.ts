@@ -303,14 +303,21 @@ export async function openH5ad(file: File, progress?: OpenProgress, force = fals
     const hasEmbedding = Object.values(spec.fields).some((x) => x.role === "embedding");
     if (!spec.fields.counts && !hasEmbedding)
       throw new Error("No X/counts matrix or embedding found in this .h5ad.");
-    // checklist rows: what we read from the file vs what we'll compute (the card shows only once a step fires)
+    // Declare the WHOLE checklist upfront (the plan is known once parsed) so the card shows every row from the
+    // start and just ticks each from pending → active → done — no expanding list. 'present' = read from the file.
     const cf0: any = spec.fields.counts;
+    const labelsNow = Object.entries(spec.fields).filter(([, x]) => (x as any).role === "label" && (x as any).encoding === "utf8").map(([k]) => k);
+    const clusteringNow = labelsNow.filter((n) => /leiden|louvain|cluster|cell.?type|annotation/i.test(n));
+    const willEmbed = !hasEmbedding && !!cf0;
     if (cf0) progress?.step("counts", "Count matrix", "present", `${Number(cf0.shape[0]).toLocaleString()} cells × ${Number(cf0.shape[1]).toLocaleString()} genes`);
     if (hasEmbedding) {
       progress?.step("embed", "Embedding", "present");
-      const cl = Object.entries(spec.fields).find(([k, x]) => (x as any).role === "label" && /leiden|louvain|cluster|cell.?type/i.test(k));
-      if (cl) progress?.step("clusters", "Clusters", "present", cl[0]);
+      if (clusteringNow.length) progress?.step("clusters", "Clusters", "present", clusteringNow[0]);
+    } else if (cf0) {
+      progress?.step("embed", "Compute embedding", "pending");
+      progress?.step("clusters", "Cluster cells", "pending");
     }
+    if (cf0 && (clusteringNow.length || willEmbed)) progress?.step("markers", "Marker genes", "pending");
     // A counts-only file (no obsm/UMAP/PCA) can't be plotted as-is — compute an embedding in-browser so it
     // opens. Gated by cell count: above the limit, in-browser PCA+UMAP would hang the tab — say so plainly.
     let computed: { nHVG: number; pcaDim: number; nClusters: number } | null = null;

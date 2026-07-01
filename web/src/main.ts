@@ -107,7 +107,6 @@ async function bootStore(store: LstarStore, opts: { applyLinks?: boolean } = {})
       progress.stage("Opening viewer…");
       await bootStore(ls);
       if (carded) {                                      // a real preparation happened → let the user review the checklist, then click Open
-        setStep("ready", "Ready to view", "done");
         logLoad(label, notes);
         finishChecklist(() => { try { (window as any).p2?.app?.toast?.("Opened " + label, notes || ""); } catch { /* */ } });
       } else {                                           // trivial open → just dismiss the small panel
