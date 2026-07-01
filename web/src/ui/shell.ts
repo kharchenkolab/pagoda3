@@ -618,6 +618,7 @@ export class App {
     const capText = p.type === "Embedding" ? "" : p.cap;   // embeddings convey scope via the chip; no stale static caption
     if (capText) h.appendChild(Object.assign(mk("span", "pc"), { textContent: "· " + capText }));
     const sp = mk("div", "sp");
+    let heatGroupSel: HTMLSelectElement | null = null;   // Heatmap grouping picker — re-inserted at the FRONT after the body's heat|dot toggle, so it leads the controls like the embedding's colour dropdown
     if (p.type === "Embedding" || p.type === "CompositionBars") {
       // per-panel handle picker — controls THIS panel only (configure_panel), so it still works when the agent
       // or another panel uses a different colour. Embedding: any handle; Composition: which grouping it stacks by.
@@ -653,7 +654,7 @@ export class App {
       if (!gs.includes(cur)) gs.unshift(cur);   // keep the current grouping selectable even if it fell outside the set
       s.innerHTML = gs.map((g) => `<option value="${g}"${g === cur ? " selected" : ""}>${handleLabel("meta:" + g)}</option>`).join("");
       s.onchange = () => this.configurePanel(p.id, { group: s.value });
-      sp.appendChild(s);
+      heatGroupSel = s;   // inserted at the front below (after the heat|dot toggle) so grouping leads the controls
     }
     if (p.type === "Embedding") {
       // view-option toggles — PER-PANEL display (this embedding only; panels are independent). data-pid lets
@@ -720,6 +721,7 @@ export class App {
     try { built = await bodyFor(p, this.ctx, this.hooks()); }
     catch (err) { const m = mk("div", "panelerr"); m.textContent = `⚠ couldn't render this panel — ${(err as Error)?.message || err}`; built = { el: m }; }
     if (built.headerControls) sp.insertBefore(built.headerControls, sp.firstChild);   // e.g. a gene filter, in the header
+    if (heatGroupSel) sp.insertBefore(heatGroupSel, sp.firstChild);   // grouping picker leads (left of the heat|dot toggle), matching the embedding's colour dropdown
     b.appendChild(built.el); d.appendChild(b);
     const prov = H?.prov || (this.ctx.handleOf(p.bind)?.prov);
     if (prov) d.appendChild(Object.assign(mk("div", "prov"), { textContent: "◆ " + prov }));
