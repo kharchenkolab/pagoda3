@@ -7,6 +7,7 @@ import { writeStore, type DatasetSpec, type FieldSpec, type AxisSpec } from "../
 import type { LstarStore } from "./store.ts";
 import type { OpenProgress } from "../ui/loading.ts";
 import { MemStore } from "./localstore.ts";
+import { applyQCFilter, type QCReport } from "../compute/qc.ts";
 // @ts-ignore — generated WASM-glue module, no .d.ts (same import pattern as lstar/js extend.ts)
 import createLstarKernels from "../../../../lstar/js/dist/lstar_kernels.mjs";
 
@@ -314,6 +315,7 @@ export async function openH5ad(file: File, progress?: OpenProgress, force = fals
       progress?.step("embed", "Embedding", "present");
       if (clusteringNow.length) progress?.step("clusters", "Clusters", "present", clusteringNow[0]);
     } else if (cf0) {
+      progress?.step("qc", "Quality filter", "pending");
       progress?.step("embed", "Compute embedding", "pending");
       progress?.step("clusters", "Cluster cells", "pending");
     }
@@ -321,13 +323,26 @@ export async function openH5ad(file: File, progress?: OpenProgress, force = fals
     // A counts-only file (no obsm/UMAP/PCA) can't be plotted as-is — compute an embedding in-browser so it
     // opens. Gated by cell count: above the limit, in-browser PCA+UMAP would hang the tab — say so plainly.
     let computed: { nHVG: number; pcaDim: number; nClusters: number } | null = null;
+    let qcReport: QCReport | null = null;
     if (!hasEmbedding && spec.fields.counts) {
-      const cf: any = spec.fields.counts, [ncells, ngenes] = cf.shape, LIMIT = 30000;
-      if (ncells > LIMIT && !force)
+      const cf: any = spec.fields.counts; let [ncells, ngenes] = cf.shape as [number, number]; const LIMIT = 30000;
+      if (ncells > LIMIT && !force)   // gate on the ORIGINAL count (cheap reject before any work)
         throw Object.assign(new Error(`This .h5ad has ${ncells.toLocaleString()} cells and no embedding, so a layout must be computed in the browser. ` +
           `That's tuned for up to ~${LIMIT.toLocaleString()} cells — beyond it it may be slow or run the tab out of memory. ` +
           `On a machine with plenty of RAM you can try anyway; otherwise precompute the layout (scanpy sc.pp.pca + sc.tl.umap, or pagoda3) and reopen.`),
           { overridable: true });
+      // Basic QC: DROP cells with < 200 detected genes and genes seen in < 3 cells (scanpy tutorial defaults), so the
+      // computed layout isn't distorted by empty droplets / debris. Notify how many + why (checklist detail + notes).
+      if (progress?.signal?.aborted) throw Object.assign(new Error("Cancelled"), { aborted: true });
+      progress?.step("qc", "Quality filter", "active");
+      qcReport = applyQCFilter(spec, 200, 3);
+      if (qcReport && !qcReport.skipped) [ncells, ngenes] = cf.shape as [number, number];   // matrix shrank → embed on the kept cells/genes
+      const qcDetail = qcReport?.skipped
+        ? `kept as-is — too few cells pass (${qcReport.keptCells.toLocaleString()} ≥ ${qcReport.minGenes} genes)`
+        : qcReport && (qcReport.droppedCells || qcReport.droppedGenes)
+          ? `dropped ${qcReport.droppedCells.toLocaleString()} cells (< ${qcReport.minGenes} genes) · ${qcReport.droppedGenes.toLocaleString()} genes (< ${qcReport.minCells} cells)`
+          : `all ${ncells.toLocaleString()} cells passed`;
+      progress?.step("qc", "Quality filter", "done", qcDetail);
       const { computeEmbedding } = await import("../compute/embed.ts");   // lazy — code-splits umap-js out of the main bundle
       const emb = await computeEmbedding({ data: cf.data, indices: cf.indices, indptr: cf.indptr }, ncells, ngenes, { progress });
       spec.axes.emb_umap = { labels: ["umap1", "umap2"], role: "coordinate" };
@@ -360,8 +375,13 @@ export async function openH5ad(file: File, progress?: OpenProgress, force = fals
       }
     } catch (e) { console.warn("[pagoda3] marker precompute skipped:", (e as any)?.message); }
     // a one-line provenance note for the load log — what was assumed/computed (vs. read from the file)
+    const qcNote = qcReport?.skipped
+      ? `QC filter skipped (too few cells clear the ${qcReport.minGenes}-gene threshold — opened unfiltered). `
+      : qcReport && (qcReport.droppedCells || qcReport.droppedGenes)
+        ? `QC: dropped ${qcReport.droppedCells.toLocaleString()} cells (< ${qcReport.minGenes} genes) + ${qcReport.droppedGenes.toLocaleString()} genes (< ${qcReport.minCells} cells), leaving ${qcReport.keptCells.toLocaleString()} × ${qcReport.keptGenes.toLocaleString()}. `
+        : qcReport ? `QC: all cells passed (≥ ${qcReport.minGenes} genes). ` : "";
     (store as any).__notes = computed
-      ? `no embedding in the file → computed a default layout: library-size normalize → log1p → ${computed.nHVG} variable genes → PCA (${computed.pcaDim} PCs) → Louvain (${computed.nClusters} clusters) → UMAP${markersFor.length ? " → 1-vs-rest markers" : ""}. Standard defaults — recompute or adjust anytime.`
+      ? `${qcNote}no embedding in the file → computed a default layout: library-size normalize → log1p → ${computed.nHVG} variable genes → PCA (${computed.pcaDim} PCs) → Louvain (${computed.nClusters} clusters) → UMAP${markersFor.length ? " → 1-vs-rest markers" : ""}. Standard defaults — recompute or adjust anytime.`
       : `read the file's own embedding${markersFor.length ? `; precomputed markers for ${markersFor.join(", ")}` : ""}.`;
     return store;
   } finally {
