@@ -92,11 +92,13 @@ async function bootStore(store: LstarStore, opts: { applyLinks?: boolean } = {})
     const title = input?.name || (input?.[0]?.webkitRelativePath || "").split("/")[0] || "dataset";
     showLoading(title);                                  // a modal with a spinner + status — opening parses the whole file in-browser
     try {
-      const { store: ls, label } = await localStore(input, setLoadingStatus);
+      const { store: ls, label, notes } = await localStore(input, setLoadingStatus);
       setLoadingStatus("Opening viewer…");
       await bootStore(ls);
       hideLoading();
-      try { (window as any).p2?.app?.toast?.("Opened " + label, "Read locally — nothing was uploaded."); } catch { /* */ }
+      // a persistent History/chat line recording the load + what was computed/assumed (not just a transient toast)
+      try { (window as any).p2?.app?.checkpoint?.("opened " + label, "Read locally in your browser — nothing was uploaded. " + (notes || "")); } catch { /* */ }
+      try { (window as any).p2?.app?.toast?.("Opened " + label, notes || "Read locally — nothing was uploaded."); } catch { /* */ }
     } catch (e: any) {
       showLoadError(title, String(e?.message || e));     // surface the real reason instead of failing silently
     }
