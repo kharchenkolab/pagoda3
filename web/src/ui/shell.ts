@@ -293,7 +293,7 @@ export class App {
   private applySessionViews(doc: { userWS: { name: string; ws: any }[]; currentWS: string; colorBy: string; canvas: any[] }): void {
     for (const u of doc.userWS) if (u && u.name && !this.WS[u.name]) { this.WS[u.name] = u.ws; this.wsOrder.push(u.name); }   // re-add user workspaces
     if (doc.currentWS && this.WS[doc.currentWS]) this.currentWS = doc.currentWS;
-    if (doc.colorBy) this.coord.set({ colorBy: doc.colorBy });
+    if (doc.colorBy) this.coord.set({ colorBy: this.validColor(doc.colorBy) });
     if (Array.isArray(doc.canvas)) this.canvas = doc.canvas.map((p) => this.newPanel(p));   // widget panels carry their source
   }
 
@@ -1856,6 +1856,18 @@ export class App {
     const add = Object.assign(mk("span", "ws wsadd", "+"), { title: "save current layout" }); add.onclick = () => this.startSaveWS(); t.appendChild(add);
   }
 
+  // A colour a workspace/session baked in may name a field THIS dataset lacks — the default template is
+  // `meta:leiden`, but a dropped file's clustering might be `louvain` or a computed `clusters`. Keep a valid
+  // handle; otherwise substitute a categorical the dataset actually has, so the embedding isn't left blank.
+  private validColor(handle: string): string {
+    if (!handle || !handle.startsWith("meta:")) return handle;
+    const cats = this.ctx.categoricalFields();
+    if (cats.includes(handle.slice(5))) return handle;
+    const dg = this.ctx.defaultGrouping();
+    const target = cats.includes(dg) ? dg : cats[0];
+    return target ? "meta:" + target : handle;
+  }
+
   switchWS(name: string, user: boolean) {
     const ws = this.WS[name]; if (!ws) return;
     if (name === this.currentWS) return;   // already active — don't rebuild (would discard live edits)
@@ -1866,7 +1878,7 @@ export class App {
     // so you can select a population here and keep interrogating it after rearranging panels. Only colourBy is per-WS
     // (each workspace remembers its own colouring). fullRender rebuilds the new panels' reactors and re-dispatches the
     // carried selection to them, so the new layout lights up the same cells.
-    this.currentWS = name; this.coord.set({ colorBy: ws.colorBy });
+    this.currentWS = name; this.coord.set({ colorBy: this.validColor(ws.colorBy) });
     this.canvas = ws.panels.map((p) => this.newPanel(p));
     this.fullRender();
     if (name === "Annotate") this.ensureAnnotation();   // async: seed the working draft + an scType source, then re-render

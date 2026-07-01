@@ -315,6 +315,10 @@ export async function openH5ad(file: File, onStage?: (m: string) => void): Promi
       const emb = await computeEmbedding({ data: cf.data, indices: cf.indices, indptr: cf.indptr }, ncells, ngenes, { onStage });
       spec.axes.emb_umap = { labels: ["umap1", "umap2"], role: "coordinate" };
       spec.fields.umap = { role: "embedding", span: ["cells", "emb_umap"], encoding: "dense", shape: [ncells, 2], data: emb.umap };
+      // the Louvain clusters as a categorical label — the embedding auto-colours by it, and it's faceted
+      const clus: string[] = new Array(ncells);
+      for (let i = 0; i < ncells; i++) clus[i] = "c" + emb.clusters[i];
+      spec.fields.clusters = { role: "label", span: ["cells"], encoding: "utf8", values: clus };
     }
     onStage?.("Building in-memory store…");
     const store = new MemStore();

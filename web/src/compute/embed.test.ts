@@ -35,4 +35,10 @@ test("computeEmbedding: two clear clusters separate, and the layout is determini
 
   // eigenvalues are sorted descending (a real PCA spectrum)
   for (let i = 1; i < a.eigs.length; i++) assert.ok(a.eigs[i] <= a.eigs[i - 1] + 1e-6);
+
+  // Louvain clustering: deterministic, ≥2 clusters, and the two known groups don't collapse together
+  assert.deepEqual(Array.from(a.clusters), Array.from(b.clusters));
+  assert.ok(a.nClusters >= 2, `expected ≥2 clusters, got ${a.nClusters}`);
+  const mode = (xs: number[]) => { const m = new Map<number, number>(); xs.forEach((x) => m.set(x, (m.get(x) || 0) + 1)); return [...m.entries()].sort((p, q) => q[1] - p[1])[0][0]; };
+  assert.notEqual(mode(Array.from(a.clusters.slice(0, 40))), mode(Array.from(a.clusters.slice(40, 80))));
 });

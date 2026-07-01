@@ -16,7 +16,79 @@ function mulberry32(seed: number) {
 }
 function gauss(rnd: () => number): number { let u = 0, v = 0; while (u === 0) u = rnd(); while (v === 0) v = rnd(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); }
 
-export interface EmbedResult { umap: Float32Array; pca: Float32Array; pcaDim: number; eigs: number[]; hvg: number[]; nHVG: number; }
+export interface EmbedResult { umap: Float32Array; pca: Float32Array; pcaDim: number; eigs: number[]; hvg: number[]; nHVG: number; clusters: Int32Array; nClusters: number; }
+
+const tick = () => new Promise<void>((r) => setTimeout(r, 0));   // yield so the progress modal can repaint between stages
+
+// k-nearest-neighbor lists (Euclidean) over PC scores (n×d) — brute force, fine for the size we gate to.
+function knn(scores: Float32Array, n: number, d: number, k: number): Int32Array[] {
+  const out: Int32Array[] = new Array(n);
+  const idx = new Int32Array(k), dist = new Float64Array(k);
+  for (let i = 0; i < n; i++) {
+    idx.fill(-1); dist.fill(Infinity);
+    const ib = i * d;
+    for (let j = 0; j < n; j++) {
+      if (j === i) continue;
+      let dd = 0; const jb = j * d;
+      for (let t = 0; t < d; t++) { const e = scores[ib + t] - scores[jb + t]; dd += e * e; }
+      if (dd < dist[k - 1]) { let p = k - 1; while (p > 0 && dist[p - 1] > dd) { dist[p] = dist[p - 1]; idx[p] = idx[p - 1]; p--; } dist[p] = dd; idx[p] = j; }
+    }
+    out[i] = idx.slice();
+  }
+  return out;
+}
+
+// Louvain community detection (modularity maximization: local moving + aggregation) on a symmetric kNN
+// graph — the standard scRNA clustering recipe (Seurat/scanpy do Louvain/Leiden on a neighbor graph).
+function louvain(adj0: Map<number, number>[], n0: number, resolution: number, rnd: () => number): Int32Array {
+  let adj = adj0, n = n0, node2orig: number[][] = Array.from({ length: n0 }, (_, i) => [i]);
+  const final = new Int32Array(n0);
+  for (let level = 0; level < 50; level++) {
+    const k = new Float64Array(n); let m2 = 0;
+    for (let i = 0; i < n; i++) { let s = 0; for (const [, w] of adj[i]) s += w; k[i] = s; m2 += s; }
+    if (m2 === 0) break;
+    const comm = new Int32Array(n); for (let i = 0; i < n; i++) comm[i] = i;
+    const sigTot = Float64Array.from(k);
+    const order = Array.from({ length: n }, (_, i) => i);
+    for (let i = n - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
+    let improved = false;
+    for (let pass = 0, moved = true; moved && pass < 50; pass++) {
+      moved = false;
+      for (const i of order) {
+        const ci = comm[i], wTo = new Map<number, number>();
+        for (const [j, w] of adj[i]) { if (j === i) continue; const cj = comm[j]; wTo.set(cj, (wTo.get(cj) || 0) + w); }
+        sigTot[ci] -= k[i];
+        let bestC = ci, bestGain = (wTo.get(ci) || 0) - resolution * sigTot[ci] * k[i] / m2;
+        for (const [c, wic] of wTo) { const g = wic - resolution * sigTot[c] * k[i] / m2; if (g > bestGain) { bestGain = g; bestC = c; } }
+        sigTot[bestC] += k[i];
+        if (bestC !== ci) { comm[i] = bestC; moved = true; improved = true; }
+      }
+    }
+    const remap = new Map<number, number>(); let C = 0;
+    for (let i = 0; i < n; i++) if (!remap.has(comm[i])) remap.set(comm[i], C++);
+    const nextOrig: number[][] = Array.from({ length: C }, () => []);
+    for (let i = 0; i < n; i++) { const c = remap.get(comm[i])!; for (const o of node2orig[i]) nextOrig[c].push(o); }
+    if (!improved || C === n) { for (let c = 0; c < C; c++) for (const o of nextOrig[c]) final[o] = c; break; }
+    const nadj: Map<number, number>[] = Array.from({ length: C }, () => new Map());
+    for (let i = 0; i < n; i++) { const ci = remap.get(comm[i])!; for (const [j, w] of adj[i]) { const cj = remap.get(comm[j])!; nadj[ci].set(cj, (nadj[ci].get(cj) || 0) + w); } }
+    adj = nadj; n = C; node2orig = nextOrig;
+    for (let c = 0; c < C; c++) for (const o of nextOrig[c]) final[o] = c;
+  }
+  return final;
+}
+
+// kNN graph → symmetric adjacency → Louvain → cluster labels renumbered by descending size (c0 = biggest).
+function clusterCells(scores: Float32Array, n: number, d: number, kNeighbors: number, rnd: () => number): { labels: Int32Array; nClusters: number } {
+  const nbr = knn(scores, n, d, Math.min(kNeighbors, n - 1));
+  const adj: Map<number, number>[] = Array.from({ length: n }, () => new Map());
+  for (let i = 0; i < n; i++) for (const j of nbr[i]) { if (j < 0) continue; adj[i].set(j, 1); adj[j].set(i, 1); }
+  const raw = louvain(adj, n, 1.0, rnd);
+  const size = new Map<number, number>(); for (let i = 0; i < n; i++) size.set(raw[i], (size.get(raw[i]) || 0) + 1);
+  const bySize = [...size.entries()].sort((a, b) => b[1] - a[1]).map(([c]) => c);
+  const rank = new Map<number, number>(); bySize.forEach((c, r) => rank.set(c, r));
+  const labels = new Int32Array(n); for (let i = 0; i < n; i++) labels[i] = rank.get(raw[i])!;
+  return { labels, nClusters: bySize.length };
+}
 
 /** Top-`K` PCA of a column-centered n×p matrix X (row-major) via randomized SVD. Returns PC scores
  *  (U·S, n×K) and the eigenvalues (S², for an elbow plot). Cost ≈ O(n·p·L), L=K+oversample. */
@@ -87,14 +159,14 @@ export async function computeEmbedding(counts: CSC, ncells: number, ngenes: numb
   const data = counts.data, ind = counts.indices, ptr = counts.indptr;
 
   // 1) per-cell library size → CP10k scale factor
-  onStage("Normalizing counts…");
+  onStage("Normalizing counts…"); await tick();
   const lib = new Float64Array(ncells);
   for (let g = 0; g < ngenes; g++) for (let k = N(ptr[g]); k < N(ptr[g + 1]); k++) lib[N(ind[k])] += data[k] as number;
   const inv = new Float64Array(ncells);
   for (let c = 0; c < ncells; c++) inv[c] = lib[c] > 0 ? 1e4 / lib[c] : 0;
 
   // 2) per-gene mean & variance of log1p(CP10k) (zeros included) — for HVG + z-scoring
-  onStage("Finding variable genes…");
+  onStage("Finding variable genes…"); await tick();
   const gMean = new Float64Array(ngenes), gVar = new Float64Array(ngenes);
   for (let g = 0; g < ngenes; g++) {
     let s = 0, ss = 0;
@@ -106,7 +178,7 @@ export async function computeEmbedding(counts: CSC, ncells: number, ngenes: numb
   const colOf = new Int32Array(ngenes).fill(-1); hvg.forEach((g, j) => (colOf[g] = j));
 
   // 3) cells×HVG z-scored matrix (row-major); zeros → (0-μ)/σ, nonzeros overwrite; clip ±10
-  onStage("Building expression matrix…");
+  onStage("Building expression matrix…"); await tick();
   const mu = new Float64Array(p), sd = new Float64Array(p);
   for (let j = 0; j < p; j++) { mu[j] = gMean[hvg[j]]; sd[j] = Math.sqrt(gVar[hvg[j]]) || 1; }
   const X = new Float32Array(ncells * p);
@@ -114,11 +186,15 @@ export async function computeEmbedding(counts: CSC, ncells: number, ngenes: numb
   for (let g = 0; g < ngenes; g++) { const j = colOf[g]; if (j < 0) continue; for (let k = N(ptr[g]); k < N(ptr[g + 1]); k++) { const c = N(ind[k]); let z = (Math.log1p((data[k] as number) * inv[c]) - mu[j]) / sd[j]; X[c * p + j] = z > 10 ? 10 : z < -10 ? -10 : z; } }
 
   // 4) PCA (randomized SVD)
-  onStage("Computing PCA…");
+  onStage("Computing PCA…"); await tick();
   const { scores, eigs } = randomizedPCA(X, ncells, p, nPC, rnd);
 
-  // 5) UMAP on the PC scores
-  onStage("Computing UMAP…");
+  // 5) Louvain clustering on a kNN graph over the PCs
+  onStage("Clustering cells (Louvain)…"); await tick();
+  const { labels: clusters, nClusters } = clusterCells(scores, ncells, nPC, 15, rnd);
+
+  // 6) UMAP on the PC scores
+  onStage("Computing UMAP…"); await tick();
   const pts: number[][] = new Array(ncells);
   for (let c = 0; c < ncells; c++) { const row = new Array(nPC); for (let k = 0; k < nPC; k++) row[k] = scores[c * nPC + k]; pts[c] = row; }
   const nNeighbors = Math.max(5, Math.min(15, ncells - 1));
@@ -127,5 +203,5 @@ export async function computeEmbedding(counts: CSC, ncells: number, ngenes: numb
   const umap = new Float32Array(ncells * 2);
   for (let c = 0; c < ncells; c++) { umap[c * 2] = e2[c][0]; umap[c * 2 + 1] = e2[c][1]; }
 
-  return { umap, pca: scores, pcaDim: nPC, eigs: Array.from(eigs), hvg, nHVG: p };
+  return { umap, pca: scores, pcaDim: nPC, eigs: Array.from(eigs), hvg, nHVG: p, clusters, nClusters };
 }
