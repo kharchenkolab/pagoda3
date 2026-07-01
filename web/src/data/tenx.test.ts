@@ -49,3 +49,18 @@ test("detectTriplets groups standard + GEO-named + multi-sample", () => {
   // no matrix → no triplet
   assert.equal(detectTriplets(["a/barcodes.tsv", "a/features.tsv"].map(entry)).length, 0);
 });
+
+test("detectTriplets handles the REAL GSE192391 multi-sample naming (dot-attached role, many GSMs)", () => {
+  // verbatim filenames from GEO GSE192391_RAW (the series Peter named)
+  const files = [
+    "GSM5746259_MGI0369_1_SLAB-145-0.barcodes.tsv.gz", "GSM5746259_MGI0369_1_SLAB-145-0.features.tsv.gz", "GSM5746259_MGI0369_1_SLAB-145-0.matrix.mtx.gz",
+    "GSM5746260_MGI0369_1_SLAB-145-7.barcodes.tsv.gz", "GSM5746260_MGI0369_1_SLAB-145-7.features.tsv.gz", "GSM5746260_MGI0369_1_SLAB-145-7.matrix.mtx.gz",
+    "GSM5746261_MGI0369_1_SLAB-154-0.barcodes.tsv.gz", "GSM5746261_MGI0369_1_SLAB-154-0.features.tsv.gz", "GSM5746261_MGI0369_1_SLAB-154-0.matrix.mtx.gz",
+  ].map(entry);
+  const tris = detectTriplets(files);
+  assert.equal(tris.length, 3);   // three distinct samples → the picker lists all three
+  assert.deepEqual(tris.map((t) => t.label).sort(), [
+    "GSM5746259_MGI0369_1_SLAB-145-0", "GSM5746260_MGI0369_1_SLAB-145-7", "GSM5746261_MGI0369_1_SLAB-154-0",
+  ]);
+  for (const t of tris) { assert.ok(/\.matrix\.mtx\.gz$/.test(t.matrix.path)); assert.equal(t.tsvs.length, 2); }
+});
