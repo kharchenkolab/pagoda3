@@ -71,6 +71,7 @@ export class App {
   suspendRender = false;   // set while applyViewPatch batches a multi-op patch into a single render
   renderToken = 0;         // guards fullRender against concurrent re-entry (async panel build → stale double-append)
   liveMessages: any[] = [];   // the running Anthropic conversation (persists across asks so follow-ups keep context)
+  freshSession = false;   // set by a deliberate NEW-dataset load (openLocal) → restoreSession skips ALL dataset-specific state (annotation draft, panels, results, chat) even if the fingerprint happens to match a prior file. Only the URL/demo boot (page refresh = same dataset) restores dataset-specific state.
   annoLayers = new Map<string, AnnotationLayer>();   // rich annotation layers (records/provenance); codes also mirrored into ctx as categoricals
   results = new ResultRegistry();   // session RESULTS (DE / pseudobulk / markers / HVG) as first-class re-runnable artifacts — the session ledger lists these
   embeddings: EmbeddingView[] = [];
@@ -283,8 +284,11 @@ export class App {
     restoreCustomCollections((doc as any).customGeneSets);                                                        // BYO .gmt gene sets
     if ((doc as any).geneFilter?.length) void this.ctx.setGeneFilter((doc as any).geneFilter).then(() => this.fullRender());   // gene-ignore filter
     // DATASET-SPECIFIC state (panels/DE-result windows, focus, colouring, annotation, chat) belongs to ONE dataset.
-    // On a DIFFERENT dataset (fingerprint mismatch — e.g. a freshly opened file) start FRESH: none of it transfers.
-    if (fingerprintMismatch(doc.fingerprint, this.datasetFingerprint())) { this.fullRender(); return; }
+    // Start FRESH — carry none of it — when either: (a) a DELIBERATE new-file load (freshSession), because all dropped
+    // files share the "default" session slot and the fingerprint is only {n, base-fields}, so a same-size file with the
+    // same obs columns would otherwise inherit the previous dataset's annotation draft / panels (the leak Peter saw); or
+    // (b) the fingerprint plainly mismatches. Only a same-dataset page refresh (URL/demo boot) reaches the restore below.
+    if (this.freshSession || fingerprintMismatch(doc.fingerprint, this.datasetFingerprint())) { this.fullRender(); return; }
     this.applySessionViews(doc);
     restoreCategoryColors((doc as any).catColors);
     (this.coord.state as any).style = (doc as any).style;

@@ -27,7 +27,7 @@ let _pools: ComputePool[] = [];
 // Build the whole stack (reader → view → coord → ctx → app) around `store` and mount it. Called once
 // for the URL/meta store, and again to swap in a dropped local file (Phase 4) — re-init disposes the
 // old workers + finalizes the old app so nothing keeps ticking against the replaced DOM.
-async function bootStore(store: LstarStore, opts: { applyLinks?: boolean } = {}) {
+async function bootStore(store: LstarStore, opts: { applyLinks?: boolean; freshSession?: boolean } = {}) {
   // open + prepare the NEW dataset first, while the old app/pools are still alive — only tear the old
   // ones down once the new one is ready (no race against dispose; no blank screen if the open fails).
   const oldPools = _pools;
@@ -68,6 +68,7 @@ async function bootStore(store: LstarStore, opts: { applyLinks?: boolean } = {})
   for (const p of oldPools) { try { p.dispose(); } catch { /* */ } }
   try { oldApp?.dispose?.(); } catch { /* */ }
   const app = new App(ctx);
+  app.freshSession = !!opts.freshSession;   // a dropped local file starts CLEAN — never inherits the previous dataset's annotation/panels/results/chat (all dropped files share the "default" session slot; the fingerprint alone is too weak to tell two same-size files apart)
   const widgetPool = new ComputePool();   // S5: untrusted widget runCompute code runs in its OWN workers (separate from the app kernel pool), with kernels over the shared SAB
   _pools.push(widgetPool);
   app.widgetPool = widgetPool;
@@ -105,7 +106,7 @@ async function bootStore(store: LstarStore, opts: { applyLinks?: boolean } = {})
     try {
       const { store: ls, label, notes } = await localStore(input, progress, opts);
       progress.stage("Opening viewer…");
-      await bootStore(ls);
+      await bootStore(ls, { freshSession: true });   // deliberate new dataset → clean slate (don't inherit the prior file's annotation/panels)
       if (carded) {                                      // a real preparation happened → let the user review the checklist, then click Open
         logLoad(label, notes);
         finishChecklist(() => { try { (window as any).p2?.app?.toast?.("Opened " + label, notes || ""); } catch { /* */ } });
