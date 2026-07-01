@@ -57,13 +57,15 @@ function ensure(): HTMLDivElement {
       max-height:240px;overflow:auto;background:rgba(0,0,0,.25);padding:9px 11px;border-radius:7px}
     #ldov.err .lderr{display:block}
     /* buttons */
-    #ldov .ldbtns{display:none;margin-top:16px;justify-content:flex-end;gap:8px}
+    #ldov .ldbtns{display:none;margin-top:16px;justify-content:flex-end;gap:8px;align-items:center}
     #ldov.card .ldbtns,#ldov.err .ldbtns{display:flex}
     #ldov .ldbtns button{font:inherit;color:var(--fg,#e6e9ef);background:var(--line,#2a2f3a);border:0;border-radius:7px;padding:6px 16px;cursor:pointer}
+    #ldov .ldbtns button:disabled{opacity:.4;cursor:default}
     #ldov .ldbtns .ldok,#ldov .ldbtns .ldretry{background:var(--accent,#5b9cff);color:#fff}
     #ldov .ldcancel,#ldov .ldok,#ldov .ldretry,#ldov .ldclose{display:none}
-    #ldov.card:not(.done):not(.err) .ldcancel{display:inline-block}
-    #ldov.card.done:not(.err) .ldok{display:inline-block}
+    /* card mode shows Cancel on the LEFT and OK on the RIGHT throughout the run; the disabled state (set in JS) says which is actionable — Cancel while running, OK when done */
+    #ldov.card:not(.err) .ldcancel{display:inline-block;margin-right:auto}
+    #ldov.card:not(.err) .ldok{display:inline-block}
     #ldov.err .ldclose{display:inline-block}`;
   document.head.appendChild(style);
   const d = document.createElement("div");
@@ -78,6 +80,13 @@ function ensure(): HTMLDivElement {
   d.querySelector<HTMLButtonElement>(".ldclose")!.onclick = () => hideLoading();
   d.querySelector<HTMLButtonElement>(".ldcancel")!.onclick = () => { const cb = onCancelCb; hideLoading(); cb?.(); };
   d.querySelector<HTMLButtonElement>(".ldok")!.onclick = () => { const cb = onOkCb; hideLoading(); cb?.(); };
+  // Enter confirms — click the OK button when it's live (card finished). Ignored while running (OK disabled) and in
+  // the small/error modes. Capture phase so it fires before any panel handler.
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" || !el || !el.classList.contains("show") || !el.classList.contains("card") || el.classList.contains("err")) return;
+    const ok = el.querySelector<HTMLButtonElement>(".ldok");
+    if (ok && !ok.disabled) { e.preventDefault(); e.stopPropagation(); ok.click(); }
+  }, true);
   document.body.appendChild(d);
   el = d;
   return d;
@@ -120,6 +129,8 @@ export function beginChecklist(title: string, subtitle: string, onCancel?: () =>
   d.querySelector(".ldbigtitle")!.textContent = title;
   d.querySelector(".ldbigsub")!.textContent = subtitle;
   onCancelCb = onCancel || null;
+  d.querySelector<HTMLButtonElement>(".ldcancel")!.disabled = false;   // while running: Cancel (left) is actionable…
+  d.querySelector<HTMLButtonElement>(".ldok")!.disabled = true;        // …OK (right) waits until the run finishes
   renderSteps();
 }
 
@@ -136,6 +147,8 @@ export function finishChecklist(onOk?: () => void): void {
   if (!el) return;
   onOkCb = onOk || null;
   el.classList.add("done");
+  el.querySelector<HTMLButtonElement>(".ldcancel")!.disabled = true;   // run finished: Cancel (left) is spent…
+  el.querySelector<HTMLButtonElement>(".ldok")!.disabled = false;      // …OK (right) is now the action (Enter also triggers it)
 }
 
 /** Hide the overlay (success dismissed, or an error closed). */
