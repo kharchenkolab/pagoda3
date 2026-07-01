@@ -1271,18 +1271,25 @@ export class App {
   // non-destructive, no colour change) + at least one computed source (scType). Re-renders when ready.
   async ensureAnnotation(): Promise<void> {
     if (!this.annoLayers.has("annotation")) {
-      // Seed the working draft from a real LABELING, not raw cluster ids. cell_type if the dataset carries one; else
-      // compute scType FIRST and seed from that — a dataset with no cell_type otherwise opened with the working draft
-      // set to the clustering itself, which reads as "working annotation defaulted to cluster". Clusters are the last
-      // resort only. (The agent should also leave the draft holding its best labeling before you get here.)
-      const hasCellType = this.ctx.categoricalFields().includes("cell_type");   // a plain obs cell_type is NOT in groupings() (no precomputed markers) — check the field itself, or it's never used as the seed
-      if (!hasCellType && !this.annoLayers.has("scType")) await this.runScType().catch(() => { /* fall back to clusters below */ });
-      const src = hasCellType ? "cell_type" : (this.annoLayers.has("scType") ? "scType" : "leiden");
-      const m: any = await this.ctx.view.metadata(src);
-      if (m.kind === "categorical") { const layer = seedLayer("annotation", "derived", { codes: m.codes, categories: m.categories }); layer.provenance = { method: "seed", params: { from: src } }; this.commitLayer(layer, true); }   // render NOW — the table + card appear immediately
+      // Seed a working draft IMMEDIATELY so the Reconcile panel is never empty on first visit — cell_type if the
+      // dataset carries a labeling, else the clustering as a PLACEHOLDER we upgrade to scType below. NEVER block this
+      // first seed on scType: awaiting it left the panel empty for the seconds scType took (the "empty first visit"
+      // bug), and the earlier "seed from scType" fix caused exactly that. (A plain obs cell_type isn't in groupings(),
+      // so check the field itself.)
+      const seedSrc = this.ctx.categoricalFields().includes("cell_type") ? "cell_type" : this.ctx.defaultGrouping();
+      const m: any = await this.ctx.view.metadata(seedSrc);
+      if (m.kind === "categorical") { const layer = seedLayer("annotation", "derived", { codes: m.codes, categories: m.categories }); layer.provenance = { method: "seed", params: { from: seedSrc } }; this.commitLayer(layer, true); }   // render NOW — the table + card appear immediately
     }
-    // compute scType in the BACKGROUND (it re-renders to add its column when ready) — don't block the first paint
-    if (!this.annoLayers.has("scType")) this.runScType();
+    // scType in the BACKGROUND (adds its source column when ready). If the working draft is still the PRISTINE clusters
+    // placeholder (seeded from the clustering, not cell_type, and not yet edited/adopted), UPGRADE it to scType so a
+    // no-cell_type dataset doesn't LINGER on cluster ids — all without ever blocking the first paint.
+    if (!this.annoLayers.has("scType")) {
+      void this.runScType().then(() => {
+        const L = this.annoLayers.get("annotation");
+        const from = L?.provenance?.method === "seed" ? (L.provenance as any)?.params?.from : null;
+        if (from && from !== "cell_type" && this.annoLayers.has("scType")) void this.adoptSource("scType");   // pristine cluster placeholder → the real labeling
+      }).catch(() => { /* scType is best-effort */ });
+    }
     // pre-warm the working draft's per-label markers (a ~2s DE) in the background, so the FIRST record card's
     // marker-evidence chips appear instantly instead of sitting on "computing…" after the first row click.
     if (this.annoLayers.has("annotation")) this.ctx.markers("annotation").catch(() => {});
