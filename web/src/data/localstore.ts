@@ -122,7 +122,12 @@ export async function localStore(input: File | FileList | File[] | any, progress
       const store = await openH5ad(input, progress, opts?.force);
       return { store, label: input.name, notes: (store as any).__notes };
     }
-    if (!/\.zip$/i.test(input.name)) throw new Error("Drop a .lstar.zarr.zip, a .lstar.zarr folder, or a .h5ad file.");
+    if (/\.h5$/i.test(input.name)) {   // a 10x Cell Ranger .h5 feature-barcode matrix (falls through to .h5ad if it's actually AnnData)
+      const { openTenxH5 } = await import("./tenxh5.ts");
+      const store = await openTenxH5(input, progress, opts?.force);
+      return { store, label: input.name, notes: (store as any).__notes };
+    }
+    if (!/\.zip$/i.test(input.name)) throw new Error("Drop a .lstar.zarr.zip/folder, a .h5ad, or a 10x .h5 file.");
     progress?.stage("Reading file…");
     const bytes = new Uint8Array(await input.arrayBuffer());
     progress?.stage("Unpacking archive…");

@@ -3,12 +3,11 @@
 // AnnData layout (X / layers.counts, obs columns, var index, obsm embeddings) to an L* DatasetSpec and
 // `writeStore` it into a MemStore. Common scanpy layout (encoding-version 0.1/0.2); variants are
 // best-effort. Loads the whole file into WASM memory → small/medium datasets (same ceiling as a zip).
-import { writeStore, type DatasetSpec, type FieldSpec, type AxisSpec } from "../../../../lstar/js/core/writer.ts";
+import { type DatasetSpec, type FieldSpec, type AxisSpec } from "../../../../lstar/js/core/writer.ts";
 import type { LstarStore } from "./store.ts";
 import type { OpenProgress } from "../ui/loading.ts";
-import { MemStore } from "./localstore.ts";
-import { applyQCFilter, type QCReport } from "../compute/qc.ts";
 import { assertSparseOk, looksUnnamed } from "./h5adcheck.ts";
+import { finalizeSpec } from "./intake.ts";
 // @ts-ignore — generated WASM-glue module, no .d.ts (same import pattern as lstar/js extend.ts)
 import createLstarKernels from "../../../../lstar/js/dist/lstar_kernels.mjs";
 
@@ -316,93 +315,7 @@ export async function openH5ad(file: File, progress?: OpenProgress, force = fals
     guardSize(f, file.size);
     progress?.stage("Parsing AnnData…");
     const spec = await anndataSpec(f);
-    const hasEmbedding = Object.values(spec.fields).some((x) => x.role === "embedding");
-    if (!spec.fields.counts && !hasEmbedding)
-      throw new Error("No X/counts matrix or embedding found in this .h5ad.");
-    // Declare the WHOLE checklist upfront (the plan is known once parsed) so the card shows every row from the
-    // start and just ticks each from pending → active → done — no expanding list. 'present' = read from the file.
-    const cf0: any = spec.fields.counts;
-    const labelsNow = Object.entries(spec.fields).filter(([, x]) => (x as any).role === "label" && (x as any).encoding === "utf8").map(([k]) => k);
-    const clusteringNow = labelsNow.filter((n) => /leiden|louvain|cluster|cell.?type|annotation/i.test(n));
-    const willEmbed = !hasEmbedding && !!cf0;
-    if (cf0) progress?.step("counts", "Count matrix", "present", `${Number(cf0.shape[0]).toLocaleString()} cells × ${Number(cf0.shape[1]).toLocaleString()} genes`);
-    if (hasEmbedding) {
-      progress?.step("embed", "Embedding", "present");
-      if (clusteringNow.length) progress?.step("clusters", "Clusters", "present", clusteringNow[0]);
-    } else if (cf0) {
-      progress?.step("qc", "Quality filter", "pending");
-      progress?.step("embed", "Compute embedding", "pending");
-      progress?.step("clusters", "Cluster cells", "pending");
-    }
-    if (cf0 && (clusteringNow.length || willEmbed)) progress?.step("markers", "Marker genes", "pending");
-    // A counts-only file (no obsm/UMAP/PCA) can't be plotted as-is — compute an embedding in-browser so it
-    // opens. Gated by cell count: above the limit, in-browser PCA+UMAP would hang the tab — say so plainly.
-    let computed: { nHVG: number; pcaDim: number; nClusters: number } | null = null;
-    let qcReport: QCReport | null = null;
-    if (!hasEmbedding && spec.fields.counts) {
-      const cf: any = spec.fields.counts; let [ncells, ngenes] = cf.shape as [number, number]; const LIMIT = 30000;
-      if (ncells > LIMIT && !force)   // gate on the ORIGINAL count (cheap reject before any work)
-        throw Object.assign(new Error(`This .h5ad has ${ncells.toLocaleString()} cells and no embedding, so a layout must be computed in the browser. ` +
-          `That's tuned for up to ~${LIMIT.toLocaleString()} cells — beyond it it may be slow or run the tab out of memory. ` +
-          `On a machine with plenty of RAM you can try anyway; otherwise precompute the layout (scanpy sc.pp.pca + sc.tl.umap, or pagoda3) and reopen.`),
-          { overridable: true });
-      // Basic QC: DROP cells with < 200 detected genes and genes seen in < 3 cells (scanpy tutorial defaults), so the
-      // computed layout isn't distorted by empty droplets / debris. Notify how many + why (checklist detail + notes).
-      if (progress?.signal?.aborted) throw Object.assign(new Error("Cancelled"), { aborted: true });
-      progress?.step("qc", "Quality filter", "active");
-      qcReport = applyQCFilter(spec, 200, 3);
-      if (qcReport && !qcReport.skipped) [ncells, ngenes] = cf.shape as [number, number];   // matrix shrank → embed on the kept cells/genes
-      const qcDetail = qcReport?.skipped
-        ? `kept as-is — too few cells pass (${qcReport.keptCells.toLocaleString()} ≥ ${qcReport.minGenes} genes)`
-        : qcReport && (qcReport.droppedCells || qcReport.droppedGenes)
-          ? `dropped ${qcReport.droppedCells.toLocaleString()} cells (< ${qcReport.minGenes} genes) · ${qcReport.droppedGenes.toLocaleString()} genes (< ${qcReport.minCells} cells)`
-          : `all ${ncells.toLocaleString()} cells passed`;
-      progress?.step("qc", "Quality filter", "done", qcDetail);
-      const { computeEmbedding } = await import("../compute/embed.ts");   // lazy — code-splits umap-js out of the main bundle
-      const emb = await computeEmbedding({ data: cf.data, indices: cf.indices, indptr: cf.indptr }, ncells, ngenes, { progress });
-      spec.axes.emb_umap = { labels: ["umap1", "umap2"], role: "coordinate" };
-      spec.fields.umap = { role: "embedding", span: ["cells", "emb_umap"], encoding: "dense", shape: [ncells, 2], data: emb.umap };
-      // the Louvain clusters as a categorical label — the embedding auto-colours by it, and it's faceted
-      const clus: string[] = new Array(ncells);
-      for (let i = 0; i < ncells; i++) clus[i] = "c" + emb.clusters[i];
-      spec.fields.clusters = { role: "label", span: ["cells"], encoding: "utf8", values: clus };
-      computed = { nHVG: emb.nHVG, pcaDim: emb.pcaDim, nClusters: emb.nClusters };
-    }
-    progress?.stage("Building in-memory store…");
-    const store = new MemStore();
-    await writeStore(store, spec);                 // uncompressed in-memory L* store
-    // Precompute the viewer's marker/stats navigators for the clustering grouping(s) so the Markers dot-plot
-    // and per-cluster DE work natively (a dragged .h5ad carries no markers_<g>). Same kernels as a viewer-
-    // optimized store; best-effort — the file still opens if this fails. Targets clustering/cell-type labels
-    // (incl. the computed `clusters`), not every covariate.
-    let markersFor: string[] = [];
-    try {
-      const labelFields = Object.entries(spec.fields).filter(([, x]) => x.role === "label" && x.encoding === "utf8").map(([k]) => k);
-      const clusteringLike = labelFields.filter((n) => /leiden|louvain|cluster|cell.?type|annotation/i.test(n));
-      const groupings = clusteringLike.length ? clusteringLike : labelFields.slice(0, 1);
-      if (groupings.length && spec.fields.counts) {
-        if (progress?.signal?.aborted) throw Object.assign(new Error("Cancelled"), { aborted: true });
-        progress?.step("markers", "Marker genes", "active");
-        const { extendForViewer } = await import("../../../../lstar/js/core/extend.ts");
-        await extendForViewer(store as any, { groupings });
-        markersFor = groupings;
-        progress?.step("markers", "Marker genes", "done", groupings.join(", "));
-      }
-    } catch (e) { console.warn("[pagoda3] marker precompute skipped:", (e as any)?.message); }
-    // a one-line provenance note for the load log — what was assumed/computed (vs. read from the file)
-    const un = (spec as any).__unnamed || {};
-    const nameWarn = un.genes
-      ? `⚠ this file has NO gene names (var index is just 0,1,2,…) — genes are shown by index. ${un.cells ? "It also has no cell barcodes. " : ""}`
-      : un.cells ? `⚠ this file has no cell barcodes (obs index is 0,1,2,…). ` : "";
-    const qcNote = qcReport?.skipped
-      ? `QC filter skipped (too few cells clear the ${qcReport.minGenes}-gene threshold — opened unfiltered). `
-      : qcReport && (qcReport.droppedCells || qcReport.droppedGenes)
-        ? `QC: dropped ${qcReport.droppedCells.toLocaleString()} cells (< ${qcReport.minGenes} genes) + ${qcReport.droppedGenes.toLocaleString()} genes (< ${qcReport.minCells} cells), leaving ${qcReport.keptCells.toLocaleString()} × ${qcReport.keptGenes.toLocaleString()}. `
-        : qcReport ? `QC: all cells passed (≥ ${qcReport.minGenes} genes). ` : "";
-    (store as any).__notes = nameWarn + (computed
-      ? `${qcNote}no embedding in the file → computed a default layout: library-size normalize → log1p → ${computed.nHVG} variable genes → PCA (${computed.pcaDim} PCs) → Louvain (${computed.nClusters} clusters) → UMAP${markersFor.length ? " → 1-vs-rest markers" : ""}. Standard defaults — recompute or adjust anytime.`
-      : `read the file's own embedding${markersFor.length ? `; precomputed markers for ${markersFor.join(", ")}` : ""}.`);
-    return store;
+    return await finalizeSpec(spec, progress, { force });   // shared tail: QC → embed → markers → notes (see intake.ts)
   } finally {
     try { f?.close?.(); h5.FS.unlink(name); } catch { /* */ }
   }

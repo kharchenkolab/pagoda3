@@ -33,7 +33,7 @@ export function installOpenLocal(open: (input: any) => Promise<void>): void {
   ov.innerHTML =
     '<div class="dropbox"><div class="dropic">⤓</div>' +
     '<div class="droptt">Drop a dataset to open</div>' +
-    '<div class="dropsub">a <code>.h5ad</code> or <code>.lstar.zarr.zip</code> file, or a <code>.lstar.zarr</code> folder — nothing is uploaded</div></div>';
+    '<div class="dropsub">a <code>.h5ad</code>, a 10x <code>.h5</code>, or a <code>.lstar.zarr.zip</code> file, or a <code>.lstar.zarr</code> folder — nothing is uploaded</div></div>';
   document.body.appendChild(ov);
 
   let depth = 0;   // dragenter/leave fire on descendants too — count to know when we truly left
@@ -52,7 +52,7 @@ export function installOpenLocal(open: (input: any) => Promise<void>): void {
 export function pickFile(open: (f: File) => any): void {
   const inp = document.createElement("input");
   inp.type = "file";
-  inp.accept = ".h5ad,.zip";
+  inp.accept = ".h5ad,.h5,.zip";
   inp.onchange = () => { const f = inp.files?.[0]; if (f) open(f); };
   inp.click();
 }
