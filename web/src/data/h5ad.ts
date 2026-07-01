@@ -8,6 +8,7 @@ import type { LstarStore } from "./store.ts";
 import type { OpenProgress } from "../ui/loading.ts";
 import { MemStore } from "./localstore.ts";
 import { applyQCFilter, type QCReport } from "../compute/qc.ts";
+import { assertSparseOk, looksUnnamed } from "./h5adcheck.ts";
 // @ts-ignore — generated WASM-glue module, no .d.ts (same import pattern as lstar/js extend.ts)
 import createLstarKernels from "../../../../lstar/js/dist/lstar_kernels.mjs";
 
@@ -122,6 +123,11 @@ export async function anndataSpec(f: H5): Promise<DatasetSpec> {
   const genes = dfIndex(f.get("var"));
   const ncells = cells.length || num(shape[0]) || 0;
   const ngenes = genes.length || num(shape[1]) || 0;
+  // a labelled index whose length disagrees with X's shape = a malformed/mismatched file
+  if (cells.length && shape.length === 2 && num(shape[0]) && cells.length !== num(shape[0]))
+    throw new Error(`This .h5ad is inconsistent: obs has ${cells.length} cells but X has ${num(shape[0])} rows. Re-export it.`);
+  if (genes.length && shape.length === 2 && num(shape[1]) && genes.length !== num(shape[1]))
+    throw new Error(`This .h5ad is inconsistent: var has ${genes.length} genes but X has ${num(shape[1])} columns. Re-export it.`);
 
   const axes: Record<string, AxisSpec> = {
     cells: { labels: cells.length ? cells : Array.from({ length: ncells }, (_, i) => "cell" + i), role: "observation" },
@@ -134,6 +140,7 @@ export async function anndataSpec(f: H5): Promise<DatasetSpec> {
   try { const lc = f.get("layers/counts"); if (lc) countsNode = lc; } catch { /* no layer */ }
   const csc = await readCounts(M, countsNode, ncells, ngenes);
   if (csc) {
+    assertSparseOk(csc, ncells, ngenes);   // catch a truncated/corrupt matrix before we compute on garbage (the CSC is gene-major → ncols = ngenes)
     const sample = csc.data as ArrayLike<number>;
     let raw = true; for (let i = 0; i < Math.min(sample.length, 5000); i++) if (sample[i] !== Math.round(sample[i] as number)) { raw = false; break; }
     fields.counts = { role: "measure", span: ["cells", "genes"], encoding: "csc", state: raw ? "raw" : "lognorm",
@@ -175,7 +182,11 @@ export async function anndataSpec(f: H5): Promise<DatasetSpec> {
     }
   } catch { /* no obs */ }
 
-  return { kind: "sample", axes, fields, profiles: [] };
+  // flag a file that carries NO real names (index is just "0","1",…N) so the viewer can say so instead of
+  // silently showing integer "gene names" — the read is valid, just missing metadata.
+  const spec: DatasetSpec = { kind: "sample", axes, fields, profiles: [] };
+  (spec as any).__unnamed = { genes: looksUnnamed(axes.genes.labels), cells: looksUnnamed(axes.cells.labels) };
+  return spec;
 }
 
 // ── legacy AnnData (pre-0.7) ──────────────────────────────────────────────────────────────────────
@@ -261,7 +272,11 @@ async function legacyAnndataSpec(f: H5, M: any): Promise<DatasetSpec> {
     }
   } catch { /* no obsm */ }
 
-  return { kind: "sample", axes, fields, profiles: [] };
+  // flag a file that carries NO real names (index is just "0","1",…N) so the viewer can say so instead of
+  // silently showing integer "gene names" — the read is valid, just missing metadata.
+  const spec: DatasetSpec = { kind: "sample", axes, fields, profiles: [] };
+  (spec as any).__unnamed = { genes: looksUnnamed(axes.genes.labels), cells: looksUnnamed(axes.cells.labels) };
+  return spec;
 }
 
 // Estimate the in-memory peak from cheap shape metadata (no data read) and refuse files too big to
@@ -375,14 +390,18 @@ export async function openH5ad(file: File, progress?: OpenProgress, force = fals
       }
     } catch (e) { console.warn("[pagoda3] marker precompute skipped:", (e as any)?.message); }
     // a one-line provenance note for the load log — what was assumed/computed (vs. read from the file)
+    const un = (spec as any).__unnamed || {};
+    const nameWarn = un.genes
+      ? `⚠ this file has NO gene names (var index is just 0,1,2,…) — genes are shown by index. ${un.cells ? "It also has no cell barcodes. " : ""}`
+      : un.cells ? `⚠ this file has no cell barcodes (obs index is 0,1,2,…). ` : "";
     const qcNote = qcReport?.skipped
       ? `QC filter skipped (too few cells clear the ${qcReport.minGenes}-gene threshold — opened unfiltered). `
       : qcReport && (qcReport.droppedCells || qcReport.droppedGenes)
         ? `QC: dropped ${qcReport.droppedCells.toLocaleString()} cells (< ${qcReport.minGenes} genes) + ${qcReport.droppedGenes.toLocaleString()} genes (< ${qcReport.minCells} cells), leaving ${qcReport.keptCells.toLocaleString()} × ${qcReport.keptGenes.toLocaleString()}. `
         : qcReport ? `QC: all cells passed (≥ ${qcReport.minGenes} genes). ` : "";
-    (store as any).__notes = computed
+    (store as any).__notes = nameWarn + (computed
       ? `${qcNote}no embedding in the file → computed a default layout: library-size normalize → log1p → ${computed.nHVG} variable genes → PCA (${computed.pcaDim} PCs) → Louvain (${computed.nClusters} clusters) → UMAP${markersFor.length ? " → 1-vs-rest markers" : ""}. Standard defaults — recompute or adjust anytime.`
-      : `read the file's own embedding${markersFor.length ? `; precomputed markers for ${markersFor.join(", ")}` : ""}.`;
+      : `read the file's own embedding${markersFor.length ? `; precomputed markers for ${markersFor.join(", ")}` : ""}.`);
     return store;
   } finally {
     try { f?.close?.(); h5.FS.unlink(name); } catch { /* */ }
