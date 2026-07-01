@@ -1350,7 +1350,13 @@ export class App {
     const sources: { name: string; codes: ArrayLike<number>; categories: string[] }[] = [];
     for (const n of srcNames) { const m: any = await ctx.view.metadata(n); if (m.kind === "categorical") sources.push({ name: n, codes: m.codes, categories: m.categories }); }
     const rows = reconcile({ codes: baseMeta.codes, categories: baseMeta.categories }, sources);
-    const lines = rows.map((r) => `${base} ${r.group} (${r.n}): ${r.sources.map((s) => `${s.name}=${s.label ?? "—"}${s.frac < 0.7 && s.alt ? `(${(s.frac * 100).toFixed(0)}%, also ${s.alt} ${((s.altFrac || 0) * 100).toFixed(0)}%)` : ""}`).join(", ")}`);
+    // TOP MARKERS per cluster, inline — so the agent can GROUND every label from this ONE call instead of a
+    // get_markers per cluster (which each spawn a persistent DeTable in the Answers rail — the "stack of things in
+    // Answers" during annotation). propose_label's own guidance already points here for markers; this makes it true.
+    const markers = await ctx.markers(base).catch(() => new Map());
+    const topMk = (g: string) => (markers.get(g) || []).slice(0, 8).map((m: any) => m.symbol).join(", ");
+    const lines = rows.map((r) => { const mk = topMk(r.group);
+      return `${base} ${r.group} (${r.n}): ${r.sources.map((s) => `${s.name}=${s.label ?? "—"}${s.frac < 0.7 && s.alt ? `(${(s.frac * 100).toFixed(0)}%, also ${s.alt} ${((s.altFrac || 0) * 100).toFixed(0)}%)` : ""}`).join(", ")}${mk ? ` — markers: ${mk}` : ""}`; });
     const diff = rows.filter((r) => { const o = r.sources.map((s) => s.label).filter(Boolean); return o.length > 1 && !o.every((l) => l === o[0]); });
     const split = rows.filter((r) => r.sources.some((s) => s.frac < 0.7 && s.alt));
     return `base=${base}, sources=${srcNames.join("/")}.\n${lines.join("\n")}\n\n${diff.length} clusters where sources differ (often just VOCABULARY — weigh the matrix + markers): ${diff.map((r) => r.group).join(", ") || "none"}.\n${split.length} clusters a source SPLITS (labels don't map 1:1 to this clustering): ${split.map((r) => r.group).join(", ") || "none"} — for those, the cluster table can't fully resolve it; use the confusion matrix and label the sub-population (annotate with an intersect cell-set, or the user brushes it), or reconcile against a finer clustering.`;
