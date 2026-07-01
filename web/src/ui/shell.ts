@@ -1265,7 +1265,13 @@ export class App {
   // non-destructive, no colour change) + at least one computed source (scType). Re-renders when ready.
   async ensureAnnotation(): Promise<void> {
     if (!this.annoLayers.has("annotation")) {
-      const src = this.ctx.groupings().includes("cell_type") ? "cell_type" : "leiden";
+      // Seed the working draft from a real LABELING, not raw cluster ids. cell_type if the dataset carries one; else
+      // compute scType FIRST and seed from that — a dataset with no cell_type otherwise opened with the working draft
+      // set to the clustering itself, which reads as "working annotation defaulted to cluster". Clusters are the last
+      // resort only. (The agent should also leave the draft holding its best labeling before you get here.)
+      const hasCellType = this.ctx.categoricalFields().includes("cell_type");   // a plain obs cell_type is NOT in groupings() (no precomputed markers) — check the field itself, or it's never used as the seed
+      if (!hasCellType && !this.annoLayers.has("scType")) await this.runScType().catch(() => { /* fall back to clusters below */ });
+      const src = hasCellType ? "cell_type" : (this.annoLayers.has("scType") ? "scType" : "leiden");
       const m: any = await this.ctx.view.metadata(src);
       if (m.kind === "categorical") { const layer = seedLayer("annotation", "derived", { codes: m.codes, categories: m.categories }); layer.provenance = { method: "seed", params: { from: src } }; this.commitLayer(layer, true); }   // render NOW — the table + card appear immediately
     }
