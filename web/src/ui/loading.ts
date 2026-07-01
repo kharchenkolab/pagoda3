@@ -34,8 +34,8 @@ function ensure(): HTMLDivElement {
   d.innerHTML =
     '<div class="ldcard"><div class="ldrow"><div class="ldspin"></div>' +
     '<div><div class="ldtitle"></div><div class="ldstatus"></div></div></div>' +
-    '<div class="lderr"></div><div class="ldx"><button>Close</button></div></div>';
-  d.querySelector<HTMLButtonElement>(".ldx button")!.onclick = () => hideLoading();
+    '<div class="lderr"></div><div class="ldx"><button class="ldretry" style="display:none;margin-right:8px;background:var(--accent,#5b9cff);color:#fff"></button><button class="ldclose">Close</button></div></div>';
+  d.querySelector<HTMLButtonElement>(".ldclose")!.onclick = () => hideLoading();
   document.body.appendChild(d);
   el = d;
   return d;
@@ -60,11 +60,15 @@ export function hideLoading(): void {
   if (el) el.classList.remove("show", "err");
 }
 
-/** Turn the overlay into an error state showing the real message + a Close button. */
-export function showLoadError(title: string, message: string): void {
+/** Turn the overlay into an error state showing the real message + a Close button. When `retry` is given,
+ *  also show an override button (e.g. "Try it anyway") that dismisses the error and calls `retry`. */
+export function showLoadError(title: string, message: string, retry?: { label: string; run: () => void }): void {
   const d = ensure();
   d.querySelector(".ldtitle")!.textContent = "Couldn't open " + title;
   d.querySelector(".ldstatus")!.textContent = "";
   d.querySelector(".lderr")!.textContent = message;
+  const rb = d.querySelector<HTMLButtonElement>(".ldretry")!;
+  if (retry) { rb.textContent = retry.label; rb.style.display = ""; rb.onclick = () => { hideLoading(); retry.run(); }; }
+  else rb.style.display = "none";
   d.classList.add("show", "err");
 }

@@ -88,11 +88,11 @@ async function bootStore(store: LstarStore, opts: { applyLinks?: boolean } = {})
   const setProvider = (p: Provider) => { try { localStorage.setItem(PROVIDER_KEY, p === "openai" ? "openai" : "anthropic"); } catch { /* */ } return "agent provider → " + getProvider() + " (applies on next ask)"; };
   // Phase 4: open a local store (a dropped/picked .zip, a folder handle, or a webkitdirectory FileList)
   // by re-initing the whole app onto it — no server, nothing uploaded.
-  const openLocal = async (input: any) => {
+  const openLocal = async (input: any, opts: { force?: boolean } = {}) => {
     const title = input?.name || (input?.[0]?.webkitRelativePath || "").split("/")[0] || "dataset";
     showLoading(title);                                  // a modal with a spinner + status — opening parses the whole file in-browser
     try {
-      const { store: ls, label, notes } = await localStore(input, setLoadingStatus);
+      const { store: ls, label, notes } = await localStore(input, setLoadingStatus, opts);
       setLoadingStatus("Opening viewer…");
       await bootStore(ls);
       hideLoading();
@@ -100,7 +100,9 @@ async function bootStore(store: LstarStore, opts: { applyLinks?: boolean } = {})
       try { (window as any).p2?.app?.checkpoint?.("opened " + label, "Read locally in your browser — nothing was uploaded. " + (notes || "")); } catch { /* */ }
       try { (window as any).p2?.app?.toast?.("Opened " + label, notes || "Read locally — nothing was uploaded."); } catch { /* */ }
     } catch (e: any) {
-      showLoadError(title, String(e?.message || e));     // surface the real reason instead of failing silently
+      // a soft (overridable) guardrail — e.g. the cell-count gate — offers a "Try it anyway" that re-runs forced
+      const retry = (e?.overridable && !opts.force) ? { label: "Try it anyway", run: () => void openLocal(input, { force: true }) } : undefined;
+      showLoadError(title, String(e?.message || e), retry);   // surface the real reason instead of failing silently
     }
   };
   (window as any).p2 = { ds, view, coord, ctx, app, getProvider, setProvider, setCompute, computePool, widgetPool, openLocal };

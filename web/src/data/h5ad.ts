@@ -286,7 +286,7 @@ export function guardSize(f: H5, fileBytes: number): void {
 }
 
 /** Open a .h5ad File as an in-memory L* store (browser). `onStage` reports progress for the modal. */
-export async function openH5ad(file: File, onStage?: (m: string) => void): Promise<LstarStore> {
+export async function openH5ad(file: File, onStage?: (m: string) => void, force = false): Promise<LstarStore> {
   onStage?.("Loading HDF5 reader…");
   const h5: any = await import("h5wasm");   // namespace: FS / ready / File are live bindings (set after ready)
   await h5.ready;
@@ -307,10 +307,11 @@ export async function openH5ad(file: File, onStage?: (m: string) => void): Promi
     let computed: { nHVG: number; pcaDim: number; nClusters: number } | null = null;
     if (!hasEmbedding && spec.fields.counts) {
       const cf: any = spec.fields.counts, [ncells, ngenes] = cf.shape, LIMIT = 30000;
-      if (ncells > LIMIT)
-        throw new Error(`This .h5ad has ${ncells.toLocaleString()} cells but no embedding (no UMAP/PCA in the file). ` +
-          `Computing one in the browser is only practical up to ~${LIMIT.toLocaleString()} cells. For a dataset this size, ` +
-          `precompute the layout once (scanpy: sc.pp.pca + sc.tl.umap; or pagoda3) and reopen the file.`);
+      if (ncells > LIMIT && !force)
+        throw Object.assign(new Error(`This .h5ad has ${ncells.toLocaleString()} cells and no embedding, so a layout must be computed in the browser. ` +
+          `That's tuned for up to ~${LIMIT.toLocaleString()} cells — beyond it it may be slow or run the tab out of memory. ` +
+          `On a machine with plenty of RAM you can try anyway; otherwise precompute the layout (scanpy sc.pp.pca + sc.tl.umap, or pagoda3) and reopen.`),
+          { overridable: true });
       const { computeEmbedding } = await import("../compute/embed.ts");   // lazy — code-splits umap-js out of the main bundle
       onStage?.("No embedding in file — computing layout…");
       const emb = await computeEmbedding({ data: cf.data, indices: cf.indices, indptr: cf.indptr }, ncells, ngenes, { onStage });
