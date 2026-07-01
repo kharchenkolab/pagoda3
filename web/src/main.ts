@@ -2,7 +2,7 @@ import { openLstar, HttpStore } from "./data/store.ts";
 import type { LstarStore } from "./data/store.ts";
 import { localStore } from "./data/localstore.ts";
 import { installOpenLocal } from "./ui/openlocal.ts";
-import { showLoading, setLoadingStatus, hideLoading, showLoadError, beginChecklist, setStep, finishChecklist, type OpenProgress } from "./ui/loading.ts";
+import { showLoading, setLoadingStatus, hideLoading, showLoadError, beginChecklist, setStep, finishChecklist, showPicker, type OpenProgress } from "./ui/loading.ts";
 import { LstarView } from "./data/view.ts";
 import { Coord } from "./data/coord.ts";
 import { Ctx } from "./data/ctx.ts";
@@ -89,7 +89,7 @@ async function bootStore(store: LstarStore, opts: { applyLinks?: boolean; freshS
   const setProvider = (p: Provider) => { try { localStorage.setItem(PROVIDER_KEY, p === "openai" ? "openai" : "anthropic"); } catch { /* */ } return "agent provider → " + getProvider() + " (applies on next ask)"; };
   // Phase 4: open a local store (a dropped/picked .zip, a folder handle, or a webkitdirectory FileList)
   // by re-initing the whole app onto it — no server, nothing uploaded.
-  const openLocal = async (input: any, opts: { force?: boolean } = {}) => {
+  const openLocal = async (input: any, opts: { force?: boolean; sample?: string } = {}) => {
     const title = input?.name || (input?.[0]?.webkitRelativePath || "").split("/")[0] || "dataset";
     const ac = new AbortController();
     let carded = false;                                  // upgrades small → checklist card the moment real work is reported
@@ -117,6 +117,11 @@ async function bootStore(store: LstarStore, opts: { applyLinks?: boolean; freshS
       }
     } catch (e: any) {
       if (ac.signal.aborted || e?.aborted) { hideLoading(); return; }   // user cancelled → silent; the previous dataset is untouched (bootStore never ran)
+      if (e?.pickTriplet && Array.isArray(e.samples)) {   // a folder with several samples → let the user choose, then re-open that one
+        showPicker("This folder has several samples", "Pick the one to open", e.samples,
+          (key) => void openLocal(input, { ...opts, sample: key }), () => hideLoading());
+        return;
+      }
       // a soft (overridable) guardrail — e.g. the cell-count gate — offers a "Try it anyway" that re-runs forced
       const retry = (e?.overridable && !opts.force) ? { label: "Try it anyway", run: () => void openLocal(input, { force: true }) } : undefined;
       showLoadError(title, String(e?.message || e), retry);   // surface the real reason instead of failing silently

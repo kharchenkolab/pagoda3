@@ -68,7 +68,13 @@ function ensure(): HTMLDivElement {
     #ldov.card:not(.err) .ldcancel{display:inline-block;margin-right:auto}
     #ldov.card:not(.err) .ldok{display:inline-block}
     #ldov.err .ldclose{display:inline-block}
-    #ldov.err.hasretry .ldretry{display:inline-block}`;   /* retry ("Try it anyway") is class-driven — NOT an inline style — so leaving the error state (→ loading card) actually hides it */
+    #ldov.err.hasretry .ldretry{display:inline-block}
+    /* picker: a chooser when a dropped folder holds several samples */
+    #ldov .ldpick{display:none} #ldov.pick .ldpick{display:block} #ldov.pick .ldsmall,#ldov.pick .ldbig,#ldov.pick .lderr{display:none}
+    #ldov.pick .ldbtns{display:flex} #ldov.pick .ldcancel{display:inline-block;margin-right:auto}
+    #ldov .ldpicklist{display:flex;flex-direction:column;gap:6px;margin:12px 0 2px;max-height:300px;overflow:auto}
+    #ldov .ldpickitem{font:inherit;text-align:left;color:var(--fg,#e6e9ef);background:var(--line,#2a2f3a);border:0;border-radius:7px;padding:9px 12px;cursor:pointer}
+    #ldov .ldpickitem:hover{background:var(--accent,#5b9cff);color:#fff}`;   /* retry ("Try it anyway") is class-driven — NOT an inline style — so leaving the error state (→ loading card) actually hides it */
   document.head.appendChild(style);
   const d = document.createElement("div");
   d.id = "ldov";
@@ -77,6 +83,7 @@ function ensure(): HTMLDivElement {
       '<div class="ldsmall"><div class="ldspin"></div><div><div class="ldtitle"></div><div class="ldstatus"></div></div></div>' +
       '<div class="ldbig"><div class="ldbigtitle"></div><div class="ldbigsub"></div><div class="ldlist"></div></div>' +
       '<div class="lderr"></div>' +
+      '<div class="ldpick"><div class="ldbigtitle ldpicktitle"></div><div class="ldbigsub ldpicksub"></div><div class="ldpicklist"></div></div>' +
       '<div class="ldbtns"><button class="ldcancel">Cancel</button><button class="ldretry"></button><button class="ldclose">Close</button><button class="ldok">Open</button></div>' +
     '</div>';
   d.querySelector<HTMLButtonElement>(".ldclose")!.onclick = () => hideLoading();
@@ -113,7 +120,7 @@ function renderSteps(): void {
 /** SMALL mode: a spinner + one status line. */
 export function showLoading(title: string, status = "Reading file…"): void {
   const d = ensure();
-  d.classList.remove("err", "card", "done", "hasretry");
+  d.classList.remove("err", "card", "done", "hasretry", "pick");
   steps.clear();
   d.querySelector(".ldtitle")!.textContent = title;
   d.querySelector(".ldstatus")!.textContent = status;
@@ -126,7 +133,7 @@ export function setLoadingStatus(status: string): void { if (el) el.querySelecto
 /** CARD mode: switch the overlay to a checklist. `onCancel` wires the Cancel button (mid-run). */
 export function beginChecklist(title: string, subtitle: string, onCancel?: () => void): void {
   const d = ensure();
-  d.classList.remove("err", "done", "hasretry"); d.classList.add("show", "card");
+  d.classList.remove("err", "done", "hasretry", "pick"); d.classList.add("show", "card");
   steps.clear();
   d.querySelector(".ldbigtitle")!.textContent = title;
   d.querySelector(".ldbigsub")!.textContent = subtitle;
@@ -153,8 +160,25 @@ export function finishChecklist(onOk?: () => void): void {
   el.querySelector<HTMLButtonElement>(".ldok")!.disabled = false;      // …OK (right) is now the action (Enter also triggers it)
 }
 
+/** Choose one sample when a dropped folder holds several (10x triplets / .h5). `onPick(key)` re-opens with
+ *  that sample; the Cancel button runs `onCancel`. */
+export function showPicker(title: string, subtitle: string, items: { key: string; label: string }[], onPick: (key: string) => void, onCancel?: () => void): void {
+  const d = ensure();
+  d.classList.remove("err", "done", "card", "hasretry"); d.classList.add("show", "pick");
+  d.querySelector(".ldpicktitle")!.textContent = title;
+  d.querySelector(".ldpicksub")!.textContent = subtitle;
+  const list = d.querySelector(".ldpicklist")!; list.innerHTML = "";
+  for (const it of items) {
+    const b = document.createElement("button"); b.className = "ldpickitem"; b.textContent = it.label;
+    b.onclick = () => onPick(it.key);   // re-opens via localStore; showLoading clears the pick mode
+    list.appendChild(b);
+  }
+  const cancel = d.querySelector<HTMLButtonElement>(".ldcancel")!; cancel.disabled = false;
+  onCancelCb = onCancel || null;   // the Cancel button (visible in pick mode) uses onCancelCb
+}
+
 /** Hide the overlay (success dismissed, or an error closed). */
-export function hideLoading(): void { if (el) el.classList.remove("show", "err", "card", "done", "hasretry"); }
+export function hideLoading(): void { if (el) el.classList.remove("show", "err", "card", "done", "hasretry", "pick"); }
 
 /** Error state with the real message + a Close button; `retry` adds an override (e.g. "Try it anyway"). */
 export function showLoadError(title: string, message: string, retry?: { label: string; run: () => void }): void {

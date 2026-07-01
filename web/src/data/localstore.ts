@@ -11,6 +11,38 @@
 import { unzipSync } from "fflate";
 import type { LstarStore } from "./store.ts";
 import type { OpenProgress } from "../ui/loading.ts";
+import { detectTriplets, openTriplet, type Entry } from "./tenx.ts";
+
+// Flatten each drop kind into a {path, read} list so 10x triplet detection is source-agnostic.
+async function entriesFromDir(dir: any): Promise<Entry[]> {
+  const out: Entry[] = [];
+  async function walk(d: any, prefix: string, depth: number): Promise<void> {
+    if (depth > 2) return;   // 10x nests at most one level (e.g. filtered_feature_bc_matrix/matrix.mtx.gz)
+    try { for await (const [name, h] of d.entries()) {
+      if (h.kind === "file") out.push({ path: prefix + name, read: async () => new Uint8Array(await (await h.getFile()).arrayBuffer()) });
+      else if (h.kind === "directory") await walk(h, prefix + name + "/", depth + 1);
+    } } catch { /* entries() unsupported */ }
+  }
+  await walk(dir, "", 0);
+  return out;
+}
+const entriesFromFileList = (arr: File[]): Entry[] =>
+  arr.map((f) => ({ path: (f as any).webkitRelativePath || f.name, read: async () => new Uint8Array(await f.arrayBuffer()) }));
+const entriesFromZip = (files: Record<string, Uint8Array>): Entry[] =>
+  Object.entries(files).map(([path, bytes]) => ({ path, read: async () => bytes }));
+
+// If these entries are a 10x triplet (and NOT a zarr store), open it. One triplet → open; several → throw a
+// pickable error the caller turns into a chooser (opts.sample re-enters with the chosen key). null = not a triplet.
+async function tripletResult(entries: Entry[], progress?: OpenProgress, opts?: { force?: boolean; sample?: string }): Promise<{ store: LstarStore; label: string; notes?: string } | null> {
+  if (entries.some((e) => /(^|\/)\.z(metadata|group)$/.test(e.path))) return null;   // a zarr store, not a triplet
+  const tris = detectTriplets(entries);
+  if (!tris.length) return null;
+  const pick = opts?.sample ? tris.find((t) => t.key === opts.sample) : (tris.length === 1 ? tris[0] : null);
+  if (!pick) throw Object.assign(new Error(`This folder holds ${tris.length} samples — choose one to open.`),
+    { samples: tris.map((t) => ({ key: t.key, label: t.label })), pickTriplet: true });
+  const store = await openTriplet(pick, progress, opts?.force);
+  return { store, label: pick.label, notes: (store as any).__notes };
+}
 
 // Strip a single common top-level dir so "zipped the folder" (foo.lstar.zarr/.zmetadata) reads the same
 // as "zipped the contents" (.zmetadata). Keys are normalized to the store root.
@@ -112,8 +144,10 @@ export class FileListStore implements LstarStore {
 /** Build a local store from a dropped/picked thing: a .zip File, a FileSystemDirectoryHandle, or a
  *  webkitdirectory FileList. Returns the store + a short label for the UI. `onStage` reports progress
  *  for the slow in-browser paths (h5ad parse, zip unpack). */
-export async function localStore(input: File | FileList | File[] | any, progress?: OpenProgress, opts?: { force?: boolean }): Promise<{ store: LstarStore; label: string; notes?: string }> {
+export async function localStore(input: File | FileList | File[] | any, progress?: OpenProgress, opts?: { force?: boolean; sample?: string }): Promise<{ store: LstarStore; label: string; notes?: string }> {
   if (input && typeof input.getFile !== "function" && (input.kind === "directory" || typeof input.getDirectoryHandle === "function")) {
+    const tri = await tripletResult(await entriesFromDir(input), progress, opts);   // a dropped folder may be a 10x triplet, not a zarr
+    if (tri) return tri;
     return { store: await DirHandleStore.open(input), label: (input.name || "folder") };
   }
   if (input instanceof File) {
@@ -131,10 +165,17 @@ export async function localStore(input: File | FileList | File[] | any, progress
     progress?.stage("Reading file…");
     const bytes = new Uint8Array(await input.arrayBuffer());
     progress?.stage("Unpacking archive…");
+    const files = unzipSync(bytes);
+    const tri = await tripletResult(entriesFromZip(files), progress, opts);   // a zip of a 10x triplet, not a zarr
+    if (tri) return tri;
     return { store: new ZipStore(bytes), label: input.name };
   }
-  // a FileList / File[] from <input webkitdirectory>
+  // a FileList / File[] from <input webkitdirectory> (or loose dropped files)
   const arr = Array.from(input as any) as File[];
-  if (arr.length) return { store: new FileListStore(arr), label: (arr[0] as any).webkitRelativePath?.split("/")[0] || "folder" };
+  if (arr.length) {
+    const tri = await tripletResult(entriesFromFileList(arr), progress, opts);
+    if (tri) return tri;
+    return { store: new FileListStore(arr), label: (arr[0] as any).webkitRelativePath?.split("/")[0] || "folder" };
+  }
   throw new Error("Nothing to open.");
 }
