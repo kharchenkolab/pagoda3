@@ -105,7 +105,14 @@ async function bootStore(store: LstarStore, opts: { applyLinks?: boolean } = {})
       showLoadError(title, String(e?.message || e), retry);   // surface the real reason instead of failing silently
     }
   };
-  (window as any).p2 = { ds, view, coord, ctx, app, getProvider, setProvider, setCompute, computePool, widgetPool, openLocal };
+  // Session-wide "ignore these genes" filter (off by default). Applies to markers/DE/variable-genes RANKINGS
+  // only — NOT QC measures or gene-set scores. p2.setGeneFilter(["MT-","RPS","RPL"]); p2.setGeneFilter([]) clears.
+  const setGeneFilter = async (patterns: string[]) => {
+    await view.setGeneFilter(patterns || []);
+    try { (app as any).fullRender?.(); (app as any).scheduleSave?.(); } catch { /* */ }
+    return `gene filter: ${view.geneFilterPatterns().join(", ") || "(none)"} — ${view.excludedGeneCount()} genes ignored in markers / DE / variable-genes`;
+  };
+  (window as any).p2 = { ds, view, coord, ctx, app, getProvider, setProvider, setCompute, computePool, widgetPool, openLocal, setGeneFilter };
   return app;
 }
 

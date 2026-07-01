@@ -19,6 +19,11 @@ export class Ctx {
 
   constructor(view: LstarView, coord: Coord) { this.view = view; this.coord = coord; }
 
+  // session-wide gene-ignore filter (markers/DE/variable-genes rankings only) — passthrough to the view
+  setGeneFilter(patterns: string[]): Promise<void> { return this.view.setGeneFilter(patterns); }
+  geneFilterPatterns(): string[] { return this.view.geneFilterPatterns(); }
+  excludedGeneCount(): number { return this.view.excludedGeneCount(); }
+
   async init() {
     // load every 2D cell embedding (role=embedding) so panels can render alternates — e.g. the
     // unintegrated UMAP beside the integrated one (the before/after integration view).

@@ -63,6 +63,26 @@ export class LstarView {
   private computePool?: ComputePool;
   setComputePool(p: ComputePool) { this.computePool = p; }
 
+  // Session-wide "ignore these genes" filter — OFF by default (empty). Applied ONLY to data-driven gene
+  // RANKINGS (markers, DE, variable-genes) so families like MT-/RPS/RPL don't crowd the top lists. Does NOT
+  // touch QC measures (percent_mito is a stored obs column) or deliberate gene-set / signature scores.
+  private geneFilter: string[] = [];
+  private excludedGenes = new Set<number>();
+  geneFilterPatterns(): string[] { return this.geneFilter.slice(); }
+  async setGeneFilter(patterns: string[]): Promise<void> {
+    this.geneFilter = (patterns || []).map((p) => String(p).trim()).filter(Boolean);
+    this.excludedGenes = new Set<number>();
+    if (this.geneFilter.length) {
+      const genes = await this.genes();
+      const pats = this.geneFilter.map((p) => p.replace(/\*+$/, "").toUpperCase());          // trailing * optional; prefix match
+      for (let i = 0; i < genes.length; i++) { const s = genes[i].toUpperCase(); if (pats.some((p) => p && s.startsWith(p))) this.excludedGenes.add(i); }
+    }
+  }
+  /** How many genes the current filter removes (for the advice/summary). */
+  excludedGeneCount(): number { return this.excludedGenes.size; }
+  /** Drop filtered genes from a ranked gene list (rows carry a `gene` index). No-op when the filter is off. */
+  filterRanked<T extends { gene: number }>(rows: T[]): T[] { return this.excludedGenes.size ? rows.filter((r) => !this.excludedGenes.has(r.gene)) : rows; }
+
   constructor(ds: LstarDataset) { this.ds = ds; }
 
   get nCells() { return this.ds.axisLength("cells"); }
@@ -287,7 +307,7 @@ export class LstarView {
       const G = groups.length, ng = genes.length;
       for (let g = 0; g < G; g++) {
         const rows = []; for (let j = 0; j < ng; j++) rows.push({ gene: j, symbol: genes[j], lfc: lfc[j * G + g], padj: padj[j * G + g] });
-        rows.sort((a, b) => b.lfc - a.lfc); out.set(groups[g], rows.slice(0, topN));
+        rows.sort((a, b) => b.lfc - a.lfc); out.set(groups[g], this.filterRanked(rows).slice(0, topN));
       }
       return out;
     }
@@ -303,7 +323,7 @@ export class LstarView {
         const padj = Math.min(Math.max(Math.exp(-Math.abs(lfc * Math.sqrt(NE[g * ng + j] + 1))), 1e-12), 1);
         rows.push({ gene: j, symbol: genes[j], lfc, padj });
       }
-      rows.sort((a, b) => b.lfc - a.lfc); out.set(groups[g], rows.slice(0, topN));
+      rows.sort((a, b) => b.lfc - a.lfc); out.set(groups[g], this.filterRanked(rows).slice(0, topN));
     }
     return out;
   }
@@ -357,7 +377,7 @@ export class LstarView {
     const ranked: DEResult[] = new Array(ng);
     for (let j = 0; j < ng; j++) { const meanA = aSum[j] / nSamp, meanB = (gs.sumLog[j] - aSum[j] * scale) / restN; ranked[j] = { gene: j, symbol: sp.symbols[j], meanA, meanB, lfc: meanA - meanB }; }
     ranked.sort((a, b) => Math.abs(b.lfc) - Math.abs(a.lfc));
-    return { ranked, nA, nB: restN, approx: nSamp < nA, panel: true, nGenesRanked: ng };
+    return { ranked: this.filterRanked(ranked), nA, nB: restN, approx: nSamp < nA, panel: true, nGenesRanked: ng };
   }
 
   // a-vs-REST when A is ORTHOGONAL to the row order — a SAMPLE / CONDITION / DONOR scatters across a (cluster, Hilbert)
@@ -378,7 +398,7 @@ export class LstarView {
     if (!Apos.length || !Bpos.length) return null;   // A absent from the sample (too rare) — let the caller fall back
     const ranked: DEResult[] = deCore(sp.panel, Apos, Bpos).map((r) => ({ gene: r.g, symbol: sp.symbols[r.g], meanA: r.meanA, meanB: r.meanB, lfc: r.lfc }));
     ranked.sort((a, b) => Math.abs(b.lfc) - Math.abs(a.lfc));
-    return { ranked, nA, nB: this.nCells - nA, approx: true, panel: true, nGenesRanked: sp.panel.nGenes };
+    return { ranked: this.filterRanked(ranked), nA, nB: this.nCells - nA, approx: true, panel: true, nGenesRanked: sp.panel.nGenes };
   }
 
   // Subsample DE on arbitrary selections — the gene scope is the WHOLE transcriptome.
@@ -416,7 +436,7 @@ export class LstarView {
           const Apos: number[] = [], Bpos: number[] = [];
           sp.rows.forEach((c, p) => { if (Aset.has(c)) Apos.push(p); else if (Bset.has(c)) Bpos.push(p); });
           const ranked: DEResult[] = deCore(sp.panel, Apos, Bpos).map((r) => ({ gene: r.g, symbol: sp.symbols[r.g], meanA: r.meanA, meanB: r.meanB, lfc: r.lfc }));
-          return { ranked, nA: Apos.length, nB: Bpos.length, approx: As.length < cellsA.length || Bs.length < cellsB.length, panel: true, nGenesRanked: sp.panel.nGenes };
+          return { ranked: this.filterRanked(ranked), nA: Apos.length, nB: Bpos.length, approx: As.length < cellsA.length || Bs.length < cellsB.length, panel: true, nGenesRanked: sp.panel.nGenes };
         }
       } catch { /* fall through */ }
     }
@@ -435,7 +455,7 @@ export class LstarView {
           sp.rows.forEach((c, p) => { if (Aset.has(c)) Apos.push(p); else if (Bset.has(c)) Bpos.push(p); });
           const ranked: DEResult[] = deCore(sp.panel, Apos, Bpos)
             .map((r) => ({ gene: r.g, symbol: sp.symbols[r.g], meanA: r.meanA, meanB: r.meanB, lfc: r.lfc }));
-          return { ranked, nA: A.length, nB: B.length, approx, panel: true, nGenesRanked: sp.panel.nGenes };
+          return { ranked: this.filterRanked(ranked), nA: A.length, nB: B.length, approx, panel: true, nGenesRanked: sp.panel.nGenes };
         }
       } catch { /* fall through to the whole-matrix panel */ }
     }
@@ -453,7 +473,7 @@ export class LstarView {
         catch { raw = inline(); }
       } else { raw = inline(); }
       const ranked: DEResult[] = raw.map((r) => ({ gene: dp.geneCol ? dp.geneCol[r.g] : r.g, symbol: dp.symbols[r.g], meanA: r.meanA, meanB: r.meanB, lfc: r.lfc }));
-      return { ranked, nA: A.length, nB: B.length, approx, panel: true, nGenesRanked: dp.nGenes };
+      return { ranked: this.filterRanked(ranked), nA: A.length, nB: B.length, approx, panel: true, nGenesRanked: dp.nGenes };
     }
 
     // Fallback: load counts CSC once (cached), per-group sums via the libstar WASM kernel.
@@ -479,7 +499,7 @@ export class LstarView {
       ranked.push({ gene: g, symbol: genes[g], meanA: ma, meanB: mb, lfc: ma - mb });
     }
     ranked.sort((a, b) => Math.abs(b.lfc) - Math.abs(a.lfc));
-    return { ranked, nA: A.length, nB: B.length, approx, panel: false, nGenesRanked: nGenes };
+    return { ranked: this.filterRanked(ranked), nA: A.length, nB: B.length, approx, panel: false, nGenesRanked: nGenes };
   }
 
   // Load + cache the cell-major counts panel (CSR over (cells, genes)) once. `counts_cellmajor` is
@@ -578,8 +598,8 @@ export class LstarView {
       try {
         const cells = await (this.ds as any).sampleRows("counts_cellmajor", cellIds, maxCells);   // read ONLY ~maxCells (windowed) — the kernel scores them all; a capped sample ≈ the full ranking
         const sp = await this.subRowsPanel(cells);
-        if (sp) return overdispersedCore(sp.panel, sp.pos, topN, maxCells)
-          .map((r) => ({ gene: r.g, symbol: sp.symbols[r.g], mean: r.mean, varr: r.varr, resid: r.resid, nobs: r.nobs }));
+        if (sp) return this.filterRanked(overdispersedCore(sp.panel, sp.pos, topN, maxCells)
+          .map((r) => ({ gene: r.g, symbol: sp.symbols[r.g], mean: r.mean, varr: r.varr, resid: r.resid, nobs: r.nobs })));
       } catch { /* fall through */ }
     }
     // SUBSET fast path: if the whole cell-major matrix isn't already cached AND this is a smallish selection, read
@@ -592,8 +612,8 @@ export class LstarView {
     if (this.dePanelCache === undefined && !this.ds.hasField("counts_cellmajor_order") && cellIds.length <= SUBSET_MAX) {
       try {
         const sp = await this.subRowsPanel(sample(cellIds, maxCells));
-        if (sp) return overdispersedCore(sp.panel, sp.pos, topN, sp.pos.length)
-          .map((r) => ({ gene: r.g, symbol: sp.symbols[r.g], mean: r.mean, varr: r.varr, resid: r.resid, nobs: r.nobs }));
+        if (sp) return this.filterRanked(overdispersedCore(sp.panel, sp.pos, topN, sp.pos.length)
+          .map((r) => ({ gene: r.g, symbol: sp.symbols[r.g], mean: r.mean, varr: r.varr, resid: r.resid, nobs: r.nobs })));
       } catch { /* fall through to the whole-matrix panel */ }
     }
     const dp = await this.dePanel();
@@ -614,7 +634,7 @@ export class LstarView {
     } else {
       raw = inline();
     }
-    return raw.map((r) => ({ gene: dp.geneCol ? dp.geneCol[r.g] : r.g, symbol: dp.symbols[r.g], mean: r.mean, varr: r.varr, resid: r.resid, nobs: r.nobs }));
+    return this.filterRanked(raw.map((r) => ({ gene: dp.geneCol ? dp.geneCol[r.g] : r.g, symbol: dp.symbols[r.g], mean: r.mean, varr: r.varr, resid: r.resid, nobs: r.nobs })));
   }
 
   // The SAB-backed cell-major panel buffers — for the WIDGET compute worker's kernels (S5). Null when there's no panel or

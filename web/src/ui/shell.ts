@@ -263,7 +263,7 @@ export class App {
   }
   persistSession() {
     const userWS = this.wsOrder.filter((n) => !this.builtinWS.has(n) && this.WS[n]).map((n) => ({ name: n, ws: this.WS[n] }));
-    const base = { store: this.currentStore(), fingerprint: this.datasetFingerprint(), currentWS: this.currentWS, colorBy: this.coord.state.colorBy, canvas: this.captureLayout(), userWS, annotation: this.serializeAnnotation(), catColors: serializeCategoryColors(), style: (this.coord.state as any).style, customPalette: serializeCustomPalette(), results: this.results.serialize(), customGeneSets: serializeCustomCollections() };
+    const base = { store: this.currentStore(), fingerprint: this.datasetFingerprint(), currentWS: this.currentWS, colorBy: this.coord.state.colorBy, canvas: this.captureLayout(), userWS, annotation: this.serializeAnnotation(), catColors: serializeCategoryColors(), style: (this.coord.state as any).style, customPalette: serializeCustomPalette(), results: this.results.serialize(), customGeneSets: serializeCustomCollections(), geneFilter: this.ctx.geneFilterPatterns() };
     // Quota ladder (~5MB localStorage): full doc → drop the chat log → drop RESULT ROWS (keep each result as a
     // re-runnable stub: spec + provenance + summary survive, the rows don't — re-open re-runs it) → give up. Each rung
     // sheds the next-biggest droppable thing while keeping the session reopenable. The portable FILE export keeps everything.
@@ -281,6 +281,7 @@ export class App {
     restoreCategoryColors((doc as any).catColors);   // per-value colour overrides (keyed by field+value, not cell-indexed → no fingerprint gate; a missing field just won't apply)
     (this.coord.state as any).style = (doc as any).style;   // global style overrides (view layer, not cell-indexed)
     restoreCustomPalette((doc as any).customPalette);   // a user-defined numeric gradient (view layer)
+    if ((doc as any).geneFilter?.length) void this.ctx.setGeneFilter((doc as any).geneFilter).then(() => this.fullRender());   // session-wide gene-ignore filter (symbol-keyed, dataset-agnostic)
     if (doc.annotation && !fingerprintMismatch(doc.fingerprint, this.datasetFingerprint())) this.restoreAnnotation(doc.annotation);   // cell-indexed → only when the dataset still aligns
     this.results.restore((doc as any).results);   // gene-indexed rows + a re-runnable spec — safe to restore for the same store (re-run is guarded if a referenced set no longer resolves)
     restoreCustomCollections((doc as any).customGeneSets);   // BYO .gmt collections — symbol-keyed, dataset-agnostic, so no fingerprint gate
@@ -324,6 +325,7 @@ export class App {
     restoreCategoryColors(doc.catColors);
     (this.coord.state as any).style = doc.style;
     restoreCustomPalette(doc.customPalette);
+    if (doc.geneFilter?.length) void this.ctx.setGeneFilter(doc.geneFilter).then(() => this.fullRender());   // re-render once the excluded set is built
     this.fullRender(); this.renderWS();
   }
   async shareViewLink(): Promise<void> {
