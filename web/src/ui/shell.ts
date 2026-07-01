@@ -86,6 +86,7 @@ export class App {
   widgetPool?: import("../compute/pool.ts").ComputePool;   // S5: off-thread, terminable worker for widget runCompute (kernels over the shared SAB); set by main.ts
   private _saveTimer: any = null;     // debounce for session persistence
   private _railCloseTimer: any = null;   // auto-close the Answers rail a beat after it goes empty (see renderRail)
+  disposed = false;   // set by dispose() when bootStore replaces this app with a new dataset. `$` is a GLOBAL getElementById, so a torn-down app's late async (an in-flight agent turn, a resolving compute, a coord subscription) would otherwise paint the OLD dataset into the NEW app's DOM. Every paint/mutation entry point short-circuits on this flag, and dispose() aborts the agent — the app-lifecycle boundary.
   private lastSel: any;               // last selection dispatched to reactors — skip re-dispatch on colour-only repaints
   private reactorsStale = true;       // set when reactors are rebuilt (fullRender) → force one dispatch
   geneHoverSinks: ((sym: string | null) => void)[] = [];   // panels that highlight a gene's row on a coord geneHint
@@ -221,6 +222,8 @@ export class App {
   // finalize the embedding deck(s) + run widget-iframe teardowns so nothing keeps ticking against the
   // DOM that bootStore is about to replace. (The compute pools are disposed by the caller in main.)
   dispose(): void {
+    this.disposed = true;   // FIRST — any late paint/mutation from this app now no-ops (guards read this), so nothing bleeds into the replacement app's DOM
+    try { this.agent?.dispose?.(); } catch { /* */ }   // abort an in-flight live agent turn — else it keeps running tools + rendering the OLD dataset into the new DOM (the "old session leaked through" bug)
     if (this._saveTimer) { clearTimeout(this._saveTimer); this._saveTimer = null; }   // don't let a pending save re-persist the OLD dataset over the new one
     if (this._railCloseTimer) { clearTimeout(this._railCloseTimer); this._railCloseTimer = null; }   // a pending rail auto-close must not fire against the replaced app
     try { this.teardowns.forEach((f) => { try { f(); } catch { /* */ } }); this.teardowns = []; } catch { /* */ }
@@ -239,7 +242,7 @@ export class App {
   // Identity of the loaded dataset — the ?store= param (default = the demo). Sessions are scoped to this so a session
   // saved for one dataset is never restored onto another (which would clobber its view with a stale colorBy/scope/widget).
   currentStore(): string { try { return new URLSearchParams(location.search).get("store") || "default"; } catch { return "default"; } }
-  scheduleSave() { if (this._saveTimer) return; this._saveTimer = setTimeout(() => { this._saveTimer = null; this.persistSession(); }, 400); }
+  scheduleSave() { if (this.disposed || this._saveTimer) return; this._saveTimer = setTimeout(() => { this._saveTimer = null; if (!this.disposed) this.persistSession(); }, 400); }
   // dataset IDENTITY for the persistence guard — cell count is decisive (annotation codes are cell-indexed), field
   // names are informational. A session/annotation only safely reapplies where these align.
   // The fingerprint identifies the IMMUTABLE BASE dataset (so a session only reapplies where the data aligns). It must
@@ -566,6 +569,7 @@ export class App {
   }
 
   async fullRender() {
+    if (this.disposed) return;   // a replaced app must not paint into the new app's DOM (shared IDs via global $)
     const wb = this.$("workbench");
     const token = ++this.renderToken;   // panelEl is async; if a newer render starts mid-build, drop this one (no double-append)
     // During the async build the OLD panels stay visible — but a click on a stale row would act on stale state
@@ -855,6 +859,7 @@ export class App {
   }
 
   async repaint() {
+    if (this.disposed) return;   // see fullRender — a torn-down app must not paint
     // REACTORS FIRST (card + table highlight) — cheap and synchronous-ish, so the UI responds immediately.
     // The embedding recolour below can be slow (a gene colouring re-derives expression); don't make the card
     // wait behind it. committed selection → each vocabulary-bound panel reads the ref in ITS grouping (direct
@@ -1029,6 +1034,7 @@ export class App {
   // Validates the patch against the live world, executes the resulting ops, and renders ONCE. New view knobs
   // are FIELDS in the patch (see viewpatch.ts), never new methods/tools. Returns applied/rejected/notes.
   async applyViewPatch(patch: RawViewPatch): Promise<{ applied: string[]; rejected: string[]; notes: string[] }> {
+    if (this.disposed) return { applied: [], rejected: [], notes: ["dataset changed — patch ignored"] };   // a late agent update_view (from a turn that outlived its dataset) must not mutate the replacement app
     const geneSet = new Set(await this.ctx.view.genes());   // warm + snapshot the gene index so geneExists is sync
     const all = () => [...this.canvas, ...this.rail];
     const world: World = {
@@ -1865,6 +1871,7 @@ export class App {
   private _railRendering = false;
   private _railDirty = false;
   async renderRail(): Promise<void> {
+    if (this.disposed) return;   // see fullRender — a torn-down app must not paint
     if (this._railRendering) { this._railDirty = true; return; }
     this._railRendering = true;
     try { do { this._railDirty = false; await this._renderRailInner(); } while (this._railDirty); }
@@ -2208,8 +2215,9 @@ export class App {
 
   // ---------- checkpoints ----------
   snap() { return { colorBy: this.coord.state.colorBy, focus: this.coord.state.focus, ws: this.currentWS, canvas: JSON.parse(JSON.stringify(this.canvas)), rail: JSON.parse(JSON.stringify(this.rail)) }; }
-  checkpoint(q: string, why: string, opts?: { kind?: "ask" | "act"; exchange?: any }) { this.history.push({ i: this.history.length, q, why, state: this.snap(), kind: opts?.kind || "act", exchange: opts?.exchange }); this.viewing = -1; this.renderSpine(); if (this.threadDocked) this.renderThread(); this.scheduleSave(); }
+  checkpoint(q: string, why: string, opts?: { kind?: "ask" | "act"; exchange?: any }) { if (this.disposed) return; this.history.push({ i: this.history.length, q, why, state: this.snap(), kind: opts?.kind || "act", exchange: opts?.exchange }); this.viewing = -1; this.renderSpine(); if (this.threadDocked) this.renderThread(); this.scheduleSave(); }
   renderSpine() {
+    if (this.disposed) return;   // see fullRender — a torn-down app must not paint into the shared #ckpts
     const c = this.$("ckpts"); c.innerHTML = "";
     this.history.forEach((h) => { const d = mk("div", "ckpt" + (h.i === this.viewing ? " on" : "")); d.title = h.why || ""; d.innerHTML = `<div class="cq">${h.q}</div><div class="cw">${h.why ? h.why.replace(/<[^>]+>/g, "") : ""}</div>`; d.onclick = () => this.restore(h.i); c.appendChild(d); });
     c.scrollLeft = c.scrollWidth;
@@ -2218,6 +2226,7 @@ export class App {
 
   // ---------- toasts ----------
   toast(text: string, why: string | null) {
+    if (this.disposed) return;   // a torn-down app's stray toast (e.g. its aborted agent's error fallback) must not land in the new app
     const t = mk("div", "toast"); t.appendChild(mk("span", undefined, text));
     if (why) { const w = mk("span", "why", "why?"); const det = mk("div", "det", why); w.onclick = () => t.classList.toggle("open"); t.appendChild(w); t.appendChild(det); }
     this.$("toasts").appendChild(t);
@@ -2226,7 +2235,7 @@ export class App {
 
   // ---------- pip + thread (presence) : delegated to agent's view methods below ----------
   pipState = "idle"; pipLabel = "";
-  setPip(state: string, label?: string) { this.pipState = state; this.pipLabel = label || ""; this.renderAskBtn(); }
+  setPip(state: string, label?: string) { if (this.disposed) return; this.pipState = state; this.pipLabel = label || ""; this.renderAskBtn(); }
   // While a LIVE turn is in flight the Ask button becomes a STOP button (click to abort) — the main-screen stop. Else
   // it reflects the presence pip (Working/Listening/Ask). refreshAskBtn re-renders it when only `running` changed.
   refreshAskBtn() { this.renderAskBtn(); }

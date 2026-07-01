@@ -57,6 +57,11 @@ export class Agent {
     }
   }
   stopLive() { this.abortCtrl?.abort(); this.app.toast("Stopped — you have the wheel", null); }
+  // Called by App.dispose() when a new dataset replaces this app: abort the in-flight turn SILENTLY (no toast/UI —
+  // the app is going away) so runLive stops issuing tool calls + renders that would otherwise paint the old dataset
+  // into the replacement app's DOM. The runLive loop checks abort.aborted at each turn boundary; the guards on the
+  // app's paint methods (App.disposed) catch anything mid-turn.
+  dispose() { this.running = false; try { this.abortCtrl?.abort(); } catch { /* */ } }
 
   validate(p: Partial<Panel>) {
     if (!isAgentPanelType(p.type!)) return { ok: false, reason: `unknown component type “${p.type}” — not in the validated registry` };
@@ -154,6 +159,7 @@ export class Agent {
 
   // ================= presence: thread / pip / modes =================
   renderThread() {
+    if (this.app.disposed) return;   // a torn-down app's agent must not paint the old conversation into the new app's #thread/#convo (global $)
     if (this.app.threadDocked) return this.renderDockedConvo();
     const host = this.app.$("thread"); const t = this.app.thread;
     if (!t) { host.classList.remove("show"); setTimeout(() => { if (!this.app.thread) host.innerHTML = ""; }, 300); return; }
