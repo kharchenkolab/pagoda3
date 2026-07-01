@@ -1580,7 +1580,11 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
     g += `<g class="hrowhl"></g><g class="hcolhl"></g>`;   // cross-panel hovered gene-row band + selected/hovered column bands
     g += `<rect class="hrowg" x="${x0}" width="${(G * cw).toFixed(1)}" height="${ch.toFixed(1)}" fill="rgba(150,225,255,.14)" pointer-events="none" style="display:none"/>`;
     g += `<rect class="hcolg" y="${y0}" width="${cw.toFixed(1)}" height="${(R * ch).toFixed(1)}" fill="rgba(150,225,255,.14)" pointer-events="none" style="display:none"/>`;
-    host.innerHTML = `<svg viewBox="0 0 ${W.toFixed(1)} ${H.toFixed(1)}" width="${W.toFixed(1)}" height="${H.toFixed(1)}" style="display:block">${g}</svg>`;
+    // Canvas = the FULL available box (not just the grid width W) with a 1:1 viewBox + explicit px size, so the
+    // global `svg{width:100%;height:auto}` rule can't scale the dots up on a wide pane — the compact grid (cells
+    // capped at cell.colMax) just left-aligns with whitespace, instead of the whole plot stretching.
+    const svgW = Math.max(W, availW);
+    host.innerHTML = `<svg viewBox="0 0 ${svgW.toFixed(1)} ${H.toFixed(1)}" width="${svgW.toFixed(1)}" height="${H.toFixed(1)}" style="display:block;width:${svgW.toFixed(1)}px;height:${H.toFixed(1)}px;max-width:none">${g}</svg>`;
     const svg = host.querySelector("svg")!;
     const rowg = svg.querySelector<SVGRectElement>(".hrowg")!, colg = svg.querySelector<SVGRectElement>(".hcolg")!;
     svg.addEventListener("pointerleave", () => { tip.style.display = "none"; rowg.style.display = colg.style.display = "none"; ctx.coord.clearHint(); ctx.coord.clearGeneHint(); });
