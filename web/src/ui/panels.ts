@@ -1603,7 +1603,12 @@ async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Built
     svg.querySelectorAll<SVGElement>(".hgrp").forEach((el) => {
       const c = +el.getAttribute("data-c")!, grp = gs.groups[c]; el.style.cursor = "pointer";
       el.addEventListener("pointermove", (e) => { colg.setAttribute("x", String(x0 + c * cw)); colg.style.display = "block"; rowg.style.display = "none"; showTip(e as PointerEvent, `<b>${esc(grp)}</b>`); ctx.coord.setHint({ kind: "category", grouping, value: grp }); });
-      el.addEventListener("click", () => { const c = ctx.coord.state.selection; const same = !!c && c.kind === "category" && (c as any).grouping === grouping && (c as any).value === grp; ctx.coord.setSelection(same ? null : { kind: "category", grouping, value: grp }); });   // toggle: re-clicking the selected group clears it (like the Metadata facets); else commit the selection (coordinates everywhere)
+      el.addEventListener("click", (e) => {   // toggle: re-clicking the selected group clears it (like the Metadata facets); else commit the selection (coordinates everywhere) AND pop the action menu, so a dotplot column behaves like an embedding cell of that category (select + Ask / DE / subset / save) instead of quietly tinting
+        const c = ctx.coord.state.selection, same = !!c && c.kind === "category" && (c as any).grouping === grouping && (c as any).value === grp;
+        if (same) { ctx.coord.setSelection(null); return; }
+        ctx.coord.setSelection({ kind: "category", grouping, value: grp });
+        hooks.openSelectionMenu({ left: (e as MouseEvent).clientX, top: (e as MouseEvent).clientY });
+      });
     });
     paintCols(); paintGeneRow();   // re-apply cross-panel highlights after the (re)layout
     if (scoped) { scopeTag.textContent = `▸ within ${scopeLabel}`; scopeTag.title = `dots computed within ${scopeLabel} (genes are the dataset-wide markers)`; scopeTag.style.display = "flex"; } else scopeTag.style.display = "none";

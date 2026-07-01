@@ -2237,14 +2237,20 @@ export class App {
       const cts: Record<string, number> = {}; for (const i of ids) cts[m.categories[m.codes[i]]] = (cts[m.categories[m.codes[i]]] || 0) + 1;
       const top = Object.entries(cts).sort((a, b) => b[1] - a[1])[0];
       const sel = this.coord.state.selection as any;
+      // A CATEGORY selection (facet value / dotplot column / embedding cell of a painted category) describes ITSELF —
+      // "CD16+ monocyte" — rather than re-summarising its cells via the painted grouping ("mostly c0 by leiden"), which
+      // mismatches when the clicked grouping differs from the embedding colour (e.g. a dotplot grouped by annotation
+      // over a leiden/gene-painted UMAP). Only a raw cell/lasso selection (no category) falls back to the "mostly …" gloss.
+      const catLabel = sel?.kind === "category" ? String(sel.value) : null;
       const byField = field !== "cell_type" ? ` by ${field}` : "";
-      this.scope = { type: "selection", ids: Array.from(ids), summary: `${ids.length} cells (mostly ${top?.[0] || "?"}${byField})`, sel } as any;
+      const summary = catLabel ? `${ids.length} cells (${catLabel})` : `${ids.length} cells (mostly ${top?.[0] || "?"}${byField})`;
+      this.scope = { type: "selection", ids: Array.from(ids), summary, sel } as any;
       const esc = (s: string) => String(s).replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]!));
       const sp = this.$("selpop");
       // DE is direct (no agent). "Run DE vs. rest" is the one-click selection-vs-rest; "Run custom DE" opens the composer
       // (prefilled with this selection as A) for the general case — two groups, unions, cross-field, cell-level or
       // paired pseudobulk. The composer replaced the old stateful group-B pin.
-      sp.innerHTML = `<div class="head">${ids.length} cells · mostly ${top?.[0] || "?"}${byField}</div>` +
+      sp.innerHTML = `<div class="head">${catLabel ? esc(catLabel) + ` · ${ids.length} cells` : `${ids.length} cells · mostly ${esc(top?.[0] || "?")}${byField}`}</div>` +
         `<div class="it" data-a="ask" title="ask the agent about this selection (opens chat)"><span class="ic">⌘K</span>Ask about these…</div>` +
         `<div class="it" data-a="de" title="differential expression of this selection vs. all other cells — cell-level, ranking-grade (no p-value)"><span class="ic">≢</span>Run DE vs. rest</div>` +
         `<div class="it" data-a="compare" title="open the DE composer — choose the comparison group; cell-level, or donor-level pseudobulk for a real p-value"><span class="ic">⇄</span>Run custom DE…</div>` +
