@@ -79,7 +79,7 @@ export class Agent {
     this.setColorVerb(`gene:${sym}`, `Clicked ${sym}`, "");
   }
 
-  addRail(p: Partial<Panel>, q?: string) { const panel = this.app.newPanel({ ...p, q }); this.app.rail.unshift(panel); this.app.renderRail(); return panel; }
+  addRail(p: Partial<Panel>, q?: string) { const panel = this.app.newPanel({ ...p, q }); this.app.rail.unshift(panel); this.app.railMinimized = false; this.app.renderRail(); return panel; }   // a NEW answer re-opens the rail even if the user had minimized it
 
   // ---- the mock planner (fallback) ----
   async askMock(qraw: string, sc?: Scope | null) {

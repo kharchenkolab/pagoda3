@@ -86,6 +86,7 @@ export class App {
   widgetPool?: import("../compute/pool.ts").ComputePool;   // S5: off-thread, terminable worker for widget runCompute (kernels over the shared SAB); set by main.ts
   private _saveTimer: any = null;     // debounce for session persistence
   private _railCloseTimer: any = null;   // auto-close the Answers rail a beat after it goes empty (see renderRail)
+  railMinimized = false;   // the user collapsed the Answers rail while it still had content → don't let a re-render (fullRender/repaint on unrelated actions) pop it back open; a NEW answer (addRail) or a proposal clears it
   disposed = false;   // set by dispose() when bootStore replaces this app with a new dataset. `$` is a GLOBAL getElementById, so a torn-down app's late async (an in-flight agent turn, a resolving compute, a coord subscription) would otherwise paint the OLD dataset into the NEW app's DOM. Every paint/mutation entry point short-circuits on this flag, and dispose() aborts the agent — the app-lifecycle boundary.
   private lastSel: any;               // last selection dispatched to reactors — skip re-dispatch on colour-only repaints
   private reactorsStale = true;       // set when reactors are rebuilt (fullRender) → force one dispatch
@@ -1915,13 +1916,15 @@ export class App {
       rb.appendChild(d); if (built.afterAttach) built.afterAttach();
     }
     if (this.rail.length || this.proposal) {
-      this.setRail(true);
+      if (this.proposal || !this.railMinimized) this.setRail(true);   // a proposal always opens; disposable answers respect a user who minimized the rail (a re-render must not pop it back open)
       if (this._railCloseTimer) { clearTimeout(this._railCloseTimer); this._railCloseTimer = null; }   // content arrived → cancel any pending auto-close
-    } else if (this.$("rail").classList.contains("open") && !this._railCloseTimer) {
+    } else {
+      this.railMinimized = false;   // empty → clear the collapse intent so the next answer opens fresh
       // Empty but still open — e.g. the agent added then removed/pinned its answers, or the last card was cleared
       // programmatically (only the manual dismiss/pin paths close it eagerly). Auto-close after a beat so an empty
       // rail doesn't linger; a fresh answer within the window cancels it (the branch above), so agent churn won't flicker.
-      this._railCloseTimer = setTimeout(() => { this._railCloseTimer = null; if (!this.rail.length && !this.proposal) this.setRail(false); }, 2000);
+      if (this.$("rail").classList.contains("open") && !this._railCloseTimer)
+        this._railCloseTimer = setTimeout(() => { this._railCloseTimer = null; if (!this.rail.length && !this.proposal) this.setRail(false); }, 2000);
     }
     await this.repaint();
   }
@@ -2658,8 +2661,8 @@ export class App {
     this.$("lockBtn").onclick = () => { this.locked = !this.locked; this.$("lockBtn").classList.toggle("on", this.locked); this.$("lockBtn").textContent = this.locked ? "🔒 Layout" : "🔓 Layout"; this.toast(this.locked ? "Layout locked" : "Layout unlocked", this.locked ? "The agent will route bigger changes to the rail instead of touching your workbench." : null); };
     this.$("acctBtn").onclick = (e) => { e.stopPropagation(); const c = this.$("acct"); if (c.classList.contains("show")) c.classList.remove("show"); else this.openAccountMenu(); };
     this.applyTheme((localStorage.getItem("p2-theme") as "light" | "dark") || "dark");   // restore the saved preference
-    this.$("railBtn").onclick = () => this.setRail(!this.$("rail").classList.contains("open"));
-    this.$("railX").onclick = () => this.setRail(false);
+    this.$("railBtn").onclick = () => { const open = !this.$("rail").classList.contains("open"); this.railMinimized = !open; this.setRail(open); };   // record intent so a later re-render doesn't override it
+    this.$("railX").onclick = () => { this.railMinimized = true; this.setRail(false); };   // collapse WITH content → stays collapsed until a new answer
     this.$("convoBtn").onclick = () => this.agent.setThreadDock(!this.threadDocked);   // mirror of railBtn: top-bar toggle for the Chat column
     // drag the Answers column's left edge to resize it (width persists for the session)
     { const grip = this.$("railgrip"), rail = this.$("rail"); let gx = 0, gw = 0, drag = false;
