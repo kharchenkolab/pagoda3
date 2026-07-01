@@ -236,7 +236,8 @@ export class Agent {
     return card;
   }
   dockSend(text: string) { const t = this.app.thread; const last = t?.turns?.[t.turns.length - 1]; if (t && t.kind === "dialogue" && last?.role === "agent" && last.replies?.length) this.threadReply(text); else this.ask(text); }
-  setThreadDock(on: boolean) { this.app.threadDocked = on; const b = this.app.$("dockBtn"); b.textContent = on ? "⇤ undock" : "⇥ dock chat"; this.app.$("convoBtn").classList.toggle("on", on); if (on) { this.renderThread(); this.app.toast("Conversation pinned open", "An always-on transcript — the same timeline rendered as a thread. The default stays collapsed."); } else { this.app.$("convo").classList.remove("open"); this.app.$("convo").innerHTML = ""; this.renderThread(); this.app.toast("Conversation unpinned", null); } }
+  setThreadDock(on: boolean) { this.app.threadDocked = on; document.body.classList.toggle("thread-docked", on);   // CSS guarantee: bottom pop-up pane stays collapsed while docked
+    const b = this.app.$("dockBtn"); b.textContent = on ? "⇤ undock" : "⇥ dock chat"; this.app.$("convoBtn").classList.toggle("on", on); if (on) { this.renderThread(); this.app.toast("Conversation pinned open", "An always-on transcript — the same timeline rendered as a thread. The default stays collapsed."); } else { this.app.$("convo").classList.remove("open"); this.app.$("convo").innerHTML = ""; this.renderThread(); this.app.toast("Conversation unpinned", null); } }
   settleThread(label: string | null, why?: string) {
     const t = this.app.thread;
     let exchange: any;

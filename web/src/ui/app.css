@@ -255,6 +255,9 @@ button{font-family:inherit}
 .timeline{flex:0 0 auto;background:var(--panel);border-top:1px solid var(--line)}
 .thread{max-height:0;overflow:hidden;transition:max-height .3s ease;border-bottom:1px solid var(--line)}
 .thread.show{max-height:240px;overflow:auto} .thread.flash{animation:thflash .9s ease}
+/* when the conversation is DOCKED (Chat rail open), the bottom pop-up pane is redundant — force it collapsed
+   regardless of any stray `.show`, so a turn never renders in both places at once. */
+body.thread-docked .thread{max-height:0!important;border-bottom:0!important}
 @keyframes thflash{0%{background:rgba(92,200,255,.12)}100%{background:transparent}}
 .thrinner{padding:10px 13px;display:flex;flex-direction:column;gap:9px}
 .thrhd{display:flex;align-items:center;gap:9px;font-family:var(--mono);font-size:10px;letter-spacing:1.3px;color:var(--dim)}
