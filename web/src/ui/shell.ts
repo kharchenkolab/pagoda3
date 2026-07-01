@@ -2659,8 +2659,18 @@ export class App {
     const confOpts = [...this.annoLayers.values()].filter((l) => l.confidence).map((l) => [`conf:${l.name}`, `${l.name} confidence`] as [string, string]);
     // the working draft + its derived hierarchy levels (annotation: L1 …) — so you can colour by a coarser level
     const levelOpts = ["annotation", ...this.ctx.derivedGroupings()].filter((g) => this.ctx.groupings().includes(g)).map((g) => [`meta:${g}`, g] as [string, string]);
+    // drop options that don't apply to THIS dataset — the choices list is seeded with common defaults
+    // (leiden/cell_type/…) + grows as you colour by things, so on a dropped file it would otherwise offer
+    // categories/genes it doesn't have. meta: → the categorical must exist; gene: → the gene must exist.
+    const hasField = (n: string) => this.ctx.view.ds.hasField(n) || this.ctx.groupings().includes(n) || this.ctx.categoricalFields().includes(n);
+    const applies = ([h]: [string, string]) => {
+      const i = h.indexOf(":"), cls = h.slice(0, i), name = h.slice(i + 1);
+      if (cls === "meta") return hasField(name);
+      if (cls === "gene") return this.ctx.view.hasGeneSync(name) !== false;   // false only when the gene list is loaded AND lacks it
+      return true;   // qc / conf / geneset
+    };
     const seen = new Set<string>();
-    const all = [...this.colorChoices, ...confOpts, ...levelOpts].filter(([h]) => !seen.has(h) && !!seen.add(h));
+    const all = [...this.colorChoices, ...confOpts, ...levelOpts].filter(([h]) => !seen.has(h) && !!seen.add(h)).filter(applies);
     const opts = cur && !all.some(([h]) => h === cur) ? [[cur, handleLabel(cur)] as [string, string], ...all] : all;
     return opts.map(([v, l]) => `<option value="${v}"${v === cur ? " selected" : ""}>${l}</option>`).join("");
   }

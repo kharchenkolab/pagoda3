@@ -99,6 +99,8 @@ export class LstarView {
     await this.genes();
     return this.geneIndex!.get(symbol);
   }
+  /** Sync gene-existence for UI enumeration: true present, false loaded-but-absent, undefined not-yet-loaded. */
+  hasGeneSync(symbol: string): boolean | undefined { return this.geneIndex ? this.geneIndex.has(symbol) : undefined; }
 
   async embedding(name = "umap"): Promise<{ data: Float32Array; n: number; dim: number }> {
     const { data, shape } = await this.ds.fieldDense(name);
