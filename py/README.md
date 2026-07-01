@@ -36,7 +36,8 @@ pagoda3 pack sample.lstar.zarr           # one .lstar.zarr.zip to download + dra
 **Send a single file someone can just drag in.** `pagoda3.pack(adata, "data.lstar.zarr.zip")` writes
 one file (a zarr ZipStore). The recipient opens the hosted viewer and **drags the `.zip` onto the
 page** — it reads in the browser, no install and no server (a `.lstar.zarr` *folder* works too, dragged
-or via the account-menu picker). Nothing is uploaded.
+or via the account-menu picker). A **plain `.h5ad`** (AnnData) can be dragged in directly as well —
+the viewer reads the HDF5 in-browser (via h5wasm) with no conversion step. Nothing is uploaded.
 
 **Share a result as a link.** `pagoda3.publish(adata, "./share")` writes a **self-contained** folder
 (the viewer bundle + the store, same-origin) you can drop on *any* static host — a lab webserver, S3,

@@ -2047,7 +2047,8 @@ export class App {
         <div class="acrow"><span class="acava">G</span><div><div class="acname">Guest</div><div class="acsub">Local session · not signed in</div></div></div>
         <button class="acbtn" data-a="signin">Sign in</button>
         <button class="acbtn" data-a="ledger" style="margin-top:6px">▤ &nbsp;Session ledger</button>
-        <button class="acbtn" data-a="openfile" style="margin-top:6px" title="Open a local .h5ad or .lstar.zarr.zip — or just drag one onto the window">⤓ &nbsp;Open local data…</button>
+        <button class="acbtn" data-a="openfile" style="margin-top:6px">⤓ &nbsp;Open local data…</button>   <!-- no title: the visible sub-line below already explains it, and a native tooltip here lingers over the loading card (OS-drawn, above z-9999) -->
+
         <div style="margin-top:4px;font-size:11px;opacity:.55;line-height:1.4">a <code>.h5ad</code> or <code>.lstar.zarr.zip</code> file — or <span data-a="openfolder" style="text-decoration:underline;cursor:pointer">an unzipped <code>.lstar.zarr</code> folder</span> · or drag any onto the window</div>
         <div class="acicons">
           <button data-a="theme" title="${light ? "Light theme · switch to dark" : "Dark theme · switch to light"}">${light ? "☾" : "☀"}</button>
