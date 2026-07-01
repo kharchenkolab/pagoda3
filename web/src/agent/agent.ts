@@ -4,6 +4,7 @@
 // Anthropic agent wired in Phase 6); the surfaces, tools, and routing are real.
 import type { App } from "../ui/shell.ts";
 import { mk } from "../ui/dom.ts";
+import { mdToHtml } from "../ui/md.ts";   // render agent message bodies as (XSS-safe) Markdown, not literal syntax
 import { handleLabel } from "../data/coord.ts";
 import type { Panel } from "../ui/panels.ts";
 import { runLive } from "./live.ts";
@@ -178,7 +179,7 @@ export class Agent {
     if (t.kind === "live") {
       for (const e of t.entries) {
         if (e.tool) { const m = e.status === "done" ? "✓" : "◐"; const d = mk("div", "step " + (e.status || "active")); d.innerHTML = `<span class="mk">${m}</span><div><div>${esc(e.label)}</div>${e.detail ? `<div class="sd">${esc(e.detail)}</div>` : ""}</div>`; inner.appendChild(d); }
-        else { const d = mk("div", "turn " + e.role); d.innerHTML = `<span class="ava">${e.role === "user" ? "me" : "✦"}</span><div class="msg">${e.text}</div>`; inner.appendChild(d); }
+        else { const d = mk("div", "turn " + e.role); d.innerHTML = `<span class="ava">${e.role === "user" ? "me" : "✦"}</span><div class="msg">${mdToHtml(e.text)}</div>`; inner.appendChild(d); }
       }
     } else if (t.kind === "autopilot") {
       for (const s of t.steps) {
@@ -186,7 +187,7 @@ export class Agent {
         const m = s.status === "done" ? "✓" : s.status === "active" ? "◐" : s.status === "skipped" ? "–" : "○"; const d = mk("div", "step " + s.status); d.innerHTML = `<span class="mk">${m}</span><div><div>${s.label}</div>${s.detail ? `<div class="sd">${s.detail}</div>` : ""}</div>`; inner.appendChild(d);
       }
     } else {
-      for (const tn of t.turns) { const d = mk("div", "turn " + tn.role); d.innerHTML = `<span class="ava">${tn.role === "user" ? "me" : "✦"}</span><div class="msg">${tn.text}</div>`; inner.appendChild(d); if (tn.replies?.length) { const r = mk("div", "replies"); tn.replies.forEach((rep: any) => { const b = mk("button", "reply", rep.label); b.onclick = rep.go; r.appendChild(b); }); inner.appendChild(r); } }
+      for (const tn of t.turns) { const d = mk("div", "turn " + tn.role); d.innerHTML = `<span class="ava">${tn.role === "user" ? "me" : "✦"}</span><div class="msg">${mdToHtml(tn.text)}</div>`; inner.appendChild(d); if (tn.replies?.length) { const r = mk("div", "replies"); tn.replies.forEach((rep: any) => { const b = mk("button", "reply", rep.label); b.onclick = rep.go; r.appendChild(b); }); inner.appendChild(r); } }
       const last = t.turns[t.turns.length - 1];
       if (!this.app.threadDocked && t.kind !== "nudge" && last?.role === "agent" && last.replies?.length && !last.chipsOnly) { const row = mk("div", "thinput"); const inp = document.createElement("input"); inp.placeholder = "or type your own…"; inp.onkeydown = (e) => { if (e.key === "Enter" && inp.value.trim()) { const v = inp.value.trim(); inp.value = ""; this.threadReply(v); } }; row.appendChild(inp); row.appendChild(mk("span", "thhint", "↵")); inner.appendChild(row); }
     }
@@ -226,15 +227,15 @@ export class Agent {
     const answer = h.why || [...entries, ...turns].reverse().find((e) => e.role === "agent" && e.text)?.text || "Done.";
     const steps = entries.filter((e) => e.tool);
     const card = mk("div", "cxex");
-    const head = mk("div", "cxhead"); head.innerHTML = `<span class="ava">me</span><div class="q">${userText}</div><span class="caret">▶</span>`; card.appendChild(head);
-    const sum = mk("div", "cxsum"); sum.innerHTML = `<span class="ava">✦</span><div class="ans">${answer}</div>`; card.appendChild(sum);
+    const head = mk("div", "cxhead"); head.innerHTML = `<span class="ava">me</span><div class="q">${mdToHtml(userText)}</div><span class="caret">▶</span>`; card.appendChild(head);
+    const sum = mk("div", "cxsum"); sum.innerHTML = `<span class="ava">✦</span><div class="ans">${mdToHtml(answer)}</div>`; card.appendChild(sum);
     if (steps.length) card.appendChild(mk("div", "cxmeta", `${steps.length} step${steps.length > 1 ? "s" : ""} · click to expand`));
     const det = mk("div", "cxdetail"); let skippedFirstUser = false;
     for (const e of entries) {
       if (e.tool) { const m = e.status === "done" ? "✓" : "◐"; const d = mk("div", "step " + (e.status || "done")); d.innerHTML = `<span class="mk">${m}</span><div><div>${esc(e.label || e.tool)}</div>${e.detail ? `<div class="sd">${esc(e.detail)}</div>` : ""}</div>`; det.appendChild(d); }
-      else if (e.text) { if (e.role === "user" && !skippedFirstUser) { skippedFirstUser = true; continue; } const d = mk("div", "turn " + e.role); d.innerHTML = `<span class="ava">${e.role === "user" ? "me" : "✦"}</span><div class="msg">${e.text}</div>`; det.appendChild(d); }
+      else if (e.text) { if (e.role === "user" && !skippedFirstUser) { skippedFirstUser = true; continue; } const d = mk("div", "turn " + e.role); d.innerHTML = `<span class="ava">${e.role === "user" ? "me" : "✦"}</span><div class="msg">${mdToHtml(e.text)}</div>`; det.appendChild(d); }
     }
-    for (const t of turns) { if (!t.text) continue; if (t.role === "user" && !skippedFirstUser) { skippedFirstUser = true; continue; } const d = mk("div", "turn " + t.role); d.innerHTML = `<span class="ava">${t.role === "user" ? "me" : "✦"}</span><div class="msg">${t.text}</div>`; det.appendChild(d); }
+    for (const t of turns) { if (!t.text) continue; if (t.role === "user" && !skippedFirstUser) { skippedFirstUser = true; continue; } const d = mk("div", "turn " + t.role); d.innerHTML = `<span class="ava">${t.role === "user" ? "me" : "✦"}</span><div class="msg">${mdToHtml(t.text)}</div>`; det.appendChild(d); }
     card.appendChild(det);
     // click anywhere on the card toggles expand/collapse — but don't fight a text selection or a click on a link/button
     card.style.cursor = "pointer";

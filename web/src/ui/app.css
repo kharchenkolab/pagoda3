@@ -270,6 +270,20 @@ body.thread-docked .thread{max-height:0!important;border-bottom:0!important}
 .turn .ava{flex:0 0 auto;width:19px;height:19px;border-radius:5px;font-family:var(--mono);font-size:10px;display:flex;align-items:center;justify-content:center;margin-top:1px}
 .turn.user .ava{background:var(--inset);color:var(--dim)} .turn.agent .ava{background:rgba(63,182,178,.16);color:var(--teal)}
 .turn .msg{color:var(--text)} .turn.user .msg{color:var(--dim)} .turn .msg b{color:var(--cyan);font-weight:600}
+/* rendered Markdown inside chat bubbles (agent messages) — see ui/md.ts */
+.msg strong,.ans strong,.cxhead .q strong{color:var(--cyan);font-weight:600}
+.msg em,.ans em{font-style:italic}
+.msg .mdcode,.ans .mdcode{font-family:var(--mono);font-size:.9em;background:var(--inset);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+.msg .mdpre,.ans .mdpre{background:var(--inset);border:1px solid var(--line);border-radius:7px;padding:8px 10px;margin:6px 0;overflow:auto}
+.msg .mdpre code,.ans .mdpre code{font-family:var(--mono);font-size:11px;white-space:pre;background:none;border:0;padding:0}
+.msg .mdlist,.ans .mdlist{margin:4px 0;padding-left:18px;display:flex;flex-direction:column;gap:2px}
+.msg .mdlist li,.ans .mdlist li{list-style:disc} .msg ol.mdlist li,.ans ol.mdlist li{list-style:decimal}
+.msg .mdh,.ans .mdh{font-weight:600;color:var(--text);margin:6px 0 2px}
+.msg .mdtable,.ans .mdtable{border-collapse:collapse;margin:6px 0;font-size:11.5px;display:block;overflow:auto}
+.msg .mdtable th,.msg .mdtable td,.ans .mdtable th,.ans .mdtable td{border:1px solid var(--line2,#34465e);padding:3px 8px;text-align:left}
+.msg .mdtable th,.ans .mdtable th{background:var(--inset);font-weight:600;color:var(--dim)}
+.msg a,.ans a{color:var(--cyan);text-decoration:underline}
+.msg>div+div,.ans>div+div{margin-top:5px}   /* space between paragraphs */
 .replies{display:flex;gap:7px;flex-wrap:wrap;margin:1px 0 3px 28px}
 .reply{background:var(--inset);border:1px solid #34465e;color:var(--cyan);border-radius:7px;font-size:11.5px;padding:3px 11px;cursor:pointer;font-family:var(--sans)}
 .reply:hover{background:rgba(92,200,255,.12);border-color:var(--cyan)}
