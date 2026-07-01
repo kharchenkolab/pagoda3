@@ -2,7 +2,7 @@ import { openLstar, HttpStore } from "./data/store.ts";
 import type { LstarStore } from "./data/store.ts";
 import { localStore } from "./data/localstore.ts";
 import { installOpenLocal } from "./ui/openlocal.ts";
-import { showLoading, setLoadingStatus, hideLoading, showLoadError } from "./ui/loading.ts";
+import { showLoading, setLoadingStatus, hideLoading, showLoadError, beginChecklist, setStep, finishChecklist, type OpenProgress } from "./ui/loading.ts";
 import { LstarView } from "./data/view.ts";
 import { Coord } from "./data/coord.ts";
 import { Ctx } from "./data/ctx.ts";
@@ -90,16 +90,33 @@ async function bootStore(store: LstarStore, opts: { applyLinks?: boolean } = {})
   // by re-initing the whole app onto it — no server, nothing uploaded.
   const openLocal = async (input: any, opts: { force?: boolean } = {}) => {
     const title = input?.name || (input?.[0]?.webkitRelativePath || "").split("/")[0] || "dataset";
-    showLoading(title);                                  // a modal with a spinner + status — opening parses the whole file in-browser
+    const ac = new AbortController();
+    let carded = false;                                  // upgrades small → checklist card the moment real work is reported
+    showLoading(title);
+    const progress: OpenProgress = {
+      stage: (m) => setLoadingStatus(m),
+      step: (id, label, status, detail) => {
+        if (!carded) { carded = true; beginChecklist("Opening " + title, "Preparing this dataset for viewing", () => ac.abort()); }
+        setStep(id, label, status, detail);
+      },
+      signal: ac.signal,
+    };
+    const logLoad = (label: string, notes?: string) => { try { (window as any).p2?.app?.checkpoint?.("opened " + label, "Read locally in your browser — nothing was uploaded. " + (notes || "")); } catch { /* */ } };
     try {
-      const { store: ls, label, notes } = await localStore(input, setLoadingStatus, opts);
-      setLoadingStatus("Opening viewer…");
+      const { store: ls, label, notes } = await localStore(input, progress, opts);
+      progress.stage("Opening viewer…");
       await bootStore(ls);
-      hideLoading();
-      // a persistent History/chat line recording the load + what was computed/assumed (not just a transient toast)
-      try { (window as any).p2?.app?.checkpoint?.("opened " + label, "Read locally in your browser — nothing was uploaded. " + (notes || "")); } catch { /* */ }
-      try { (window as any).p2?.app?.toast?.("Opened " + label, notes || "Read locally — nothing was uploaded."); } catch { /* */ }
+      if (carded) {                                      // a real preparation happened → let the user review the checklist, then click Open
+        setStep("ready", "Ready to view", "done");
+        logLoad(label, notes);
+        finishChecklist(() => { try { (window as any).p2?.app?.toast?.("Opened " + label, notes || ""); } catch { /* */ } });
+      } else {                                           // trivial open → just dismiss the small panel
+        hideLoading();
+        logLoad(label, notes);
+        try { (window as any).p2?.app?.toast?.("Opened " + label, notes || "Read locally — nothing was uploaded."); } catch { /* */ }
+      }
     } catch (e: any) {
+      if (ac.signal.aborted || e?.aborted) { hideLoading(); return; }   // user cancelled → silent; the previous dataset is untouched (bootStore never ran)
       // a soft (overridable) guardrail — e.g. the cell-count gate — offers a "Try it anyway" that re-runs forced
       const retry = (e?.overridable && !opts.force) ? { label: "Try it anyway", run: () => void openLocal(input, { force: true }) } : undefined;
       showLoadError(title, String(e?.message || e), retry);   // surface the real reason instead of failing silently

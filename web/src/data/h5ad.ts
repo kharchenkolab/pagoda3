@@ -5,6 +5,7 @@
 // best-effort. Loads the whole file into WASM memory → small/medium datasets (same ceiling as a zip).
 import { writeStore, type DatasetSpec, type FieldSpec, type AxisSpec } from "../../../../lstar/js/core/writer.ts";
 import type { LstarStore } from "./store.ts";
+import type { OpenProgress } from "../ui/loading.ts";
 import { MemStore } from "./localstore.ts";
 // @ts-ignore — generated WASM-glue module, no .d.ts (same import pattern as lstar/js extend.ts)
 import createLstarKernels from "../../../../lstar/js/dist/lstar_kernels.mjs";
@@ -285,23 +286,31 @@ export function guardSize(f: H5, fileBytes: number): void {
   if (est > SOFT_LIMIT) console.warn(`[pagoda3] opening a large .h5ad (~${gb} GB in memory) — may be slow; for big data prefer pagoda3.view() / lstar convert.`);
 }
 
-/** Open a .h5ad File as an in-memory L* store (browser). `onStage` reports progress for the modal. */
-export async function openH5ad(file: File, onStage?: (m: string) => void, force = false): Promise<LstarStore> {
-  onStage?.("Loading HDF5 reader…");
+/** Open a .h5ad File as an in-memory L* store (browser). `progress` reports the load stages + checklist. */
+export async function openH5ad(file: File, progress?: OpenProgress, force = false): Promise<LstarStore> {
+  progress?.stage("Loading HDF5 reader…");
   const h5: any = await import("h5wasm");   // namespace: FS / ready / File are live bindings (set after ready)
   await h5.ready;
   const name = "/" + (file.name || "data.h5ad");
-  onStage?.("Reading file…");
+  progress?.stage("Reading file…");
   h5.FS.writeFile(name, new Uint8Array(await file.arrayBuffer()));
   let f: H5;
   try {
     f = new h5.File(name, "r");
     guardSize(f, file.size);
-    onStage?.("Parsing AnnData…");
+    progress?.stage("Parsing AnnData…");
     const spec = await anndataSpec(f);
     const hasEmbedding = Object.values(spec.fields).some((x) => x.role === "embedding");
     if (!spec.fields.counts && !hasEmbedding)
       throw new Error("No X/counts matrix or embedding found in this .h5ad.");
+    // checklist rows: what we read from the file vs what we'll compute (the card shows only once a step fires)
+    const cf0: any = spec.fields.counts;
+    if (cf0) progress?.step("counts", "Count matrix", "present", `${Number(cf0.shape[0]).toLocaleString()} cells × ${Number(cf0.shape[1]).toLocaleString()} genes`);
+    if (hasEmbedding) {
+      progress?.step("embed", "Embedding", "present");
+      const cl = Object.entries(spec.fields).find(([k, x]) => (x as any).role === "label" && /leiden|louvain|cluster|cell.?type/i.test(k));
+      if (cl) progress?.step("clusters", "Clusters", "present", cl[0]);
+    }
     // A counts-only file (no obsm/UMAP/PCA) can't be plotted as-is — compute an embedding in-browser so it
     // opens. Gated by cell count: above the limit, in-browser PCA+UMAP would hang the tab — say so plainly.
     let computed: { nHVG: number; pcaDim: number; nClusters: number } | null = null;
@@ -313,8 +322,7 @@ export async function openH5ad(file: File, onStage?: (m: string) => void, force 
           `On a machine with plenty of RAM you can try anyway; otherwise precompute the layout (scanpy sc.pp.pca + sc.tl.umap, or pagoda3) and reopen.`),
           { overridable: true });
       const { computeEmbedding } = await import("../compute/embed.ts");   // lazy — code-splits umap-js out of the main bundle
-      onStage?.("No embedding in file — computing layout…");
-      const emb = await computeEmbedding({ data: cf.data, indices: cf.indices, indptr: cf.indptr }, ncells, ngenes, { onStage });
+      const emb = await computeEmbedding({ data: cf.data, indices: cf.indices, indptr: cf.indptr }, ncells, ngenes, { progress });
       spec.axes.emb_umap = { labels: ["umap1", "umap2"], role: "coordinate" };
       spec.fields.umap = { role: "embedding", span: ["cells", "emb_umap"], encoding: "dense", shape: [ncells, 2], data: emb.umap };
       // the Louvain clusters as a categorical label — the embedding auto-colours by it, and it's faceted
@@ -323,7 +331,7 @@ export async function openH5ad(file: File, onStage?: (m: string) => void, force 
       spec.fields.clusters = { role: "label", span: ["cells"], encoding: "utf8", values: clus };
       computed = { nHVG: emb.nHVG, pcaDim: emb.pcaDim, nClusters: emb.nClusters };
     }
-    onStage?.("Building in-memory store…");
+    progress?.stage("Building in-memory store…");
     const store = new MemStore();
     await writeStore(store, spec);                 // uncompressed in-memory L* store
     // Precompute the viewer's marker/stats navigators for the clustering grouping(s) so the Markers dot-plot
@@ -336,10 +344,12 @@ export async function openH5ad(file: File, onStage?: (m: string) => void, force 
       const clusteringLike = labelFields.filter((n) => /leiden|louvain|cluster|cell.?type|annotation/i.test(n));
       const groupings = clusteringLike.length ? clusteringLike : labelFields.slice(0, 1);
       if (groupings.length && spec.fields.counts) {
-        onStage?.("Computing cluster markers…");
+        if (progress?.signal?.aborted) throw Object.assign(new Error("Cancelled"), { aborted: true });
+        progress?.step("markers", "Marker genes", "active");
         const { extendForViewer } = await import("../../../../lstar/js/core/extend.ts");
         await extendForViewer(store as any, { groupings });
         markersFor = groupings;
+        progress?.step("markers", "Marker genes", "done", groupings.join(", "));
       }
     } catch (e) { console.warn("[pagoda3] marker precompute skipped:", (e as any)?.message); }
     // a one-line provenance note for the load log — what was assumed/computed (vs. read from the file)

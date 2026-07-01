@@ -4,9 +4,9 @@
 // have no matmul/SVD), and every matmul is O(cells · genesHVG · k), so it stays linear in cell count.
 // Deterministic (seeded RNG) so the same file reproduces the same layout.
 import { UMAP } from "umap-js";
+import type { OpenProgress } from "../ui/loading.ts";
 
 type CSC = { data: ArrayLike<number>; indices: ArrayLike<number>; indptr: ArrayLike<number> };
-type Stage = (m: string) => void;
 const N = (x: any) => Number(x);
 
 // small deterministic PRNG (so reloads reproduce the layout); seeds the Gaussian sketch + umap-js
@@ -151,22 +151,24 @@ function jacobiEig(A0: Float64Array, L: number): { vecs: Float64Array; vals: Flo
 
 /** Normalize → HVG → PCA → UMAP a counts-only dataset (CSC, gene-major) into a 2-D embedding. */
 export async function computeEmbedding(counts: CSC, ncells: number, ngenes: number,
-    opts: { nHVG?: number; nPC?: number; onStage?: Stage } = {}): Promise<EmbedResult> {
-  const onStage = opts.onStage || (() => {});
+    opts: { nHVG?: number; nPC?: number; progress?: OpenProgress } = {}): Promise<EmbedResult> {
+  const prog = opts.progress;
+  const yield_ = async () => { await tick(); if (prog?.signal?.aborted) throw Object.assign(new Error("Cancelled"), { aborted: true }); };
   const nHVG = Math.min(opts.nHVG ?? 1500, ngenes);
   const nPC = Math.max(2, Math.min(opts.nPC ?? 30, nHVG, ncells - 1));
   const rnd = mulberry32(42);
   const data = counts.data, ind = counts.indices, ptr = counts.indptr;
+  prog?.step("embed", "Compute embedding", "active", "normalizing…");
 
   // 1) per-cell library size → CP10k scale factor
-  onStage("Normalizing counts…"); await tick();
+  await yield_();
   const lib = new Float64Array(ncells);
   for (let g = 0; g < ngenes; g++) for (let k = N(ptr[g]); k < N(ptr[g + 1]); k++) lib[N(ind[k])] += data[k] as number;
   const inv = new Float64Array(ncells);
   for (let c = 0; c < ncells; c++) inv[c] = lib[c] > 0 ? 1e4 / lib[c] : 0;
 
   // 2) per-gene mean & variance of log1p(CP10k) (zeros included) — for HVG + z-scoring
-  onStage("Finding variable genes…"); await tick();
+  prog?.step("embed", "Compute embedding", "active", "variable genes…"); await yield_();
   const gMean = new Float64Array(ngenes), gVar = new Float64Array(ngenes);
   for (let g = 0; g < ngenes; g++) {
     let s = 0, ss = 0;
@@ -178,7 +180,7 @@ export async function computeEmbedding(counts: CSC, ncells: number, ngenes: numb
   const colOf = new Int32Array(ngenes).fill(-1); hvg.forEach((g, j) => (colOf[g] = j));
 
   // 3) cells×HVG z-scored matrix (row-major); zeros → (0-μ)/σ, nonzeros overwrite; clip ±10
-  onStage("Building expression matrix…"); await tick();
+  prog?.step("embed", "Compute embedding", "active", "building matrix…"); await yield_();
   const mu = new Float64Array(p), sd = new Float64Array(p);
   for (let j = 0; j < p; j++) { mu[j] = gMean[hvg[j]]; sd[j] = Math.sqrt(gVar[hvg[j]]) || 1; }
   const X = new Float32Array(ncells * p);
@@ -186,15 +188,16 @@ export async function computeEmbedding(counts: CSC, ncells: number, ngenes: numb
   for (let g = 0; g < ngenes; g++) { const j = colOf[g]; if (j < 0) continue; for (let k = N(ptr[g]); k < N(ptr[g + 1]); k++) { const c = N(ind[k]); let z = (Math.log1p((data[k] as number) * inv[c]) - mu[j]) / sd[j]; X[c * p + j] = z > 10 ? 10 : z < -10 ? -10 : z; } }
 
   // 4) PCA (randomized SVD)
-  onStage("Computing PCA…"); await tick();
+  prog?.step("embed", "Compute embedding", "active", "PCA…"); await yield_();
   const { scores, eigs } = randomizedPCA(X, ncells, p, nPC, rnd);
 
   // 5) Louvain clustering on a kNN graph over the PCs
-  onStage("Clustering cells (Louvain)…"); await tick();
+  prog?.step("clusters", "Cluster cells", "active"); await yield_();
   const { labels: clusters, nClusters } = clusterCells(scores, ncells, nPC, 15, rnd);
+  prog?.step("clusters", "Cluster cells", "done", nClusters + " clusters");
 
   // 6) UMAP on the PC scores
-  onStage("Computing UMAP…"); await tick();
+  prog?.step("embed", "Compute embedding", "active", "UMAP…"); await yield_();
   const pts: number[][] = new Array(ncells);
   for (let c = 0; c < ncells; c++) { const row = new Array(nPC); for (let k = 0; k < nPC; k++) row[k] = scores[c * nPC + k]; pts[c] = row; }
   const nNeighbors = Math.max(5, Math.min(15, ncells - 1));
@@ -202,6 +205,7 @@ export async function computeEmbedding(counts: CSC, ncells: number, ngenes: numb
   const e2 = um.fit(pts);
   const umap = new Float32Array(ncells * 2);
   for (let c = 0; c < ncells; c++) { umap[c * 2] = e2[c][0]; umap[c * 2 + 1] = e2[c][1]; }
+  prog?.step("embed", "Compute embedding", "done", `UMAP · ${nPC} PCs · ${p} HVGs`);
 
   return { umap, pca: scores, pcaDim: nPC, eigs: Array.from(eigs), hvg, nHVG: p, clusters, nClusters };
 }

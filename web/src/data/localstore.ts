@@ -10,6 +10,7 @@
 //   • FileListStore   — a flat FileList from <input webkitdirectory> (the Firefox/Safari folder path).
 import { unzipSync } from "fflate";
 import type { LstarStore } from "./store.ts";
+import type { OpenProgress } from "../ui/loading.ts";
 
 // Strip a single common top-level dir so "zipped the folder" (foo.lstar.zarr/.zmetadata) reads the same
 // as "zipped the contents" (.zmetadata). Keys are normalized to the store root.
@@ -111,20 +112,20 @@ export class FileListStore implements LstarStore {
 /** Build a local store from a dropped/picked thing: a .zip File, a FileSystemDirectoryHandle, or a
  *  webkitdirectory FileList. Returns the store + a short label for the UI. `onStage` reports progress
  *  for the slow in-browser paths (h5ad parse, zip unpack). */
-export async function localStore(input: File | FileList | File[] | any, onStage?: (msg: string) => void, opts?: { force?: boolean }): Promise<{ store: LstarStore; label: string; notes?: string }> {
+export async function localStore(input: File | FileList | File[] | any, progress?: OpenProgress, opts?: { force?: boolean }): Promise<{ store: LstarStore; label: string; notes?: string }> {
   if (input && typeof input.getFile !== "function" && (input.kind === "directory" || typeof input.getDirectoryHandle === "function")) {
     return { store: await DirHandleStore.open(input), label: (input.name || "folder") };
   }
   if (input instanceof File) {
     if (/\.h5ad$/i.test(input.name)) {
       const { openH5ad } = await import("./h5ad.ts");   // lazy — code-splits the h5wasm WASM out of the main bundle
-      const store = await openH5ad(input, onStage, opts?.force);
+      const store = await openH5ad(input, progress, opts?.force);
       return { store, label: input.name, notes: (store as any).__notes };
     }
     if (!/\.zip$/i.test(input.name)) throw new Error("Drop a .lstar.zarr.zip, a .lstar.zarr folder, or a .h5ad file.");
-    onStage?.("Reading file…");
+    progress?.stage("Reading file…");
     const bytes = new Uint8Array(await input.arrayBuffer());
-    onStage?.("Unpacking archive…");
+    progress?.stage("Unpacking archive…");
     return { store: new ZipStore(bytes), label: input.name };
   }
   // a FileList / File[] from <input webkitdirectory>
