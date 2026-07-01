@@ -52,6 +52,7 @@ function ensure(): HTMLDivElement {
     #ldov .ldlabel{flex:1}
     #ldov .lddetail{opacity:.5;font-size:11.5px;font-variant-numeric:tabular-nums}
     #ldov .ldtag{font-size:10px;opacity:.5;border:1px solid var(--line,#2a2f3a);border-radius:5px;padding:0 5px;margin-left:2px}
+    #ldov .ldtag.calc{opacity:.85;color:var(--accent,#5b9cff);border-color:rgba(91,156,255,.4)}   /* computed vs read-from-file — accent-tinted to stand apart from the muted "in file" */
     /* error */
     #ldov .lderr{display:none;color:#ff9b9b;white-space:pre-wrap;margin-top:10px;font-size:12px;
       max-height:240px;overflow:auto;background:rgba(0,0,0,.25);padding:9px 11px;border-radius:7px}
@@ -102,7 +103,7 @@ function renderSteps(): void {
     const row = document.createElement("div");
     row.className = "ldstep" + (s.status !== "pending" ? " on" : "");
     const detail = s.detail ? `<span class="lddetail">${s.detail}</span>` : "";
-    const tag = s.status === "present" ? '<span class="ldtag">in file</span>' : "";   // read from the file vs. computed
+    const tag = s.status === "present" ? '<span class="ldtag">in file</span>' : '<span class="ldtag calc">calculated</span>';   // read from the file vs. computed on the fly
     row.innerHTML = `<span class="ldico ${s.status}">${ICON[s.status]}</span><span class="ldlabel">${s.label}</span>${detail}${tag}`;
     list.appendChild(row);
   }
