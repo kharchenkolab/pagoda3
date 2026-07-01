@@ -219,6 +219,7 @@ export class App {
   // finalize the embedding deck(s) + run widget-iframe teardowns so nothing keeps ticking against the
   // DOM that bootStore is about to replace. (The compute pools are disposed by the caller in main.)
   dispose(): void {
+    if (this._saveTimer) { clearTimeout(this._saveTimer); this._saveTimer = null; }   // don't let a pending save re-persist the OLD dataset over the new one
     try { this.teardowns.forEach((f) => { try { f(); } catch { /* */ } }); this.teardowns = []; } catch { /* */ }
     try { this.embeddings.forEach((e) => (e as any).finalize?.()); this.embeddings = []; } catch { /* */ }
   }
@@ -276,16 +277,21 @@ export class App {
     this.widgetLib = loadWidgets(localStorage.getItem(WIDGETS_KEY));   // the widget LIBRARY is dataset-agnostic — always load it
     this.loadTrust();   // the user's standing trust allow-list + their own library is trusted (Item 2/C)
     const doc = parseSession(localStorage.getItem(SESSION_KEY));
-    if (!doc || doc.store !== this.currentStore()) return;   // no session, or one from a DIFFERENT dataset → keep this store's default layout (no redundant re-render)
+    if (!doc || doc.store !== this.currentStore()) return;
+    // DATASET-AGNOSTIC carry-over — symbol-keyed / authored things that make sense on ANY dataset (widgets loaded
+    // above). Restored even when a DIFFERENT dataset is now open, so opening a new file doesn't lose them.
+    restoreCustomCollections((doc as any).customGeneSets);                                                        // BYO .gmt gene sets
+    if ((doc as any).geneFilter?.length) void this.ctx.setGeneFilter((doc as any).geneFilter).then(() => this.fullRender());   // gene-ignore filter
+    // DATASET-SPECIFIC state (panels/DE-result windows, focus, colouring, annotation, chat) belongs to ONE dataset.
+    // On a DIFFERENT dataset (fingerprint mismatch — e.g. a freshly opened file) start FRESH: none of it transfers.
+    if (fingerprintMismatch(doc.fingerprint, this.datasetFingerprint())) { this.fullRender(); return; }
     this.applySessionViews(doc);
-    restoreCategoryColors((doc as any).catColors);   // per-value colour overrides (keyed by field+value, not cell-indexed → no fingerprint gate; a missing field just won't apply)
-    (this.coord.state as any).style = (doc as any).style;   // global style overrides (view layer, not cell-indexed)
-    restoreCustomPalette((doc as any).customPalette);   // a user-defined numeric gradient (view layer)
-    if ((doc as any).geneFilter?.length) void this.ctx.setGeneFilter((doc as any).geneFilter).then(() => this.fullRender());   // session-wide gene-ignore filter (symbol-keyed, dataset-agnostic)
-    if (doc.annotation && !fingerprintMismatch(doc.fingerprint, this.datasetFingerprint())) this.restoreAnnotation(doc.annotation);   // cell-indexed → only when the dataset still aligns
-    this.results.restore((doc as any).results);   // gene-indexed rows + a re-runnable spec — safe to restore for the same store (re-run is guarded if a referenced set no longer resolves)
-    restoreCustomCollections((doc as any).customGeneSets);   // BYO .gmt collections — symbol-keyed, dataset-agnostic, so no fingerprint gate
-    this.restoreConversation(doc.conversation);   // the chat log survives a reload (not cell-indexed → no fingerprint gate)
+    restoreCategoryColors((doc as any).catColors);
+    (this.coord.state as any).style = (doc as any).style;
+    restoreCustomPalette((doc as any).customPalette);
+    if (doc.annotation) this.restoreAnnotation(doc.annotation);
+    this.results.restore((doc as any).results);
+    this.restoreConversation(doc.conversation);
     this.restoredSession = true;   // a prior session was restored → this is NOT a fresh start, so skip the first-run intro shine
     this.fullRender();
   }
