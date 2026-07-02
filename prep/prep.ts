@@ -18,6 +18,7 @@ import * as path from "node:path";
 import { openLstar } from "../../lstar/js/core/reader.ts";
 import { NodeFSStore } from "../../lstar/js/core/node-store.ts";
 import { addToStore } from "../../lstar/js/core/writer.ts";
+import { selectCountsBasis } from "../../lstar/js/core/basis.ts";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WASM = path.join(HERE, "..", "..", "lstar", "js", "dist", "lstar_kernels.mjs");
@@ -27,16 +28,19 @@ async function loadKernels() {
   return await mod.default();
 }
 
-export async function prepStore(storePath: string, opts: { grouping?: string; also?: string[] } = {}): Promise<string[]> {
+export async function prepStore(storePath: string, opts: { grouping?: string; also?: string[]; counts?: string; basis?: string } = {}): Promise<string[]> {
   const grouping = opts.grouping ?? "leiden";
   const also = opts.also ?? [];
   const M = await loadKernels();
   const store = new NodeFSStore(storePath);
   const ds = await openLstar(store);
-  if (!ds.fields.has("counts")) throw new Error("prep: store has no `counts` measure");
+  // Pick the count basis by content/state (raw preferred, log1p'd), not the literal name "counts";
+  // counts=/basis= override, and a clear "no raw counts" error lists the present measures.
+  const { field: countsField, log1p } = selectCountsBasis(ds, { counts: opts.counts, basis: opts.basis });
 
-  const sp = await ds.fieldSparse("counts");                       // CSC (cells, genes)
+  const sp = await ds.fieldSparse(countsField);                    // CSC (cells, genes)
   const [ncells, ngenes] = sp.shape;
+  const basisState = ds.field(countsField)!.state ?? "raw";
   // Counts are small integers — keep them at native (narrow) width instead of widening the whole nnz array
   // to Float64. cscToCsr only permutes the values, and counts_cellmajor is written Int32 below, so the
   // double was a kernel-signature artifact, not a storage/precision need. (The larger copy is still
@@ -56,7 +60,7 @@ export async function prepStore(storePath: string, opts: { grouping?: string; al
   const cmData = Int32Array.from(csr.data);
 
   // whole-dataset od_score: one group over all cells -> per-gene mean/var(log1p)/nobs -> shared kernel.
-  const gAll = M.colSumByGroup(data, indptr, indices, ncells, ngenes, new Int32Array(ncells), 1, true);
+  const gAll = M.colSumByGroup(data, indptr, indices, ncells, ngenes, new Int32Array(ncells), 1, log1p);
   const mean = new Float64Array(ngenes), varr = new Float64Array(ngenes), nobs = new Int32Array(ngenes);
   for (let g = 0; g < ngenes; g++) {
     const m = (gAll.sum as Float64Array)[g] / ncells;
@@ -75,7 +79,7 @@ export async function prepStore(storePath: string, opts: { grouping?: string; al
     const gidx = new Map(groups.map((g, i) => [g, i])); const K = groups.length;
     const code = Int32Array.from(labels.map((l) => gidx.get(l)!));
     if (gp === grouping) primaryCode = code;
-    const gs = M.colSumByGroup(data, indptr, indices, ncells, ngenes, code, K, true);
+    const gs = M.colSumByGroup(data, indptr, indices, ncells, ngenes, code, K, log1p);
     const S = gs.sum as Float64Array, SS = gs.sumsq as Float64Array, NE = gs.n_expr as Float64Array;
     const nper = new Int32Array(K); for (const c of code) nper[c]++;
     const mk = M.markersOneVsRest(S, NE, nper, K, ngenes, ncells);   // {lfc,padj} gene-major ng×K
@@ -103,7 +107,7 @@ export async function prepStore(storePath: string, opts: { grouping?: string; al
     const src = perm[p]; let dst = rIndptr[p];
     for (let k = cmIndptr[src]; k < cmIndptr[src + 1]; k++) { rData[dst] = cmData[k]; rInd[dst] = cmIndices[k]; dst++; }
   }
-  fields["counts_cellmajor"] = { role: "measure", span: ["cells", "genes"], encoding: "csr", state: "raw",
+  fields["counts_cellmajor"] = { role: "measure", span: ["cells", "genes"], encoding: "csr", state: basisState,
                                  shape: [ncells, ngenes], data: rData, indices: rInd, indptr: rIndptr, provenance: CACHE };
   fields["counts_cellmajor_order"] = { role: "measure", span: ["cells"], encoding: "dense",
                                        state: "permutation", shape: [ncells], data: posOf, provenance: CACHE };
@@ -114,8 +118,10 @@ export async function prepStore(storePath: string, opts: { grouping?: string; al
 
 // CLI
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
-  const [storePath, grouping, ...also] = process.argv.slice(2);
-  if (!storePath) { console.error("usage: prep.ts <store.lstar.zarr> [grouping] [also...]"); process.exit(1); }
-  prepStore(storePath, { grouping, also }).then((f) => console.log("pagoda3 prep: wrote", f.length, "fields ->", storePath))
+  const [storePath, grouping, ...rest] = process.argv.slice(2);
+  if (!storePath) { console.error("usage: prep.ts <store.lstar.zarr> [grouping] [also...] [counts=<field>] [basis=lognorm]"); process.exit(1); }
+  const kv: Record<string, string> = {};   // key=value tokens (counts=, basis=) are options; bare tokens are extra groupings
+  const also = rest.filter((t) => { const i = t.indexOf("="); if (i > 0) { kv[t.slice(0, i)] = t.slice(i + 1); return false; } return true; });
+  prepStore(storePath, { grouping, also, counts: kv.counts, basis: kv.basis }).then((f) => console.log("pagoda3 prep: wrote", f.length, "fields ->", storePath))
     .catch((e) => { console.error(e); process.exit(1); });
 }
