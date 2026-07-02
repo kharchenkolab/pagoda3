@@ -4,6 +4,10 @@
 // live in pure modules (compute/odcore.ts) imported by BOTH this worker and node tests, so the math is unit-tested
 // while the wiring is OODA'd live under cross-origin isolation.
 import { overdispersedCore, deCore, groupStatsForCellsCore, meanVarCore, type ODPanel } from "./odcore.ts";
+// STATIC import so the bundler resolves the kernels' .mjs + .wasm relative to the worker chunk —
+// base-agnostic (works at any mount path / behind an OOD proxy), unlike an origin-absolute /wasm/
+// URL. The emscripten module is worker-aware and fetches its .wasm relative to its own module URL.
+import createLstarKernels from "../../../../lstar/js/dist/lstar_kernels.mjs";
 
 // Reconstruct a panel from SAB-backed buffers posted by the main thread (mapped ZERO-COPY — the buffers are shared).
 function panelFrom(p: any): ODPanel {
@@ -11,12 +15,11 @@ function panelFrom(p: any): ODPanel {
 }
 
 // Load the real libstar WASM kernels IN the worker (lazy, cached) — same module the main thread loads, so native C++
-// numerical kernels (colMeanVar/colSumByGroup/...) run off the main thread. The emscripten module detects the WORKER
-// environment + fetches the .wasm itself; it loads under COEP because the vite plugin serves /wasm with CORP.
+// numerical kernels (colMeanVar/colSumByGroup/...) run off the main thread. Falls back to null (pure-TS) on failure.
 let wasmP: Promise<any | null> | null = null;
 function wasm(): Promise<any | null> {
   if (!wasmP) wasmP = (async () => {
-    try { const url = new URL("/wasm/lstar_kernels.mjs", self.location.origin).href; const mod: any = await import(/* @vite-ignore */ url); return await mod.default(); }
+    try { return await createLstarKernels(); }
     catch { return null; }
   })();
   return wasmP;
