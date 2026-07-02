@@ -8,6 +8,11 @@ copilot.
 pagoda3 views **any** single-cell object (via lstar's converters); it is not tied to pagoda
 analysis output. Think "cellxgene for L\*", but agent-driven and generative.
 
+<p align="center">
+  <img src="docs/screenshot.png" width="900"
+       alt="pagoda3: a UMAP embedding coordinated with a live metadata facet browser">
+</p>
+
 ## How it's layered
 
 - **[lstar](../lstar)** — the substrate. Converts external formats (AnnData/Seurat/SCE/Conos/pagoda2)
