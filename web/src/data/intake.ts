@@ -53,7 +53,7 @@ export async function finalizeSpec(spec: DatasetSpec, progress?: OpenProgress, o
     const qcDetail = qcReport?.skipped
       ? `kept as-is — too few cells pass (${qcReport.keptCells.toLocaleString()} ≥ ${qcReport.minGenes} genes)`
       : qcReport && (qcReport.droppedCells || qcReport.droppedGenes)
-        ? `dropped ${qcReport.droppedCells.toLocaleString()} cells (< ${qcReport.minGenes} genes) · ${qcReport.droppedGenes.toLocaleString()} genes (< ${qcReport.minCells} cells)`
+        ? `dropped ${qcReport.droppedCells.toLocaleString()} cells, ${qcReport.droppedGenes.toLocaleString()} genes`
         : `all ${ncells.toLocaleString()} cells passed`;
     progress?.step("qc", "Quality filter", "done", qcDetail);
     const { computeEmbedding } = await import("../compute/embed.ts");   // lazy — code-splits umap-js out of the main bundle

@@ -49,7 +49,7 @@ function ensure(): HTMLDivElement {
     #ldov .ldico.done{color:#57c98a}
     #ldov .ldico.present{color:#7c8794}
     #ldov .ldico.pending{color:var(--line,#3a4150)}
-    #ldov .ldlabel{flex:1}
+    #ldov .ldlabel{flex:1;white-space:nowrap}   /* the step name is short + fixed — never wrap it; the variable detail absorbs tight space */
     #ldov .lddetail{color:var(--dim);font-size:11.5px;font-variant-numeric:tabular-nums}
     #ldov .ldtag{font-size:10px;color:var(--faint);border:1px solid var(--line,#2a2f3a);border-radius:5px;padding:0 5px;margin-left:2px}
     #ldov .ldtag.calc{color:var(--cyan);border-color:var(--cyan)}   /* computed vs read-from-file — accent-tinted to stand apart from the muted "in file" */
