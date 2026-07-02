@@ -26,9 +26,9 @@ function ensure(): HTMLDivElement {
       background:rgba(8,10,14,.55);backdrop-filter:blur(2px);font:13px/1.5 ui-sans-serif,system-ui,sans-serif}
     #ldov.show{display:flex}
     #ldov .ldcard{min-width:320px;max-width:460px;padding:22px 24px;border-radius:12px;
-      background:var(--panel,#161a22);color:var(--fg,#e6e9ef);border:1px solid var(--line,#2a2f3a);box-shadow:0 12px 40px rgba(0,0,0,.5)}
+      background:var(--panel,#161a22);color:var(--text);border:1px solid var(--line,#2a2f3a);box-shadow:0 12px 40px rgba(0,0,0,.5)}
     #ldov .ldspin{width:20px;height:20px;border-radius:50%;flex:0 0 auto;
-      border:2.5px solid var(--line,#2a2f3a);border-top-color:var(--accent,#5b9cff);animation:ldspin .8s linear infinite}
+      border:2.5px solid var(--line,#2a2f3a);border-top-color:var(--cyan);animation:ldspin .8s linear infinite}
     @keyframes ldspin{to{transform:rotate(360deg)}}
     #ldov .ldtitle{font-weight:600}
     #ldov .ldstatus{opacity:.6;margin-top:3px;font-size:12px}
@@ -52,7 +52,7 @@ function ensure(): HTMLDivElement {
     #ldov .ldlabel{flex:1}
     #ldov .lddetail{opacity:.5;font-size:11.5px;font-variant-numeric:tabular-nums}
     #ldov .ldtag{font-size:10px;opacity:.5;border:1px solid var(--line,#2a2f3a);border-radius:5px;padding:0 5px;margin-left:2px}
-    #ldov .ldtag.calc{opacity:.85;color:var(--accent,#5b9cff);border-color:rgba(91,156,255,.4)}   /* computed vs read-from-file — accent-tinted to stand apart from the muted "in file" */
+    #ldov .ldtag.calc{opacity:.85;color:var(--cyan);border-color:rgba(91,156,255,.4)}   /* computed vs read-from-file — accent-tinted to stand apart from the muted "in file" */
     /* error */
     #ldov .lderr{display:none;color:#ff9b9b;white-space:pre-wrap;margin-top:10px;font-size:12px;
       max-height:240px;overflow:auto;background:rgba(0,0,0,.25);padding:9px 11px;border-radius:7px}
@@ -60,9 +60,9 @@ function ensure(): HTMLDivElement {
     /* buttons */
     #ldov .ldbtns{display:none;margin-top:16px;justify-content:flex-end;gap:8px;align-items:center}
     #ldov.card .ldbtns,#ldov.err .ldbtns{display:flex}
-    #ldov .ldbtns button{font:inherit;color:var(--fg,#e6e9ef);background:var(--line,#2a2f3a);border:0;border-radius:7px;padding:6px 16px;cursor:pointer}
+    #ldov .ldbtns button{font:inherit;color:var(--text);background:var(--line,#2a2f3a);border:0;border-radius:7px;padding:6px 16px;cursor:pointer}
     #ldov .ldbtns button:disabled{opacity:.4;cursor:default}
-    #ldov .ldbtns .ldok,#ldov .ldbtns .ldretry{background:var(--accent,#5b9cff);color:#fff}
+    #ldov .ldbtns .ldok,#ldov .ldbtns .ldretry{background:var(--cyan);color:#fff}
     #ldov .ldcancel,#ldov .ldok,#ldov .ldretry,#ldov .ldclose{display:none}
     /* card mode shows Cancel on the LEFT and OK on the RIGHT throughout the run; the disabled state (set in JS) says which is actionable — Cancel while running, OK when done */
     #ldov.card:not(.err) .ldcancel{display:inline-block;margin-right:auto}
@@ -73,8 +73,8 @@ function ensure(): HTMLDivElement {
     #ldov .ldpick{display:none} #ldov.pick .ldpick{display:block} #ldov.pick .ldsmall,#ldov.pick .ldbig,#ldov.pick .lderr{display:none}
     #ldov.pick .ldbtns{display:flex} #ldov.pick .ldcancel{display:inline-block;margin-right:auto}
     #ldov .ldpicklist{display:flex;flex-direction:column;gap:6px;margin:12px 0 2px;max-height:300px;overflow:auto}
-    #ldov .ldpickitem{font:inherit;text-align:left;color:var(--fg,#e6e9ef);background:var(--line,#2a2f3a);border:0;border-radius:7px;padding:9px 12px;cursor:pointer}
-    #ldov .ldpickitem:hover{background:var(--accent,#5b9cff);color:#fff}`;   /* retry ("Try it anyway") is class-driven — NOT an inline style — so leaving the error state (→ loading card) actually hides it */
+    #ldov .ldpickitem{font:inherit;text-align:left;color:var(--text);background:var(--line,#2a2f3a);border:0;border-radius:7px;padding:9px 12px;cursor:pointer}
+    #ldov .ldpickitem:hover{background:var(--cyan);color:#fff}`;   /* retry ("Try it anyway") is class-driven — NOT an inline style — so leaving the error state (→ loading card) actually hides it */
   document.head.appendChild(style);
   const d = document.createElement("div");
   d.id = "ldov";
