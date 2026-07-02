@@ -1,6 +1,6 @@
 # Portable widget file (`pagoda-widget`)
 
-A **widget** (a custom "app") in lstar-viewer can be exported to a single self-describing
+A **widget** (a custom "app") in pagoda3 can be exported to a single self-describing
 JSON file and re-imported on another machine or by another user. This is the unit of
 **reuse and sharing** for widgets — distinct from the whole-session bundle
 (`pagoda-session`), which carries the layout, results, annotation, and the entire widget

@@ -2062,7 +2062,8 @@ export class App {
         <button class="acbtn" id="acconnbtn" style="margin-top:8px">${resolveMode(getProvider()) === "off" ? "Set up agent…" : "Change…"}</button></div>
       <div class="acsec"><div class="aclabel">ADD TO WORKBENCH</div>
         <input class="acwsearch" id="acwsearch" placeholder="search panels & widgets…">
-        <div class="acwidgets" id="acwlist">${widgets}</div></div>`;
+        <div class="acwidgets" id="acwlist">${widgets}</div></div>
+      <div class="acfoot">pagoda3 · powered by <a href="https://github.com/kharchenkolab/lstar" target="_blank" rel="noopener noreferrer">L★ lstar</a></div>`;   // engine attribution (lstar = the substrate; pagoda3 = the viewer)
     const b = this.$("acctBtn").getBoundingClientRect();
     c.style.left = Math.max(8, Math.min(b.right - 280, innerWidth - 288)) + "px"; c.style.top = (b.bottom + 6) + "px"; c.classList.add("show");
     c.querySelectorAll<HTMLElement>("[data-a]").forEach((el) => el.onclick = () => { const a = el.dataset.a!;
