@@ -120,6 +120,14 @@ export class LstarView {
     if (this.overlays.has(name)) return this.overlays.get(name)!;
     const m = this.ds.field(name);
     if (!m) throw new Error("no field " + name);
+    // Categorical-encoded labels (a pandas Categorical column → convert_anndata) store
+    // integer codes + a category table, NOT the utf8 `values` layout — read them with
+    // fieldCategorical. Without this they fall through to fieldStrings, which 404s the
+    // missing `values` array → 0 categories → the field renders uncoloured.
+    if (m.encoding === "categorical") {
+      const { codes, categories } = await this.ds.fieldCategorical(name);
+      return reorderNumericCategorical({ kind: "categorical", codes, categories });
+    }
     if (m.encoding === "utf8" || m.role === "label") {
       const vals = await this.ds.fieldStrings(name);
       const cats: string[] = [];
