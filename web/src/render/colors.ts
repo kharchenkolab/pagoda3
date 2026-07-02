@@ -141,19 +141,6 @@ export async function colorsFor(view: LstarView, colorBy: string, focusMask?: Ui
     const e = confStore.get(rest); const vals = e ? e.values : new Float32Array(view.nCells);
     return { rgba: numRGBA(vals, e ? e.max : 1), legend: { ...numericLegend(rest + " confidence", pal) } };
   }
-  if (kind === "geneset") {
-    const m = await md(view, "aspect_scores"); // dense (cells, aspects)
-    // resolve aspect index by name
-    const names = await view.ds.axisLabels("aspects");
-    const ai = names.indexOf(rest);
-    const n = view.nCells, vals = new Float32Array(n);
-    if (m.kind === "numeric" && ai >= 0) {
-      const A = names.length;
-      let mx = 0;
-      for (let i = 0; i < n; i++) { const v = m.values[i * A + ai]; vals[i] = v; if (v > mx) mx = v; }
-      return { rgba: numRGBA(vals, mx), legend: numericLegend(rest, pal) };
-    }
-  }
   return { rgba: new Uint8Array(view.nCells * 4).fill(150), legend: { kind: "numeric", title: colorBy, items: [] } };
 }
 

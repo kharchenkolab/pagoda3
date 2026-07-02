@@ -53,7 +53,7 @@ test("global color: valid grouping accepted, bad gene/grouping rejected", () => 
 
   const okGene = normalizeViewPatch({ color: "gene:CD3D" }, w);
   assert.equal(find(okGene.ops, "color").length, 1);
-  const qc = normalizeViewPatch({ color: "qc:mito" }, w);   // qc/geneset pass without a catalog
+  const qc = normalizeViewPatch({ color: "qc:mito" }, w);   // qc passes without a catalog
   assert.equal(find(qc.ops, "color").length, 1);
 });
 

@@ -121,13 +121,7 @@ export class App {
       "QC triage": { colorBy: "qc:mito", panels: [
         { type: "Embedding", title: "Embedding", cap: "mito fraction", bind: "embedding:main" },
         { type: "CompositionBars", title: "Composition", cap: "by sample", bind: "composition:bySample" }] },
-      "Aspects": { colorBy: "geneset:Inflammatory response", panels: [
-        { type: "Embedding", title: "Embedding", cap: "coloured by program", bind: "embedding:main" },
-        { type: "Overdispersion", title: "Overdispersed programs", cap: "gene programs", bind: "aspect:overdispersion" }] },
     };
-    // don't offer a workspace whose data this store lacks — Aspects needs precomputed gene programs (aspects),
-    // which many stores (e.g. this PBMC set) don't carry. Keeps every visible tab functional.
-    if (!ctx.view.ds.axisNames().includes("aspects")) delete (this.WS as Record<string, unknown>)["Aspects"];
     this.wsOrder = Object.keys(this.WS);
     this.builtinWS = new Set(this.wsOrder);   // the code-defined workspaces — user-saved ones (the rest) get persisted
     this.root = mk("div", "app");
@@ -986,7 +980,7 @@ export class App {
       scope: scopeHint,
     };
     if (type === "Embedding") return {
-      colorBy: "colour handle — meta:<field> | gene:<SYMBOL> | qc:<numeric> | geneset:<name>",
+      colorBy: "colour handle — meta:<field> | gene:<SYMBOL> | qc:<numeric>",
       colormap: `numeric palette — ${paletteNames().join(", ")}`,
       embedding: `projection — ${this.ctx.embeddingNames().join(", ") || "umap"}`,
       scope: scopeHint,

@@ -8,7 +8,7 @@ export type EntityRef =
   | { kind: "cells"; ids: Int32Array };
 
 export interface CoordState {
-  colorBy: string;            // "meta:leiden" | "gene:IL6" | "qc:mito" | "geneset:Inflammatory response"
+  colorBy: string;            // "meta:leiden" | "gene:IL6" | "qc:mito"
   // FOCUS = an inter-panel restriction to a subpopulation. A labeled cell set every panel reads: the embedding
   // greys non-focus cells, the reconcile table restricts to clusters in the focus, compute defaults to it.
   // ids = the resolved cells (source of truth for masks); spec = the cell-set expression (serializable, re-resolved).
@@ -74,7 +74,6 @@ export function handleLabel(handle: string): string {
   if (kind === "meta") return rest === "cell_type" ? "cell type" : rest;
   if (kind === "gene") return rest;
   if (kind === "qc") return rest;
-  if (kind === "geneset") return rest;
   if (kind === "code") return rest;   // a custom per-cell score from compute_code
   if (kind === "conf") return rest + " confidence";   // annotation-source confidence (uncertain = where to look)
   return handle;

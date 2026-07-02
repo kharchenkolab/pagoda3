@@ -1375,30 +1375,6 @@ async function annoRecordBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bu
   } };
 }
 
-async function overdispBody(ctx: Ctx, hooks: PanelHooks): Promise<BuiltBody> {
-  // gene programs (aspects) are an optional pipeline product — many datasets (e.g. this PBMC store) lack them.
-  // Show a clear notice instead of throwing, so the panel degrades gracefully rather than breaking the render.
-  if (!ctx.view.ds.axisNames().includes("aspects") || !ctx.view.ds.hasField("aspect_adjvar")) {
-    const m = mk("div", "panelerr"); m.textContent = "No gene programs (aspects) were computed for this dataset.";
-    return { el: m };
-  }
-  const names = await ctx.view.ds.axisLabels("aspects");
-  const adj = (await ctx.view.ds.fieldDense("aspect_adjvar")).data as Float32Array;
-  const order = names.map((n, i) => ({ n, v: adj[i] })).sort((a, b) => b.v - a.v);
-  const t = document.createElement("table");
-  t.innerHTML = `<thead><tr><th>program</th><th>adj.var</th></tr></thead>`;
-  const tb = document.createElement("tbody");
-  for (const o of order) {
-    const on = ctx.coord.state.colorBy === `geneset:${o.n}`;
-    const tr = mk("tr", "gene" + (on ? " on" : ""));
-    tr.innerHTML = `<td style="text-align:left">${o.n}</td><td>${o.v.toFixed(1)}</td>`;
-    tr.onclick = () => { [...tb.children].forEach((x) => x.classList.remove("on")); tr.classList.add("on"); ctx.coord.setColor(`geneset:${o.n}`); };
-    tb.appendChild(tr);
-  }
-  t.appendChild(tb);
-  return { el: t };
-}
-
 // Per-donor concordance heat (gene × donor mean expression, row-normalised). A marker reading the SAME across
 // donors = a genuinely merged cell type; bright in one donor and dim in the other = residual batch / divergence.
 function splitHeatBody(p: Panel): BuiltBody {
@@ -1742,7 +1718,6 @@ registerPanelType({ type: "Volcano", body: (p, ctx) => volcanoBody(p, ctx), agen
 registerPanelType({ type: "CompositionBars", body: compositionBody, agent: true });
 registerPanelType({ type: "MetadataFacets", body: facetsBody, agent: true });
 registerPanelType({ type: "BoxBySample", body: (p, ctx) => boxBody(p, ctx), agent: true });
-registerPanelType({ type: "Overdispersion", body: (_p, ctx, hooks) => overdispBody(ctx, hooks), agent: true });
 registerPanelType({ type: "Heatmap", body: heatmapBody, agent: true });
 registerPanelType({ type: "Reconcile", body: reconcileBody, agent: true });
 registerPanelType({ type: "SessionLedger", body: sessionLedgerBody, agent: true, title: "Session" });

@@ -127,8 +127,7 @@ export class Agent {
     if (/focus|disease only|only.*disease/.test(q)) { this.app.focusFromOp({ dim: "condition", value: "disease" }); this.app.fullRender(); this.app.toast("Focused on disease", "Control cells dim everywhere at once — one change to the shared focus."); return this.app.checkpoint("focus disease", "Coordinated focus."); }
     if (/clear|reset|show all|unfocus/.test(q)) { this.app.releaseFocus(); this.app.toast("Cleared focus", null); return this.app.checkpoint("clear focus", "Cleared coordination state."); }
     // rung 1 — answers
-    const wantsPrograms = /program|pathway|aspect|module|gene ?set/.test(q);   // explicit module-level ask
-    if (!wantsPrograms && /variabl|\bhvg\b|overdispers|most variable/.test(q)) {   // per-gene HVG (the default meaning of "variable/overdispersed genes")
+    if (/variabl|\bhvg\b|overdispers|most variable/.test(q)) {   // per-gene HVG (the default meaning of "variable/overdispersed genes")
       const selCells = this.ctx.selectedCells();
       const ids = selCells.length ? Array.from(selCells) : Array.from({ length: this.ctx.n }, (_, i) => i);
       const hv = await this.ctx.view.overdispersedGenes(ids, 100);
@@ -137,7 +136,6 @@ export class Agent {
       this.app.toast(`Variable genes for the ${scope}`, `Per-gene HVG, recomputed for this scope — residual above the mean-variance trend over all ${this.ctx.view.nGenes.toLocaleString()} genes, not a global shortlist.${hv.length ? " Top: " + hv.slice(0, 6).map((h) => h.symbol).join(", ") : ""}`);
       return this.app.checkpoint("variable genes", "Scope-aware per-gene HVG in the rail.");
     }
-    if (wantsPrograms) { this.addRail({ type: "Overdispersion", title: "Overdispersed programs", cap: "gene programs", bind: "aspect:overdispersion" }, qraw); this.app.toast("Overdispersed programs added to the rail", "Significantly overdispersed gene PROGRAMS (modules) — click one to colour the embedding by it. (For per-gene variable genes, ask for ‘variable genes’.)"); return this.app.checkpoint("overdispersed programs", "Disposable aspects list."); }
     if (/composition|proportion|abundanc/.test(q)) { this.addRail({ type: "CompositionBars", title: "Composition by sample", cap: "compositional", bind: "composition:bySample" }, qraw); this.app.toast("Composition answer added to the rail", null); return this.app.checkpoint("composition?", "Disposable composition answer."); }
     if (/what.*chang|differential|\bde\b|marker/.test(q)) {
       const markers = await this.ctx.markers("leiden"); const group = (await this.ctx.groupStatsCached("leiden")).groups[0];

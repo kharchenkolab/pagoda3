@@ -89,15 +89,6 @@ def main():
     gm = grand / A.n_obs; gsq = np.asarray(Xl.multiply(Xl).sum(0)).ravel() / A.n_obs
     od = ((np.maximum(gsq - gm ** 2, 0)) / (gm + 1e-3)).astype("f4")
 
-    # aspects: per-cell mean log1p over each cluster's top markers
-    names = A.uns["rank_genes_groups"]["names"]
-    ASP = [f"Program {g}" for g in groups[:6]]
-    aspect_scores = np.zeros((A.n_obs, len(ASP)), "f4")
-    for a, g in enumerate(groups[:6]):
-        top = [genes.index(n) for n in list(names[g][:30]) if n in genes][:30]
-        if top: aspect_scores[:, a] = np.asarray(Xl[:, top].mean(1)).ravel()
-    aspect_adjvar = aspect_scores.var(0).astype("f4"); aspect_adjvar = (aspect_adjvar / max(aspect_adjvar.max(), 1e-6) * 4.6).astype("f4")
-
     # --- assemble ---
     ct = np.array([f"cluster {g}" for g in leiden])
     smp = np.array(["GSM5746259"] * A.n_obs); cond = np.array(["PBMC"] * A.n_obs)
@@ -106,7 +97,6 @@ def main():
     ds.add_axis("genes", genes, role="feature")
     ds.add_axis("umap", ["umap0", "umap1"], origin="derived", role="coordinate")
     ds.add_axis("groups_leiden", [f"c{g}" for g in groups], origin="derived", role="feature")
-    ds.add_axis("aspects", ASP, origin="derived", role="feature")
     ds.add_field("counts", Araw, role="measure", span=["cells", "genes"], state="raw")
     ds.add_field("umap", umap, role="embedding", span=["cells", "umap"])
     ds.add_field("leiden", [f"c{x}" for x in leiden], role="label", span=["cells"])
@@ -117,8 +107,6 @@ def main():
     ds.add_field("n_umi", n_umi, role="measure", span=["cells"])
     ds.add_field("n_gene", n_gene, role="measure", span=["cells"])
     ds.add_field("od_score", od, role="measure", span=["genes"])
-    ds.add_field("aspect_scores", aspect_scores, role="measure", span=["cells", "aspects"])
-    ds.add_field("aspect_adjvar", aspect_adjvar, role="measure", span=["aspects"])
     ds.add_field("stats_leiden_sum", S, role="measure", span=["groups_leiden", "genes"])
     ds.add_field("stats_leiden_sumsq", SS, role="measure", span=["groups_leiden", "genes"])
     ds.add_field("stats_leiden_nexpr", NE, role="measure", span=["groups_leiden", "genes"])

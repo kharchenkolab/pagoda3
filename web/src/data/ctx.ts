@@ -399,7 +399,6 @@ export class Ctx {
     if (!bind) return undefined;
     if (bind === "embedding:main") return { prov: `UMAP · ${this.n.toLocaleString()} cells` };
     if (bind === "composition:bySample") return { prov: "per-sample cluster proportions", caveat: "Proportions sum to 1 — a rise in one cluster forces others down. Use a compositional test, not per-cluster comparisons." };
-    if (bind === "aspect:overdispersion") return { prov: "per-cell program scores", caveat: "Program variance (overdispersion) is not differential expression between conditions." };
     if (bind?.startsWith("expr:")) return { prov: "per-donor aggregation", caveat: "This is the replicate view: each point is a donor mean. One donor can carry an apparent shift." };
     if (bind?.startsWith("code:")) return { prov: "custom code", caveat: "Produced by ad-hoc agent code, not a validated primitive — sanity-check it before trusting or reporting it." };
     if (bind?.startsWith("pseudobulk:")) return { prov: "pseudobulk · donor-level test", caveat: "Donor-level: each group is summarised to one mean PER REPLICATE, then a Welch t-test runs across replicates — the replicate is the unit, so the p-value is real (not cell-level). Power is limited by the NUMBER of replicates; with few, one donor can still drive a hit — check the per-sample spread of the top genes before reporting." };

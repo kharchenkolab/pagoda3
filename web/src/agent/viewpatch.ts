@@ -110,15 +110,15 @@ function normHeatMode(v: string | undefined): HeatMode | undefined {
   return undefined;
 }
 
-// Returns an error string if the colour handle is invalid, else null. qc:/geneset: pass without a catalog.
+// Returns an error string if the colour handle is invalid, else null. qc: passes without a catalog.
 function colorError(handle: string, w: World): string | null {
   const i = handle.indexOf(":");
   const kind = i < 0 ? handle : handle.slice(0, i);
   const rest = i < 0 ? "" : handle.slice(i + 1);
   if (kind === "gene") return w.geneExists(rest) ? null : `unknown gene "${rest}"`;
   if (kind === "meta") return w.categoricals.includes(rest) ? null : `unknown field "${rest}" (have: ${w.categoricals.join(", ") || "—"})`;
-  if (kind === "qc" || kind === "geneset" || kind === "conf" || kind === "code") return null;   // conf:=annotation-source confidence, code:=compute_code result
-  return `unrecognized colour "${handle}" — use meta:<field>, gene:<SYMBOL>, qc:<metric>, geneset:<name>, or conf:<source>`;
+  if (kind === "qc" || kind === "conf" || kind === "code") return null;   // conf:=annotation-source confidence, code:=compute_code result
+  return `unrecognized colour "${handle}" — use meta:<field>, gene:<SYMBOL>, qc:<metric>, or conf:<source>`;
 }
 
 function scopeFrom(grouping: string, value: string, w: World, where: string, rejected: string[]): Scope | undefined {

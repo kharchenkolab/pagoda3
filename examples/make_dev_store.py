@@ -5,15 +5,13 @@ real GSE192391 pipeline lands. Deterministic.
 Usage:  python make_dev_store.py [out_path] [n_cells] [n_genes]
 
 Schema (the contract the app binds to; the real store matches it):
-  axes:   cells, genes, umap(coord), groups_leiden(derived), aspects(derived),
+  axes:   cells, genes, umap(coord), groups_leiden(derived),
           od_genes(derived)                                              [viewer profile]
   fields: counts            measure (cells, genes)   CSC, state=raw
           umap              embedding
           leiden/cell_type/sample/condition  label (cells)
           mito/n_umi/n_gene measure (cells)           QC
           od_score          measure (genes)           overdispersion
-          aspect_scores     measure (cells, aspects)  geneset/program scores
-          aspect_adjvar     measure (aspects)
           stats_leiden_{sum,sumsq,nexpr}  measure (groups_leiden, genes)  [viewer profile]
           markers_leiden_{lfc,padj}       measure (genes, groups_leiden)  [viewer profile]
           cell_order        measure (cells)            cluster-coherent order [viewer profile]
@@ -104,23 +102,11 @@ def main():
     #     DE panel + od_genes) is computed once by lstar.write_viewer() below. ---
     leiden = np.array([f"c{c}" for c in cell_cluster])
 
-    # --- aspects (geneset programs) scored per cell ---
-    ASPECTS = ["Inflammatory response", "T-cell activation", "B-cell program",
-               "Cytotoxicity", "Oxidative phosphorylation", "Stress / oxidative"]
-    aspect_genes = [marker_genes[0], marker_genes[1], marker_genes[2], marker_genes[3],
-                    np.arange(NGENES - block, NGENES), marker_genes[0][: block // 2]]
-    aspect_scores = np.zeros((NCELLS, len(ASPECTS)), "f4")
-    for a, gs in enumerate(aspect_genes):
-        aspect_scores[:, a] = np.asarray(Xl[:, gs].mean(axis=1)).ravel()
-    aspect_adjvar = aspect_scores.var(axis=0).astype("f4")
-    aspect_adjvar = (aspect_adjvar / aspect_adjvar.max() * 4.6).astype("f4")
-
     # --- assemble the L* dataset ---
     ds = lstar.Dataset(kind="sample")
     ds.add_axis("cells", [f"cell{i}" for i in range(NCELLS)], role="observation")
     ds.add_axis("genes", genes.tolist(), role="feature")
     ds.add_axis("umap", ["umap0", "umap1"], origin="derived", role="coordinate")
-    ds.add_axis("aspects", ASPECTS, origin="derived", role="feature")
 
     ds.add_field("counts", X, role="measure", span=["cells", "genes"], state="raw")
     ds.add_field("umap", umap, role="embedding", span=["cells", "umap"])
@@ -132,8 +118,6 @@ def main():
     ds.add_field("n_umi", n_umi, role="measure", span=["cells"])
     ds.add_field("n_gene", n_gene, role="measure", span=["cells"])
     ds.add_field("od_score", od_score, role="measure", span=["genes"])
-    ds.add_field("aspect_scores", aspect_scores, role="measure", span=["cells", "aspects"])
-    ds.add_field("aspect_adjvar", aspect_adjvar, role="measure", span=["aspects"])
 
     # viewer profile: cluster stats, marker tables, groups_leiden axis, od_genes + the
     # cell-major de_panel (CSR, log1p) that powers O(rows) subsample DE on selections.
