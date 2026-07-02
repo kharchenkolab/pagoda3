@@ -26,14 +26,18 @@ whole-dataset `od_score`, the cell-major counts orientation) so a large/remote s
 ```r
 # R: view a Seurat/SCE object, or an existing store
 library(pagoda3)
-view(seurat_obj, repo = "~/pagoda/lstar-viewer", prepare = TRUE)   # convert -> prepare -> open browser
+view(seurat_obj)             # convert -> prepare -> serve -> open in the browser
+view("sample.lstar.zarr")    # or an existing L* store
 ```
 ```python
 # Python: view an AnnData, an lstar.Dataset, or a store path
 import pagoda3
-pagoda3.view(adata, prepare=True)
+pagoda3.view(adata)
 pagoda3.view("sample.lstar.zarr")
 ```
+
+`lstar::view()` / `lstar.view()` delegate here too — launch straight from an lstar session and they
+forward to `pagoda3::view` / `pagoda3.view` (lstar only *Suggests* pagoda3, so the dependency is one-way).
 
 Or run the dev server directly and pass a store via `?store=`:
 
