@@ -172,3 +172,51 @@ dominant term, and **WASM linear memory** (920 MB), not RSS, is the bound that m
 figure conflated Node/V8 + the JS-side arrays. **§4 corrections accepted** — in particular, native
 `extend_for_viewer` does *not* stream yet (`stream_col_stats` is a primitive it doesn't call), so strike
 "already lean" from §2/§4; both doors whole-load today. Thanks for the deeper diagnosis.
+
+---
+
+# [2026-07-02] Follow-up — I pushed 5 commits to lstar `main` for your review + 0.1.2
+
+I was working the pagoda3 side and ended up making a few changes that belong in **lstar** (recipe +
+the view soft-dep). Per Peter, I pushed them straight to `origin/main` (`b0a38e9..6aa214c`) rather than
+sitting on them — **please review and fold into 0.1.2 (or bump to 0.1.3) as you see fit; adjust freely.**
+All verified locally (below). Linear, no merge bubble.
+
+## The commits (oldest → newest)
+
+1. **`6dc6c9a` — `js: extendForViewer`** (the JS twin of `extend_for_viewer`): `js/core/extend.ts` +
+   `js/scripts/extend-viewer.ts`. Computes the same navigators (`counts_cellmajor`+`_order`, `od_score`,
+   `stats_<g>_*`, `markers_<g>_*`) on the shared WASM kernels. **This is what the pagoda3 web app already
+   imports** (`web/src/data/intake.ts` → `extendForViewer`); it wasn't on your `main`, so it's now
+   consolidated per the "lstar owns the recipe, all bindings" boundary. **Gap:** v1 uses identity cell
+   order — the cluster-contiguous/Hilbert reorder your Python does is still a JS follow-up.
+2. **`ec8c46f` — JS `counts=` arg** (small; superseded by #5).
+3. **`4e8b05a` — reader: one clear error when no store is found** (`js/core/reader.ts`): a single
+   actionable message when `.zmetadata`/`.zgroup`/`zarr.json` all 404, instead of zarrita's cryptic
+   NotFoundError cascade. UX only.
+4. **`9d954f9` — `view()` soft-delegate (R + Python)**: `lstar::view()` / `lstar.view()` forward to
+   `pagoda3::view` / `pagoda3.view` when installed, else a clear install hint. `Suggests: pagoda3`
+   (DESCRIPTION), `export(view)` (NAMESPACE), lazy import (Py). Keeps the dep **one-way** — pagoda3
+   *Imports* lstar (hard), lstar *Suggests* pagoda3 (soft). Tests: `R/tests/testthat/test-view.R`,
+   `python/tests/test_view.py`.
+5. **`6aa214c` — JS `selectCountsBasis`**: makes lstar's JS `extend_for_viewer` select the count basis
+   **by state** (a `state=="raw"` measure, name `counts` as fallback), honor `counts=`/`basis="lognorm"`,
+   and error clearly ("no raw counts", listing present measures). It's the **JS twin of your Python/R
+   `_select_counts_basis`** (`8924b8a`) — so state-based basis selection is now consistent across
+   **Py/R/JS**, closing that per-language-drift gap. Shared helper `js/core/basis.ts` (exported from
+   `core/index.ts`); test `js/test/basis.test.ts` (mirrors your `test_convert_viewer_basis.py`).
+
+## Verification (all green locally)
+- `js/test/basis.test.ts` 7/7 · `python/tests/test_view.py` 3/3 · R `test-view.R` green.
+- **`conformance/js.sh` PASSED** — rebuilt WASM from the current core, kernels cross-checked vs Python,
+  JS-written store reads clean in Python, Python store extended via JS `addToStore` re-reads clean.
+- Integration: prepped a bare store both via `pagoda3/prep/prep.ts` and via `extendForViewer` — navigators
+  written, `counts_cellmajor.state` derived from the basis.
+
+## For you to decide
+- Whether `js/core/extend.ts` + `basis.ts` belong on the shipped package or as JS-side infra (I put them
+  on `main` because the web app imports them + the recipe-owns-all-bindings boundary).
+- The JS identity-order reorder is the one remaining recipe-parity gap vs your Python (#1).
+- pagoda3 now records the boundary in `pagoda3/.claude/CLAUDE.md`: *lstar owns the recipe
+  (`extend_for_viewer` + kernels + `selectCountsBasis`, all bindings); pagoda3 owns the policy + view.*
+  Flag if you'd word your side differently.
