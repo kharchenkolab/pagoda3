@@ -18,7 +18,7 @@ import * as path from "node:path";
 import { openLstar } from "../../lstar/js/core/reader.ts";
 import { NodeFSStore } from "../../lstar/js/core/node-store.ts";
 import { addToStore } from "../../lstar/js/core/writer.ts";
-import { selectCountsBasis } from "../../lstar/js/core/basis.ts";
+import { selectCountsBasis } from "./basis.ts";   // self-contained (not from lstar) — see basis.ts
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WASM = path.join(HERE, "..", "..", "lstar", "js", "dist", "lstar_kernels.mjs");
