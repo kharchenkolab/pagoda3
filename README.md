@@ -1,17 +1,17 @@
 # pagoda3
 
-**An agent-driven, browser-native viewer for single-cell data.** Open a dataset — its embedding, your
-clusters, your metadata — and *explore it by talking to it*. A built-in copilot (Anthropic's Claude)
-recolours, refocuses, runs the right analysis, arranges panels, and even builds new ones on request, so
-you spend your time looking at the data instead of hunting through menus.
+**pagoda3 is a workbench for exploring single-cell RNA-seq data — a UI you shape by asking.** Point it at
+a dataset and drive it in plain language: a built-in AI copilot (Anthropic's Claude) recolours and
+refocuses the views, runs the right analysis, rearranges the panels, and even builds new ones on request,
+so the whole workspace reshapes around the question you're asking. It all runs in the browser with nothing
+uploaded — and every move the agent makes is one you can still make by hand.
 
 <p align="center">
   <img src="docs/screenshot.jpg" width="900"
        alt="pagoda3: the copilot annotating clusters while a UMAP, metadata facets, a marker dot-plot, a variable-genes table, and a custom agent-built 'Gene → PDB & 3D structure' widget stay in sync">
 </p>
 
-Nothing is uploaded — your data is read in the browser, or served from your own machine. Runs on a
-laptop; scales to a lab server.
+No install. Drag a file into the browser, or launch it from R / Python — from a laptop to a lab server.
 
 ## What you can open
 
