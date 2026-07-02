@@ -1,59 +1,97 @@
 # pagoda3
 
-**An agent-driven, browser-native viewer for single-cell data.** Point it at any
-[L\* / lstar](../lstar) store — or hand it an AnnData / Seurat / SingleCellExperiment object and let
-lstar convert it — and explore it through a shared *coordination space* driven by an Anthropic (Opus)
-copilot.
-
-pagoda3 views **any** single-cell object (via lstar's converters); it is not tied to pagoda
-analysis output. Think "cellxgene for L\*", but agent-driven and generative.
+**An agent-driven, browser-native viewer for single-cell data.** Open a dataset — its embedding, your
+clusters, your metadata — and *explore it by talking to it*. A built-in copilot (Anthropic's Claude)
+recolours, refocuses, runs the right analysis, arranges panels, and even builds new ones on request, so
+you spend your time looking at the data instead of hunting through menus.
 
 <p align="center">
-  <img src="docs/screenshot.png" width="900"
-       alt="pagoda3: a UMAP embedding coordinated with a live metadata facet browser">
+  <img src="docs/screenshot.jpg" width="900"
+       alt="pagoda3: the copilot annotating clusters while a UMAP, metadata facets, a marker dot-plot, a variable-genes table, and a custom agent-built 'Gene → PDB & 3D structure' widget stay in sync">
 </p>
 
-## How it's layered
+Nothing is uploaded — your data is read in the browser, or served from your own machine. Runs on a
+laptop; scales to a lab server.
 
-- **[lstar](../lstar)** — the substrate. Converts external formats (AnnData/Seurat/SCE/Conos/pagoda2)
-  to the uniform L\* Zarr model and provides the compute kernels (`col_sum_by_group`, mean/var,
-  csc↔csr). Format- and viewer-agnostic.
-- **pagoda3** — the viewer. The browser app (`web/`) plus thin R/Python launchers (`r/`, `py/`) that
-  own the *viewer policy*: which navigators to precompute (`write_viewer`) and how to launch locally.
+## What you can open
 
-**Precompute is optional.** A plain or freshly-converted L\* store opens directly — markers, cluster
-stats, all-genes selection DE, and scope-aware overdispersion are computed **on the fly in-browser**
-(WASM kernels). `write_viewer` only precomputes the global *navigators* (per-annotation markers, a
-whole-dataset `od_score`, the cell-major counts orientation) so a large/remote store opens instantly.
+Drag any of these onto the window — read locally, nothing leaves your machine:
+
+- **AnnData** — `.h5ad`
+- **10x Cell Ranger** — a `.h5`, or a `matrix.mtx` / `barcodes.tsv` / `features.tsv` **triplet** (single-
+  or multi-sample; it lists the samples and lets you pick one)
+- a native **`.lstar.zarr`** store — a folder or a `.zip`
+
+…or, from an **R / Python** session, hand the launcher a live object — **Seurat**,
+**SingleCellExperiment**, **AnnData**, or an lstar dataset — and it converts and opens it (see *Use it*).
+
+A bare counts matrix is enough: if there's no embedding or clusters yet, pagoda3 normalizes, lays out,
+clusters, and finds markers in the browser on the way in.
+
+## Explore it by asking
+
+pagoda3 is a **generative** viewer. Almost everything you can see — which panels exist and how they're
+arranged, what they're coloured by, which cells are in focus, which contrast a test uses, even entirely
+new custom panels — is *state the copilot can set*. So instead of clicking through options you say what
+you want to see: the agent composes the view, picks and runs the right computation, lays out the result,
+and tells you the caveats. Every one of those knobs is still yours to drive by hand — the agent just
+reaches them faster, and can **optimise** them for the question you actually asked.
+
+A few things you can just ask for:
+
+- **"facet by day"** — splits the embedding into aligned per-timepoint panels that share axes and
+  colours, so you compare like with like.
+- **"what are the DE genes separating the patients within the T cells?"** — focuses to T cells, runs a
+  *donor-level* (pseudobulk) differential test **across patients** with real p-values, and flags that the
+  patient — not the cell — is the replicate.
+- **"colour by S100A9 and show its markers"**, **"cluster 7 vs the rest"**, **"annotate these
+  clusters"** — the everyday moves, one sentence each.
+- **build a custom panel.** Ask for something the built-ins don't do and the agent *writes it* — a small,
+  sandboxed widget that runs live in the workbench and stays in sync with every other panel. The
+  **Gene → PDB** panel on the right of the screenshot came from one such request: *"for the gene I'm
+  colouring by, pull its PDB structures and show the 3D fold and annotated sequence"* — the agent
+  authored a widget that fetches from RCSB/UniProt and renders the structure in 3D.
+
+Because the agent drives real state rather than a fixed script, it also knows when *not* to trust a
+result — it will pick a grouping that actually has markers, use the statistically correct test for a
+cross-sample comparison, and refuse or caveat a comparison that a 1-vs-1 design can't support.
 
 ## Use it
 
+**From R** — view a Seurat/SCE object, or an existing store:
+
 ```r
-# R: view a Seurat/SCE object, or an existing store
 library(pagoda3)
 view(seurat_obj)             # convert -> prepare -> serve -> open in the browser
 view("sample.lstar.zarr")    # or an existing L* store
 ```
+
+**From Python** — an AnnData, an `lstar.Dataset`, or a store path:
+
 ```python
-# Python: view an AnnData, an lstar.Dataset, or a store path
 import pagoda3
 pagoda3.view(adata)
 pagoda3.view("sample.lstar.zarr")
 ```
 
-`lstar::view()` / `lstar.view()` delegate here too — launch straight from an lstar session and they
-forward to `pagoda3::view` / `pagoda3.view` (lstar only *Suggests* pagoda3, so the dependency is one-way).
+(Already in an lstar session? `lstar::view()` / `lstar.view()` hand straight off to pagoda3.)
 
-Or run the dev server directly and pass a store via `?store=`:
+**In the browser** — open the viewer and **drag a file on**. Nothing is uploaded; the bytes are read
+locally. Zero setup for a quick look.
+
+**Share / deploy on a static host** — the viewer is a static single-page app that reads a store over
+ordinary HTTP **range requests**, so there is *no server-side compute*. Prepare a store once (a quick
+`write_viewer` precomputes the navigators so it opens instantly), drop the store **and** the built bundle
+on any static file server — a lab web directory, S3, GitHub Pages — and share a `?store=…` deep-link.
+Recipients explore it in their own browser, fetching only the bytes they scroll to; the data is never
+uploaded anywhere.
+
+**Develop it** — run the dev server directly:
 
 ```bash
-../.venv/bin/python examples/make_dev_store.py     # -> web/public/sample.lstar.zarr (synthetic demo)
-cd web && npm install && npm run dev               # -> http://localhost:8787  (agent proxy auto-spawns)
+../.venv/bin/python examples/make_dev_store.py   # -> web/public/sample.lstar.zarr (synthetic demo)
+cd web && npm install && npm run dev             # -> http://localhost:8787  (agent proxy auto-spawns)
 ```
-
-Open <http://localhost:8787/?store=/sample.lstar.zarr>. The agent is live when `~/.aba/oauth.json`
-holds a valid token (else a faithful keyword mock runs). Ask "markers of the CD8 T cells", select a
-blob and ask "what's different here?", or "what genes vary most within these cells?".
 
 ## What's inside
 
@@ -63,7 +101,7 @@ blob and ask "what's different here?", or "what genes vary most within these cel
 - **Scope-correct compute** — selection DE ranks **all genes** for the selected cells; overdispersion
   is the pagoda2-style residual above a smoothed mean-variance trend, **recomputed for the scope**
   (never a global gene shortlist). Both subsample cells, read cell-major rows, reduce over all genes.
-- **The agent** — an Opus tool-use loop with a **data-driven** system prompt (read from the loaded
+- **The agent** — a Claude tool-use loop with a **data-driven** system prompt (read from the loaded
   store), driving the coordination space at the lowest sufficient rung.
 
 ## Layout
@@ -82,3 +120,7 @@ Working locally on real data: a Seurat integration of two GSE192391 PBMC samples
 (`examples/02_process_seurat_integrated.R` → 12,221 cells, 21 cell types). Remote zarr-over-HTTP
 (cell_order + cell-block sharding + a shard-aware stratified sampler) and browser OAuth sign-in are
 the next steps.
+
+---
+
+<sub>Built on the open **[L★ / lstar](../lstar)** single-cell data model and compute kernels.</sub>
