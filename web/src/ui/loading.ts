@@ -31,7 +31,7 @@ function ensure(): HTMLDivElement {
       border:2.5px solid var(--line,#2a2f3a);border-top-color:var(--cyan);animation:ldspin .8s linear infinite}
     @keyframes ldspin{to{transform:rotate(360deg)}}
     #ldov .ldtitle{font-weight:600}
-    #ldov .ldstatus{opacity:.6;margin-top:3px;font-size:12px}
+    #ldov .ldstatus{color:var(--dim);margin-top:3px;font-size:12px}
     /* small vs card visibility */
     #ldov .ldsmall{display:flex;align-items:center;gap:13px}
     #ldov.card:not(.err) .ldsmall{display:none}
@@ -39,7 +39,7 @@ function ensure(): HTMLDivElement {
     #ldov .ldbig{display:none}
     #ldov.card:not(.err) .ldbig{display:block}
     #ldov .ldbigtitle{font-weight:600}
-    #ldov .ldbigsub{opacity:.6;font-size:12px;margin-top:2px}
+    #ldov .ldbigsub{color:var(--dim);font-size:12px;margin-top:2px}
     #ldov .ldlist{margin:14px 0 2px;display:flex;flex-direction:column;gap:2px}
     #ldov .ldstep{display:flex;align-items:center;gap:11px;padding:4px 2px;font-size:12.5px;
       opacity:.45;transition:opacity .3s ease}
@@ -50,9 +50,9 @@ function ensure(): HTMLDivElement {
     #ldov .ldico.present{color:#7c8794}
     #ldov .ldico.pending{color:var(--line,#3a4150)}
     #ldov .ldlabel{flex:1}
-    #ldov .lddetail{opacity:.5;font-size:11.5px;font-variant-numeric:tabular-nums}
-    #ldov .ldtag{font-size:10px;opacity:.5;border:1px solid var(--line,#2a2f3a);border-radius:5px;padding:0 5px;margin-left:2px}
-    #ldov .ldtag.calc{opacity:.85;color:var(--cyan);border-color:rgba(91,156,255,.4)}   /* computed vs read-from-file — accent-tinted to stand apart from the muted "in file" */
+    #ldov .lddetail{color:var(--dim);font-size:11.5px;font-variant-numeric:tabular-nums}
+    #ldov .ldtag{font-size:10px;color:var(--faint);border:1px solid var(--line,#2a2f3a);border-radius:5px;padding:0 5px;margin-left:2px}
+    #ldov .ldtag.calc{color:var(--cyan);border-color:var(--cyan)}   /* computed vs read-from-file — accent-tinted to stand apart from the muted "in file" */
     /* error */
     #ldov .lderr{display:none;color:#ff9b9b;white-space:pre-wrap;margin-top:10px;font-size:12px;
       max-height:240px;overflow:auto;background:rgba(0,0,0,.25);padding:9px 11px;border-radius:7px}
