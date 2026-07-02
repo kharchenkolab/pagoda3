@@ -60,7 +60,7 @@ export class EmbeddingView {
       canvas,
       views: [new OrthographicView({ flipY: false })],
       viewState: this.viewState,
-      onViewStateChange: ({ viewState }: any) => { viewState.target = this.clampTarget(viewState.target, viewState.zoom); this.viewState = viewState; this.deck.setProps({ viewState }); return viewState; },   // PAN BOUNDS via clampTarget, RETURNED so deck uses the clamped value; zoom is bounded by the controller (below).
+      onViewStateChange: ({ viewState, interactionState }: any) => { if (interactionState && (interactionState.isDragging || interactionState.isPanning || interactionState.isZooming)) this.userFramed = true; viewState.target = this.clampTarget(viewState.target, viewState.zoom); this.viewState = viewState; this.deck.setProps({ viewState }); return viewState; },   // a real pan/zoom locks the frame (so a later resize keeps it); PAN BOUNDS via clampTarget, RETURNED so deck uses the clamped value; zoom is bounded by the controller (below).
       controller: this.controllerProps(),
       layers: this.layers(),
       // hover IS available in pan mode — picking fires on move, not drag. Emit the picked cell (or null).
@@ -78,7 +78,7 @@ export class EmbeddingView {
     // post-mount size settle and any later resize — so labels re-evaluate against the real viewport. rAF-coalesced;
     // self-disconnects once the panel is gone.
     let rafR = 0;
-    const ro = new ResizeObserver(() => { if (!container.isConnected) { ro.disconnect(); return; } if (rafR) return; rafR = requestAnimationFrame(() => { rafR = 0; if (container.isConnected) this.redraw(); }); });
+    const ro = new ResizeObserver(() => { if (!container.isConnected) { ro.disconnect(); return; } if (rafR) return; rafR = requestAnimationFrame(() => { rafR = 0; if (!container.isConnected) return; if (!this.userFramed) { this.viewState = this.computeView(); this.deck.setProps({ viewState: this.viewState, controller: this.controllerProps() }); }   /* the panel is usually unsized when the view is built (esp. on a store swap) → the initial fit is wrong; re-fit once it has a real size, until the user frames it themselves */ this.redraw(); }); });
     ro.observe(container);
   }
 
@@ -208,6 +208,7 @@ export class EmbeddingView {
   }
 
   private colorVersion = 0;
+  private userFramed = false;   // true once the user pans/zooms or scopes → a panel resize keeps THEIR frame; until then the auto-fit re-fits on resize (the panel is often unsized at construction, so the initial fit is wrong)
   private selVersion = 0;
   private crosshairXY: [number, number] | null = null;   // CELL hint locator (this panel's own embedding coords)
   private highlightIds: Int32Array | null = null;        // CATEGORY hint: cells to lift
@@ -272,7 +273,7 @@ export class EmbeddingView {
     return [Math.max(cx - dx, Math.min(cx + dx, target[0])), Math.max(cy - dy, Math.min(cy + dy, target[1])), target[2] || 0];
   }
   private controllerProps() { return { dragPan: true, scrollZoom: true, doubleClickZoom: false, minZoom: this.fitZoom, maxZoom: this.fitZoom + Math.log2(Math.max(2, Math.sqrt(this.frameN || this.n) / 2)) }; }
-  fitTo(ids?: Int32Array) { this.viewState = this.computeView(ids); this.deck.setProps({ viewState: this.viewState, controller: this.controllerProps() }); }
+  fitTo(ids?: Int32Array) { this.userFramed = !!(ids && ids.length); /* a scope is a deliberate frame (a resize keeps it); fit-all returns to the auto-fit */ this.viewState = this.computeView(ids); this.deck.setProps({ viewState: this.viewState, controller: this.controllerProps() }); }
 
   setColors(rgba: Uint8Array) { this.colors = rgba; const d = this.draw, dc = this.drawColors; for (let k = 0; k < this.n; k++) { const c = d[k] * 4, o = k * 4; dc[o] = rgba[c]; dc[o + 1] = rgba[c + 1]; dc[o + 2] = rgba[c + 2]; dc[o + 3] = rgba[c + 3]; } this.colorVersion++; this.redraw(); }
 
