@@ -48,12 +48,28 @@ const bootBar = (pct: number) => { const f = document.querySelector<HTMLElement>
 // (to bridge between read waves), capped so a genuinely stuck read can't hold the splash forever.
 class TrackedStore {
   inflight = 0;
+  // LRU byte cache for whole-key `get` reads (one zarr chunk). lstar's reader caches its byte-RANGE reads
+  // (csrRows) but NOT `_get` (fieldDense — facets, dotplot stats, embedding), so switching workspaces re-fetched
+  // the SAME fields over the network every time (fast on localhost's HTTP cache, slow over a hosted zip). Cache
+  // the chunk bytes here, keyed by key, LRU-evicted to a budget → a re-visited workspace reads from memory, no
+  // network. getRange is left to the reader's own _rcache (don't double-cache the range path).
+  private cache = new Map<string, Uint8Array>();
+  private cacheBytes = 0;
+  private budget = 128 * 1024 * 1024;   // 128MB
   get: (key: string) => Promise<Uint8Array | undefined>;
   getRange?: (key: string, start: number, end: number) => Promise<Uint8Array | undefined>;
   constructor(inner: LstarStore) {
-    this.get = (k) => this.track(inner.get(k));
+    this.get = (k) => this.cachedGet(inner, k);
     if (inner.getRange) this.getRange = (k, a, b) => this.track(inner.getRange!(k, a, b));
   }
+  private async cachedGet(inner: LstarStore, k: string): Promise<Uint8Array | undefined> {
+    const hit = this.cache.get(k);
+    if (hit) { this.cache.delete(k); this.cache.set(k, hit); return hit; }   // LRU bump; served from memory, no read
+    const v = await this.track(inner.get(k));
+    if (v && v.byteLength > 0 && v.byteLength <= this.budget) { this.cache.set(k, v); this.cacheBytes += v.byteLength; this.evict(); }
+    return v;
+  }
+  private evict(): void { while (this.cacheBytes > this.budget && this.cache.size) { const k = this.cache.keys().next().value as string; const e = this.cache.get(k)!; this.cache.delete(k); this.cacheBytes -= e.byteLength; } }
   private track<T>(p: Promise<T>): Promise<T> { this.inflight++; return p.finally(() => { this.inflight--; }); }
   async whenIdle(quietMs = 300, capMs = 45000): Promise<void> {
     const t0 = performance.now(); let quietSince = 0;
