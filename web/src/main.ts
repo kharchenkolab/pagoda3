@@ -176,18 +176,17 @@ async function boot() {
       signal: ac.signal,
     };
     try {
-      const store = storeForUrl(STORE_URL);   // a `.zip` URL → range-read ZIP store; else the directory HttpStore
+      const store = await storeForUrl(STORE_URL);   // a `.zip` URL → lstar's STORED range-read ZipStore (reads the central dir here); else the directory HttpStore
       await bootStore(store, { applyLinks: true, progress, force });
       if (carded) finishChecklist(() => {});   // computed a layout → let the user review the checklist, then Open reveals the app
-      // A hosted .zip that was packed DEFLATE (not STORED) still opens, but every chunk read is degraded — flag
-      // it (console + the HISTORY log) so a slow store is legible rather than a mystery. Best-effort, never fatal.
-      const warn = (store as any).storageWarnings?.();
-      if (warn) void Promise.resolve(warn).then((ws: string[]) => { for (const w of ws || []) { console.warn("[pagoda3] " + w); try { (window as any).p2?.app?.checkpoint?.("store packaging", w); } catch { /* */ } } }).catch(() => {});
     } catch (e: any) {
       if (ac.signal.aborted || e?.aborted) { showLoadError(title, "Cancelled — this store has no embedding, so there is nothing to display.", { label: "Retry", run: () => void openHosted(false) }); return; }
       const retry = (e?.overridable && !force) ? { label: "Compute it anyway", run: () => void openHosted(true) } : undefined;
       console.error(e);
-      showLoadError(title, String(e?.message || e), retry);
+      // lstar's ZipStore errors already say the fix (repack STORED / check the URL) but can't know pagoda3's
+      // escape hatch — a hosted .zip that won't open can always be dragged in to read locally. Add that hint.
+      const hint = isZipStore ? " — or drag the .lstar.zarr.zip into the page to open it locally." : "";
+      showLoadError(title, String(e?.message || e) + hint, retry);
     }
   };
   await openHosted(false);
