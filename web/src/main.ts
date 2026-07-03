@@ -26,6 +26,11 @@ const STORE_URL = new URL(storeParam.endsWith("/") ? storeParam : storeParam + "
 // pools of the CURRENT dataset — disposed when we re-init onto a new one (open a local file)
 let _pools: ComputePool[] = [];
 
+// True once the ACTIVE dataset came from a local file (openLocal) — an in-memory store with no URL to re-fetch it and
+// no persistable File handle, so a reload/close silently drops it. A `?store=` / default dataset re-loads identically
+// on reload, so it's NOT guarded. Used by the beforeunload guard installed in boot().
+let localDatasetOpen = false;
+
 // Build the whole stack (reader → view → coord → ctx → app) around `store` and mount it. Called once
 // for the URL/meta store, and again to swap in a dropped local file (Phase 4) — re-init disposes the
 // old workers + finalizes the old app so nothing keeps ticking against the replaced DOM.
@@ -121,6 +126,7 @@ async function bootStore(store: LstarStore, opts: { applyLinks?: boolean; freshS
       const { store: ls, label, notes } = await localStore(input, progress, opts);
       progress.stage("Opening viewer…");
       await bootStore(ls, { freshSession: true, progress, force: opts.force });   // deliberate new dataset → clean slate; `progress` lets a bare (embedding-less) dropped store compute its layout inside this same card
+      localDatasetOpen = true;   // now on an in-memory local dataset → arm the reload guard (a reload can't re-open it)
       if (carded) {                                      // a real preparation happened → let the user review the checklist, then click Open
         logLoad(label, notes);
         finishChecklist(() => { try { (window as any).p2?.app?.toast?.("Opened " + label, notes || ""); } catch { /* */ } });
@@ -179,6 +185,11 @@ async function boot() {
   };
   await openHosted(false);
   installOpenLocal((input) => (window as any).p2.openLocal(input));   // drag a .lstar.zarr(.zip) anywhere to open it
+  // Reload/close silently drops an in-memory LOCAL dataset (no URL to re-fetch, the File is gone) — warn before that
+  // happens, but ONLY for a local dataset (a `?store=`/default dataset re-loads identically, so no nag there). The
+  // browser shows its own generic "Leave site? / Reload site?" confirmation; the returned string is ignored by modern
+  // browsers but still required to trigger the prompt.
+  window.addEventListener("beforeunload", (e) => { if (!localDatasetOpen) return; e.preventDefault(); e.returnValue = ""; });
 }
 
 boot().catch((e) => {
