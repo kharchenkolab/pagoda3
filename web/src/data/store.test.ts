@@ -89,3 +89,66 @@ test("ZipHttpStore: a small read is a RANGE read — the 200KB chunk is never dr
     assert.ok(served < BIG.length, `served (${served}) must be less than the untouched 200KB chunk (${BIG.length})`);
   } finally { h.close(); }
 });
+
+// A misbehaving/incompatible host: HEAD, Range, and Content-Length can each be broken independently. Serve the
+// zip in each broken mode and assert the adapter throws a LEGIBLE, actionable message (not zarrita's opaque
+// "maybe not zip file"). `mode` mirrors the observed failure surface (see the table in the Phase 2 work).
+function serveBroken(buf: Uint8Array, mode: "head405" | "nolength" | "norange") {
+  const server = http.createServer((req, res) => {
+    if (req.method === "HEAD") {
+      if (mode === "head405") { res.writeHead(405); return res.end(); }
+      const hdr: Record<string, string> = { "Accept-Ranges": "bytes" };
+      if (mode !== "nolength") hdr["Content-Length"] = String(buf.length);
+      res.writeHead(200, hdr); return res.end();
+    }
+    const m = req.headers.range && /bytes=(\d+)-(\d*)/.exec(req.headers.range);
+    if (m && mode !== "norange") {
+      const s = +m[1], e = m[2] ? +m[2] : buf.length - 1, sl = buf.subarray(s, e + 1);
+      res.writeHead(206, { "Content-Range": `bytes ${s}-${e}/${buf.length}`, "Content-Length": String(sl.length) }); return res.end(sl);
+    }
+    res.writeHead(200, { "Content-Length": String(buf.length) }); res.end(buf);   // Range ignored → whole file
+  });
+  return new Promise<{ url: string; close: () => void }>((resolve) => {
+    server.listen(0, () => resolve({ url: `http://localhost:${(server.address() as any).port}/s.lstar.zarr.zip`, close: () => server.close() }));
+  });
+}
+
+test("ZipHttpStore: a host that ignores Range or drops Content-Length throws an actionable error, not 'not a zip'", async () => {
+  for (const mode of ["nolength", "norange"] as const) {
+    const h = await serveBroken(ZIP, mode);
+    try {
+      const store = new ZipHttpStore(h.url);
+      await assert.rejects(() => store.get(".zmetadata"), (e: Error) => {
+        assert.match(e.message, /HTTP Range/i, `${mode}: message should name Range as the requirement`);
+        assert.doesNotMatch(e.message, /maybe not zip file/i, `${mode}: must not leak zarrita's misleading text`);
+        return true;
+      });
+    } finally { h.close(); }
+  }
+});
+
+test("ZipHttpStore: a host that refuses HEAD throws an actionable fetch error", async () => {
+  const h = await serveBroken(ZIP, "head405");
+  try {
+    const store = new ZipHttpStore(h.url);
+    await assert.rejects(() => store.get(".zmetadata"), (e: Error) => {
+      assert.match(e.message, /HEAD and Range|status:/i);
+      return true;
+    });
+  } finally { h.close(); }
+});
+
+test("ZipHttpStore: storageWarnings flags a DEFLATE zip and stays quiet for STORED", async () => {
+  // STORED → no warning.
+  const hs = await serveZip(ZIP);
+  try { assert.deepEqual(await new ZipHttpStore(hs.url).storageWarnings(), []); } finally { hs.close(); }
+  // DEFLATE (level 6) → one warning that names the STORED repack fix.
+  const deflated = zipSync(ENTRIES, { level: 6 });
+  const hd = await serveZip(deflated);
+  try {
+    const ws = await new ZipHttpStore(hd.url).storageWarnings();
+    assert.equal(ws.length, 1);
+    assert.match(ws[0], /DEFLATE-compressed/);
+    assert.match(ws[0], /zip -0 -r/);
+  } finally { hd.close(); }
+});
