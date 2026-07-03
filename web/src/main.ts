@@ -4,7 +4,7 @@ import { localStore } from "./data/localstore.ts";
 import { installOpenLocal } from "./ui/openlocal.ts";
 import { showLoading, setLoadingStatus, hideLoading, showLoadError, beginChecklist, setStep, finishChecklist, showPicker, type OpenProgress } from "./ui/loading.ts";
 import { finalizeSpec, storeToSpec } from "./data/intake.ts";
-import { invalidateColor } from "./render/colors.ts";
+import { invalidateColor, colorsFor } from "./render/colors.ts";
 import { LstarView } from "./data/view.ts";
 import { Coord } from "./data/coord.ts";
 import { Ctx } from "./data/ctx.ts";
@@ -104,6 +104,13 @@ async function bootStore(store: LstarStore, opts: { applyLinks?: boolean; freshS
   _pools.push(widgetPool);
   app.widgetPool = widgetPool;
   if (widgetPool.isolated) void widgetPool.ping().catch(() => { /* best-effort warm */ });
+  // Make the view READY before it's shown — not just mounted. The embedding panel `await`s colorsFor() (a
+  // field-metadata read) before it can setColors, so on a slow link the canvas paints GREY, then recolours once
+  // that read lands — after the splash has already lifted. Prime the default colour here (warms mdCache) so the
+  // panel's own colorsFor() hits cache and the first paint is complete. Best-effort: a failure just falls back to
+  // the progressive fill. (The layout coords were already read in ctx.init above.)
+  opts.progress?.stage("Preparing the view…");
+  try { await colorsFor(view, coord.state.colorBy); } catch { /* non-fatal — colour fills in as before */ }
   opts.progress?.stage("Rendering…");
   await app.mount(document.getElementById("app")!);
   // Phase 3a deep-links: an explicit ?view= (compact, inline) or ?session=<url> (full, fetched) reopens
@@ -184,7 +191,7 @@ async function boot() {
     // The splash's thin bar ratchets forward one notch per stage (Reading dataset → embedding → Rendering),
     // then dropBootSplash fills it to 100%. Monotonic + count-based, so it stays sensible regardless of the
     // exact stage messages or how many fire.
-    let barStep = 0; const BAR = [22, 52, 80];
+    let barStep = 0; const BAR = [18, 44, 68, 88];
     const bumpBar = () => { bootBar(BAR[Math.min(barStep, BAR.length - 1)]); barStep++; };
     // A store with NO embedding computes a layout in-browser — that non-trivial work upgrades to the CHECKLIST
     // card (retiring the splash). A normal open never `step()`s, so it stays on the splash's status line.
