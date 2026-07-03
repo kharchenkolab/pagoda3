@@ -41,10 +41,19 @@ function winsorBounds(values: ArrayLike<number>, max: number, frac: number, key:
   const r: [number, number] = [lo, hi]; winsorCache.set(ck, r); return r;
 }
 
-const mdCache = new Map<string, Metadata>();
+// Keyed by field name, but ALSO tagged with the VIEW that produced it. A new dataset (a new LstarView) with a
+// same-named field (`clusters` on every computed embedding, `louvain`/`leiden`, …) must NOT reuse the previous
+// dataset's per-cell codes: that painted the new embedding with the OLD cells' colours (the "confetti" — scattered
+// colours while ctx-sourced labels/hover stayed correct). The view-identity check refetches on any dataset swap, and
+// survives the async race where a disposing app's last repaint repopulates the cache just after a clear.
+// invalidateColor(field) still drops by name (used after an annotation/colour edit).
+const mdCache = new Map<string, { view: LstarView; m: Metadata }>();
 async function md(view: LstarView, field: string) {
-  if (!mdCache.has(field)) mdCache.set(field, await view.metadata(field));
-  return mdCache.get(field)!;
+  const hit = mdCache.get(field);
+  if (hit && hit.view === view) return hit.m;
+  const m = await view.metadata(field);
+  mdCache.set(field, { view, m });
+  return m;
 }
 // Drop a field's cached metadata (call after a writable overlay changes — annotation edits add categories,
 // so the stale snapshot would carry an outdated codes/colors pairing). No arg = clear all.

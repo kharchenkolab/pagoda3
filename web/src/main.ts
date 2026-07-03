@@ -4,6 +4,7 @@ import { localStore } from "./data/localstore.ts";
 import { installOpenLocal } from "./ui/openlocal.ts";
 import { showLoading, setLoadingStatus, hideLoading, showLoadError, beginChecklist, setStep, finishChecklist, showPicker, type OpenProgress } from "./ui/loading.ts";
 import { finalizeSpec, storeToSpec } from "./data/intake.ts";
+import { invalidateColor } from "./render/colors.ts";
 import { LstarView } from "./data/view.ts";
 import { Coord } from "./data/coord.ts";
 import { Ctx } from "./data/ctx.ts";
@@ -35,6 +36,7 @@ async function bootStore(store: LstarStore, opts: { applyLinks?: boolean; freshS
   const oldApp = (window as any).p2?.app;
   _pools = [];
 
+  invalidateColor();   // drop the module-level colour caches (metadata snapshots + winsor bounds) from the PREVIOUS dataset — a same-named field must not reuse the old cells' codes/bounds (the view-keying in md() is the primary guard; this also clears the numeric winsor cache)
   let ds = await openLstar(store as any);   // byte-range fast path + consolidated `.zmetadata` open
   // A store with NO embedding (a bare convert_anndata output, or a dropped .lstar.zarr with only counts +
   // labels) can't be plotted as-is. Compute a default layout in-browser — the SAME QC → PCA → UMAP → Louvain
