@@ -1,4 +1,4 @@
-import { openLstar, HttpStore } from "./data/store.ts";
+import { openLstar, storeForUrl } from "./data/store.ts";
 import type { LstarStore } from "./data/store.ts";
 import { localStore } from "./data/localstore.ts";
 import { installOpenLocal } from "./ui/openlocal.ts";
@@ -21,7 +21,9 @@ const storeParam = new URLSearchParams(location.search).get("store") || metaStor
 // resolve against the full document URL (not just origin) so a RELATIVE ?store=store/ works when the
 // app is hosted under a subpath (e.g. a published folder at https://host/myshare/ — Phase 3b); an
 // absolute ?store=https://… still wins, and a root-absolute /path/ still resolves against the origin.
-const STORE_URL = new URL(storeParam.endsWith("/") ? storeParam : storeParam + "/", location.href).href;
+// a `.zip` store (a range-read `*.lstar.zarr.zip`) is a FILE, not a directory — don't append a trailing "/".
+const isZipStore = /\.zip($|\?)/i.test(storeParam);
+const STORE_URL = new URL(isZipStore || storeParam.endsWith("/") ? storeParam : storeParam + "/", location.href).href;
 
 // pools of the CURRENT dataset — disposed when we re-init onto a new one (open a local file)
 let _pools: ComputePool[] = [];
@@ -174,7 +176,7 @@ async function boot() {
       signal: ac.signal,
     };
     try {
-      await bootStore(new HttpStore(STORE_URL), { applyLinks: true, progress, force });
+      await bootStore(storeForUrl(STORE_URL), { applyLinks: true, progress, force });   // a `.zip` URL → range-read ZIP store; else the directory HttpStore
       if (carded) finishChecklist(() => {});   // computed a layout → let the user review the checklist, then Open reveals the app
     } catch (e: any) {
       if (ac.signal.aborted || e?.aborted) { showLoadError(title, "Cancelled — this store has no embedding, so there is nothing to display.", { label: "Retry", run: () => void openHosted(false) }); return; }
