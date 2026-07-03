@@ -3,6 +3,7 @@ import type { LstarStore } from "./data/store.ts";
 import { localStore } from "./data/localstore.ts";
 import { installOpenLocal } from "./ui/openlocal.ts";
 import { showLoading, setLoadingStatus, hideLoading, showLoadError, beginChecklist, setStep, finishChecklist, showPicker, type OpenProgress } from "./ui/loading.ts";
+import { finalizeSpec, storeToSpec } from "./data/intake.ts";
 import { LstarView } from "./data/view.ts";
 import { Coord } from "./data/coord.ts";
 import { Ctx } from "./data/ctx.ts";
@@ -27,14 +28,25 @@ let _pools: ComputePool[] = [];
 // Build the whole stack (reader → view → coord → ctx → app) around `store` and mount it. Called once
 // for the URL/meta store, and again to swap in a dropped local file (Phase 4) — re-init disposes the
 // old workers + finalizes the old app so nothing keeps ticking against the replaced DOM.
-async function bootStore(store: LstarStore, opts: { applyLinks?: boolean; freshSession?: boolean } = {}) {
+async function bootStore(store: LstarStore, opts: { applyLinks?: boolean; freshSession?: boolean; progress?: OpenProgress; force?: boolean } = {}) {
   // open + prepare the NEW dataset first, while the old app/pools are still alive — only tear the old
   // ones down once the new one is ready (no race against dispose; no blank screen if the open fails).
   const oldPools = _pools;
   const oldApp = (window as any).p2?.app;
   _pools = [];
 
-  const ds = await openLstar(store as any);   // byte-range fast path + consolidated `.zmetadata` open
+  let ds = await openLstar(store as any);   // byte-range fast path + consolidated `.zmetadata` open
+  // A store with NO embedding (a bare convert_anndata output, or a dropped .lstar.zarr with only counts +
+  // labels) can't be plotted as-is. Compute a default layout in-browser — the SAME QC → PCA → UMAP → Louvain
+  // → markers pipeline a dropped .h5ad gets — driving the SAME load checklist (opts.progress) so the user is
+  // informed and can cancel. Without this, ctx.init's embedding fallback throws an opaque zarrita error.
+  if (ds.field("counts") && !ds.fieldNames().some((n: string) => (ds.field(n) as any)?.role === "embedding")) {
+    opts.progress?.stage("No embedding in this store — reading counts to compute a layout…");   // immediate feedback (raises the card) before the counts read
+    const spec = await storeToSpec(ds);
+    const augmented = await finalizeSpec(spec, opts.progress, { force: opts.force });
+    ds = await openLstar(augmented as any);
+    store = augmented as any;
+  }
   const view = new LstarView(ds);
   // persisted user compute settings: per-side DE/HVG sample caps (approx ranking) + the read-cache memory budget.
   // Console: p2.setCompute({deCap:800, hvgCap:3000, cacheBudgetMB:512}). Lower caps = faster/cheaper, coarser ranking.
@@ -106,7 +118,7 @@ async function bootStore(store: LstarStore, opts: { applyLinks?: boolean; freshS
     try {
       const { store: ls, label, notes } = await localStore(input, progress, opts);
       progress.stage("Opening viewer…");
-      await bootStore(ls, { freshSession: true });   // deliberate new dataset → clean slate (don't inherit the prior file's annotation/panels)
+      await bootStore(ls, { freshSession: true, progress, force: opts.force });   // deliberate new dataset → clean slate; `progress` lets a bare (embedding-less) dropped store compute its layout inside this same card
       if (carded) {                                      // a real preparation happened → let the user review the checklist, then click Open
         logLoad(label, notes);
         finishChecklist(() => { try { (window as any).p2?.app?.toast?.("Opened " + label, notes || ""); } catch { /* */ } });
@@ -139,7 +151,31 @@ async function bootStore(store: LstarStore, opts: { applyLinks?: boolean; freshS
 }
 
 async function boot() {
-  await bootStore(new HttpStore(STORE_URL), { applyLinks: true });
+  // The bare-URL / ?store= open is normally instant (a prepped store), so no card. But if the store has NO
+  // embedding, bootStore computes a layout in-browser — surface that through the SAME load checklist (raised
+  // lazily on the first progress event, so a prepped store still opens with no dialog), with a cancel and a
+  // "compute it anyway" override for the cell-count gate.
+  const title = decodeURIComponent(STORE_URL.replace(/\/+$/, "").split("/").pop() || "dataset");
+  const openHosted = async (force: boolean) => {
+    const ac = new AbortController();
+    let carded = false;
+    const raise = () => { if (!carded) { carded = true; showLoading(title); beginChecklist("Opening " + title, "Preparing this dataset for viewing", () => ac.abort()); } };
+    const progress: OpenProgress = {
+      stage: (m) => { raise(); setLoadingStatus(m); },
+      step: (id, label, status, detail) => { raise(); setStep(id, label, status, detail); },
+      signal: ac.signal,
+    };
+    try {
+      await bootStore(new HttpStore(STORE_URL), { applyLinks: true, progress, force });
+      if (carded) finishChecklist(() => {});   // computed a layout → let the user review the checklist, then Open reveals the app
+    } catch (e: any) {
+      if (ac.signal.aborted || e?.aborted) { showLoadError(title, "Cancelled — this store has no embedding, so there is nothing to display.", { label: "Retry", run: () => void openHosted(false) }); return; }
+      const retry = (e?.overridable && !force) ? { label: "Compute it anyway", run: () => void openHosted(true) } : undefined;
+      console.error(e);
+      showLoadError(title, String(e?.message || e), retry);
+    }
+  };
+  await openHosted(false);
   installOpenLocal((input) => (window as any).p2.openLocal(input));   // drag a .lstar.zarr(.zip) anywhere to open it
 }
 

@@ -8,8 +8,45 @@ import type { LstarStore } from "./store.ts";
 import type { OpenProgress } from "../ui/loading.ts";
 import { MemStore } from "./localstore.ts";
 import { applyQCFilter, type QCReport } from "../compute/qc.ts";
+import { kernels } from "./kernels.ts";
 
 const EMBED_LIMIT = 30000;   // in-browser PCA+UMAP is tuned up to ~this many cells; beyond it, gate (overridable)
+
+/** An already-OPENED L* store with no embedding → a DatasetSpec `finalizeSpec` can compute a layout for.
+ *  Reads `counts` (transposing CSR→CSC via the shared kernel, since computeEmbedding is gene-major CSC) plus
+ *  every per-cell label / numeric field, remapped onto the standard `cells`/`genes` axes finalizeSpec expects.
+ *  Only called for a bare store (no embedding) — the full-counts read is the unavoidable cost of laying it out. */
+export async function storeToSpec(ds: any): Promise<DatasetSpec> {
+  const cf = ds.field("counts");
+  if (!cf || (cf.span?.length ?? 0) !== 2) throw new Error("This store has no 2-D `counts` measure, so a layout can't be computed for it.");
+  const [cellAx, geneAx] = cf.span as [string, string];
+  const cells = await ds.axisLabels(cellAx), genes = await ds.axisLabels(geneAx);
+  const ncells = cells.length, ngenes = genes.length;
+  let sp = await ds.fieldSparse("counts");                                  // { data, indices, indptr, shape, fmt }
+  if (sp.fmt === "csr") {
+    const M = await kernels();
+    if (!M) throw new Error("WASM kernels unavailable — can't transpose CSR counts to compute a layout.");
+    const c = M.csrToCsc(sp.data, sp.indices, sp.indptr, ncells, ngenes);   // → gene-major CSC (what computeEmbedding needs)
+    sp = { data: c.data, indices: c.indices, indptr: c.indptr, shape: [ncells, ngenes], fmt: "csc" } as any;
+  } else if (sp.fmt !== "csc") throw new Error(`\`counts\` is ${sp.fmt}; need CSC or CSR to compute a layout.`);
+  const spec: any = {
+    kind: "sample",
+    axes: { cells: { labels: cells, role: "observation" }, genes: { labels: genes, role: "feature" } },
+    fields: { counts: { role: "measure", span: ["cells", "genes"], encoding: "csc", state: cf.state ?? "raw", shape: [ncells, ngenes], data: sp.data, indices: sp.indices, indptr: sp.indptr } },
+  };
+  // carry over the store's PER-CELL fields (labels to colour by; numeric QC measures) onto the `cells` axis
+  for (const nm of ds.fieldNames()) {
+    if (nm === "counts") continue;
+    const f = ds.field(nm);
+    if (!f || f.role === "embedding" || (f.span?.length ?? 0) !== 1 || f.span[0] !== cellAx) continue;   // per-cell only
+    try {
+      if (f.encoding === "categorical") { const c = await ds.fieldCategorical(nm); spec.fields[nm] = { role: "label", span: ["cells"], encoding: "utf8", values: Array.from(c.codes, (k: number) => (k >= 0 ? c.categories[k] : "")) }; }
+      else if (f.encoding === "utf8") spec.fields[nm] = { role: "label", span: ["cells"], encoding: "utf8", values: await ds.fieldStrings(nm) };
+      else if (f.encoding === "dense") spec.fields[nm] = { role: f.role || "measure", span: ["cells"], encoding: "dense", shape: [ncells], data: (await ds.fieldDense(nm)).data };
+    } catch { /* skip an unreadable field rather than fail the whole open */ }
+  }
+  return spec;
+}
 
 /** spec → in-memory L* store: compute a layout if the file has none (QC → PCA → UMAP → Louvain → markers),
  *  precompute marker navigators, and record a provenance note. `progress` drives the load checklist. */
