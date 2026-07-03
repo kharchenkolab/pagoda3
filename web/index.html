@@ -5,9 +5,30 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Pagoda3</title>
   <link rel="stylesheet" href="/src/ui/app.css" />
+  <style>
+    /* First-paint splash — shown before the JS bundle has even downloaded. A cold start over a slow
+       connection is otherwise a blank dark field that looks broken; this covers the bundle download AND the
+       initial store read (main.ts updates #boot-msg, then removes #boot once the app is up or a checklist /
+       error overlay takes over). Anti-flash: it stays invisible for 400ms then fades in, so a fast or warm
+       load removes it before it is ever seen. Self-contained layout (no app.css needed), but it borrows the
+       theme vars when present so it matches. */
+    #boot{position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;
+      background:var(--ink,#0d1117);color:var(--dim,#8a97a8);font:13px/1.5 ui-sans-serif,system-ui,sans-serif;
+      opacity:0;animation:bootin .3s ease .4s forwards}
+    #boot.hide{animation:none!important;opacity:0!important;pointer-events:none;transition:opacity .25s ease}
+    @keyframes bootin{to{opacity:1}}
+    #boot .bi{display:flex;flex-direction:column;align-items:center;gap:15px}
+    #boot .bs{width:26px;height:26px;border-radius:50%;border:2.5px solid var(--line,#2a3340);
+      border-top-color:var(--cyan,#5cc8ff);animation:bootspin .8s linear infinite}
+    @keyframes bootspin{to{transform:rotate(360deg)}}
+    #boot .bb{font-weight:600;font-size:15px;color:var(--text,#d7dee8);letter-spacing:.2px}
+    #boot .bb i{color:var(--teal,#3fb6b2);font-style:normal}
+    #boot #boot-msg{font-size:12.5px}
+  </style>
 </head>
 <body>
   <div id="app"></div>
+  <div id="boot"><div class="bi"><div class="bs"></div><div class="bb">pagoda<i>3</i></div><div id="boot-msg">Loading…</div></div></div>
   <script type="module" src="/src/main.ts"></script>
 </body>
 </html>

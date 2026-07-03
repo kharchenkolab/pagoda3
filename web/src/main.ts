@@ -33,6 +33,13 @@ let _pools: ComputePool[] = [];
 // on reload, so it's NOT guarded. Used by the beforeunload guard installed in boot().
 let localDatasetOpen = false;
 
+// The first-paint splash (index.html #boot) covers the cold-start bundle download + the initial store read so
+// a slow open isn't a blank dark screen. We advance its status line during the open, then retire it once the
+// app is up (or a checklist card / error overlay has taken over). Idempotent + null-safe (it's gone after the
+// first open, and absent in embed/test contexts).
+const bootMsg = (m: string) => { const el = document.getElementById("boot-msg"); if (el) el.textContent = m; };
+const dropBootSplash = () => { const b = document.getElementById("boot"); if (b) { b.classList.add("hide"); setTimeout(() => b.remove(), 300); } };
+
 // Build the whole stack (reader → view → coord → ctx → app) around `store` and mount it. Called once
 // for the URL/meta store, and again to swap in a dropped local file (Phase 4) — re-init disposes the
 // old workers + finalizes the old app so nothing keeps ticking against the replaced DOM.
@@ -44,6 +51,7 @@ async function bootStore(store: LstarStore, opts: { applyLinks?: boolean; freshS
   _pools = [];
 
   invalidateColor();   // drop the module-level colour caches (metadata snapshots + winsor bounds) from the PREVIOUS dataset — a same-named field must not reuse the old cells' codes/bounds (the view-keying in md() is the primary guard; this also clears the numeric winsor cache)
+  opts.progress?.stage("Reading the dataset…");
   let ds = await openLstar(store as any);   // byte-range fast path + consolidated `.zmetadata` open
   // A store with NO embedding (a bare convert_anndata output, or a dropped .lstar.zarr with only counts +
   // labels) can't be plotted as-is. Compute a default layout in-browser — the SAME QC → PCA → UMAP → Louvain
@@ -76,6 +84,7 @@ async function bootStore(store: LstarStore, opts: { applyLinks?: boolean; freshS
   if (computePool.isolated) void computePool.ping().catch(() => { /* worker warm-up is best-effort; kernels fall back to the main thread */ });   // spawn + warm the worker at boot so the first real compute isn't cold
   const coord = new Coord();
   const ctx = new Ctx(view, coord);
+  opts.progress?.stage("Reading the embedding…");   // the layout coords are the big read on a hosted open
   await ctx.init();
   // The default colour is `meta:leiden`; if this dataset has no `leiden` field (a dropped .h5ad may have
   // `louvain`, or anything), fall back to a categorical it DOES have — before mount, so the embedding panel
@@ -94,6 +103,7 @@ async function bootStore(store: LstarStore, opts: { applyLinks?: boolean; freshS
   _pools.push(widgetPool);
   app.widgetPool = widgetPool;
   if (widgetPool.isolated) void widgetPool.ping().catch(() => { /* best-effort warm */ });
+  opts.progress?.stage("Rendering…");
   await app.mount(document.getElementById("app")!);
   // Phase 3a deep-links: an explicit ?view= (compact, inline) or ?session=<url> (full, fetched) reopens
   // a shared view — applied AFTER mount so it overrides the auto-restored local session. Only on the
@@ -169,17 +179,23 @@ async function boot() {
   const openHosted = async (force: boolean) => {
     const ac = new AbortController();
     let carded = false;
-    const raise = () => { if (!carded) { carded = true; showLoading(title); beginChecklist("Opening " + title, "Preparing this dataset for viewing", () => ac.abort()); } };
+    const onSplash = () => !!document.getElementById("boot");   // the first-paint splash is covering us (first open)
+    // A store with NO embedding computes a layout in-browser — that non-trivial work upgrades to the CHECKLIST
+    // card (retiring the splash). A normal open never `step()`s, so it stays on the splash's status line.
+    const raise = () => { if (!carded) { carded = true; dropBootSplash(); showLoading(title); beginChecklist("Opening " + title, "Preparing this dataset for viewing", () => ac.abort()); } };
     const progress: OpenProgress = {
-      stage: (m) => { raise(); setLoadingStatus(m); },
+      stage: (m) => { if (carded) return; onSplash() ? bootMsg(m) : setLoadingStatus(m); },   // advance the splash (first open) or the small overlay (a re-open, once the splash is gone)
       step: (id, label, status, detail) => { raise(); setStep(id, label, status, detail); },
       signal: ac.signal,
     };
+    if (!onSplash()) showLoading(title, "Opening…");   // a retry/re-open after the splash is gone → give it its own spinner so a slow open still isn't blank
     try {
       const store = await storeForUrl(STORE_URL);   // a `.zip` URL → lstar's STORED range-read ZipStore (reads the central dir here); else the directory HttpStore
       await bootStore(store, { applyLinks: true, progress, force });
-      if (carded) finishChecklist(() => {});   // computed a layout → let the user review the checklist, then Open reveals the app
+      if (carded) finishChecklist(() => { dropBootSplash(); });   // computed a layout → let the user review the checklist, then Open reveals the app
+      else { hideLoading(); dropBootSplash(); }   // normal open → reveal the app (retire the splash / small overlay)
     } catch (e: any) {
+      dropBootSplash();
       if (ac.signal.aborted || e?.aborted) { showLoadError(title, "Cancelled — this store has no embedding, so there is nothing to display.", { label: "Retry", run: () => void openHosted(false) }); return; }
       const retry = (e?.overridable && !force) ? { label: "Compute it anyway", run: () => void openHosted(true) } : undefined;
       console.error(e);
@@ -200,5 +216,6 @@ async function boot() {
 
 boot().catch((e) => {
   console.error(e);
+  dropBootSplash();   // a top-level failure — retire the splash so the error is visible, not hidden behind it
   document.getElementById("app")!.innerHTML = `<pre style="color:#e07a7a;padding:20px;white-space:pre-wrap">${e?.stack || e}</pre>`;
 });
