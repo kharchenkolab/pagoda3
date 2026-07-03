@@ -563,6 +563,17 @@ export class App {
     if (v && anchor) { this.lastSelAnchor = anchor; this.openSelpop(); }                // affordance: show what you can do with it
   }
 
+  // Workbench "Loading <workspace>…" overlay, shown while a slow fullRender builds panels off-DOM (their field
+  // reads). The scrim lives in .canvas (survives wb.innerHTML=""); JS delay-gates it so fast renders don't flash.
+  private showWorkbenchLoading() {
+    const cv = this.$("workbench")?.parentElement as HTMLElement | null; if (!cv) return;
+    let el = cv.querySelector<HTMLElement>(".wbloading");
+    if (!el) { el = mk("div", "wbloading"); el.innerHTML = `<div class="wbspin"></div><div class="wbltxt"></div>`; cv.appendChild(el); }
+    el.querySelector(".wbltxt")!.textContent = "Loading " + this.currentWS + "…";
+    el.classList.add("on");
+  }
+  private hideWorkbenchLoading() { this.$("workbench")?.parentElement?.querySelector(".wbloading")?.classList.remove("on"); }
+
   async fullRender() {
     if (this.disposed) return;   // a replaced app must not paint into the new app's DOM (shared IDs via global $)
     const wb = this.$("workbench");
@@ -570,11 +581,14 @@ export class App {
     // During the async build the OLD panels stay visible — but a click on a stale row would act on stale state
     // (e.g. select the wrong cluster → the card/rename lands on the wrong label). Freeze input until the swap.
     wb.style.pointerEvents = "none";
+    // Panels build off-DOM (reading their fields) before the swap below — on a slow link that's a long, frozen,
+    // feedback-less wait. Raise a "Loading…" scrim if the build outlasts a beat (fast/cached renders never flash it).
+    const spin = setTimeout(() => { if (token === this.renderToken) this.showWorkbenchLoading(); }, 350);
     const old: Record<string, DOMRect> = {};
     wb.querySelectorAll<HTMLElement>(".panel[data-pid]").forEach((el) => (old[el.dataset.pid!] = el.getBoundingClientRect()));
     const built: { dom: HTMLElement; afterAttach?: () => void }[] = [];
     for (const p of this.canvas) built.push(await this.panelEl(p));   // build off-DOM first; old panels stay visible meanwhile
-    if (token !== this.renderToken) return;   // superseded by a newer fullRender → it owns pointerEvents; discard this build
+    if (token !== this.renderToken) { clearTimeout(spin); return; }   // superseded by a newer fullRender → it owns pointerEvents + the overlay; discard this build
     this.coordSubs.forEach((u) => u()); this.coordSubs = [];   // tear down old panels' coord subscriptions before rebuilding
     this.teardowns.forEach((f) => { try { f(); } catch { /* a widget iframe destroy must not abort the render */ } }); this.teardowns = []; this.widgetHandles.clear();   // destroy old widget iframes + their host subscriptions; drop stale handles (re-registered on build)
     this.embeddings = []; this.compReactors = []; this.geneHoverSinks = []; this.reactorsStale = true;   // new reactors → repaint must dispatch the selection to them once
@@ -591,6 +605,7 @@ export class App {
     afters.forEach((f) => f());
     await this.repaint();
     this.renderRail(); this.renderWS();
+    clearTimeout(spin); this.hideWorkbenchLoading();   // build done → drop the "Loading…" scrim
     wb.style.pointerEvents = "";   // re-enable input now that the new panels + selection are in place
   }
 
@@ -1956,7 +1971,8 @@ export class App {
     // so you can select a population here and keep interrogating it after rearranging panels. Only colourBy is per-WS
     // (each workspace remembers its own colouring). fullRender rebuilds the new panels' reactors and re-dispatches the
     // carried selection to them, so the new layout lights up the same cells.
-    this.currentWS = name; this.coord.set({ colorBy: this.validColor(ws.colorBy) });
+    this.currentWS = name; this.renderWS();   // reflect the active tab IMMEDIATELY — fullRender's own renderWS is at the END of a build that can be minutes on a slow link
+    this.coord.set({ colorBy: this.validColor(ws.colorBy) });
     this.canvas = ws.panels.map((p) => this.newPanel(p));
     this.fullRender();
     if (name === "Annotate") this.ensureAnnotation();   // async: seed the working draft + an scType source, then re-render
