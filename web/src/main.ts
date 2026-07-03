@@ -39,6 +39,32 @@ let localDatasetOpen = false;
 // first open, and absent in embed/test contexts).
 const bootMsg = (m: string) => { const el = document.getElementById("boot-msg"); if (el) el.textContent = m; };
 const bootBar = (pct: number) => { const f = document.querySelector<HTMLElement>("#boot-bar > i"); if (f) f.style.width = pct + "%"; };
+
+// Counts in-flight store reads so the boot path can hold the splash until the first workspace's panels have
+// actually READ their data — not just mounted. On a slow link the panels paint async (facets read a field per
+// histogram, the dotplot reads its stats), so without this the layout reveals as empty frames while fields
+// download. Wrapping at the STORE boundary keeps this general (covers whatever a workspace pulls) and modular
+// (the boot path never learns panel specifics). `whenIdle` resolves once reads have been settled for `quietMs`
+// (to bridge between read waves), capped so a genuinely stuck read can't hold the splash forever.
+class TrackedStore {
+  inflight = 0;
+  get: (key: string) => Promise<Uint8Array | undefined>;
+  getRange?: (key: string, start: number, end: number) => Promise<Uint8Array | undefined>;
+  constructor(inner: LstarStore) {
+    this.get = (k) => this.track(inner.get(k));
+    if (inner.getRange) this.getRange = (k, a, b) => this.track(inner.getRange!(k, a, b));
+  }
+  private track<T>(p: Promise<T>): Promise<T> { this.inflight++; return p.finally(() => { this.inflight--; }); }
+  async whenIdle(quietMs = 300, capMs = 45000): Promise<void> {
+    const t0 = performance.now(); let quietSince = 0;
+    for (;;) {
+      if (performance.now() - t0 >= capMs) return;   // safety net — reveal rather than hang on a stuck read
+      await new Promise((r) => setTimeout(r, 80));
+      if (this.inflight === 0) { if (!quietSince) quietSince = performance.now(); else if (performance.now() - quietSince >= quietMs) return; }
+      else quietSince = 0;
+    }
+  }
+}
 const dropBootSplash = () => { const b = document.getElementById("boot"); if (b) { bootBar(100); b.classList.add("hide"); setTimeout(() => b.remove(), 300); } };
 
 // Build the whole stack (reader → view → coord → ctx → app) around `store` and mount it. Called once
@@ -52,8 +78,9 @@ async function bootStore(store: LstarStore, opts: { applyLinks?: boolean; freshS
   _pools = [];
 
   invalidateColor();   // drop the module-level colour caches (metadata snapshots + winsor bounds) from the PREVIOUS dataset — a same-named field must not reuse the old cells' codes/bounds (the view-keying in md() is the primary guard; this also clears the numeric winsor cache)
+  const tracked = new TrackedStore(store);   // count reads so we can hold the reveal until the first workspace's data lands (below)
   opts.progress?.stage("Reading the dataset…");
-  let ds = await openLstar(store as any);   // byte-range fast path + consolidated `.zmetadata` open
+  let ds = await openLstar(tracked as any);   // byte-range fast path + consolidated `.zmetadata` open
   // A store with NO embedding (a bare convert_anndata output, or a dropped .lstar.zarr with only counts +
   // labels) can't be plotted as-is. Compute a default layout in-browser — the SAME QC → PCA → UMAP → Louvain
   // → markers pipeline a dropped .h5ad gets — driving the SAME load checklist (opts.progress) so the user is
@@ -113,6 +140,12 @@ async function bootStore(store: LstarStore, opts: { applyLinks?: boolean; freshS
   try { await colorsFor(view, coord.state.colorBy); } catch { /* non-fatal — colour fills in as before */ }
   opts.progress?.stage("Rendering…");
   await app.mount(document.getElementById("app")!);
+  // mount() only BUILDS the first workspace — its panels then read their fields async (facets: a field per
+  // histogram; a dotplot: its stats). On a slow link that's the gap where the layout showed as empty frames.
+  // Hold here until those reads settle (store idle), so the app is revealed with data, not skeletons. Capped so
+  // a stuck read can't hang the splash; a same-origin/fast store settles in a tick, so this is a no-op there.
+  opts.progress?.stage("Loading the workspace…");
+  await tracked.whenIdle();
   // Phase 3a deep-links: an explicit ?view= (compact, inline) or ?session=<url> (full, fetched) reopens
   // a shared view — applied AFTER mount so it overrides the auto-restored local session. Only on the
   // first (URL) boot — a freshly dropped local dataset has no link to apply.
@@ -191,7 +224,7 @@ async function boot() {
     // The splash's thin bar ratchets forward one notch per stage (Reading dataset → embedding → Rendering),
     // then dropBootSplash fills it to 100%. Monotonic + count-based, so it stays sensible regardless of the
     // exact stage messages or how many fire.
-    let barStep = 0; const BAR = [18, 44, 68, 88];
+    let barStep = 0; const BAR = [16, 36, 56, 74, 90];
     const bumpBar = () => { bootBar(BAR[Math.min(barStep, BAR.length - 1)]); barStep++; };
     // A store with NO embedding computes a layout in-browser — that non-trivial work upgrades to the CHECKLIST
     // card (retiring the splash). A normal open never `step()`s, so it stays on the splash's status line.
