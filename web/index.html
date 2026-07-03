@@ -23,12 +23,14 @@
     @keyframes bootspin{to{transform:rotate(360deg)}}
     #boot .bb{font-weight:600;font-size:15px;color:var(--text,#d7dee8);letter-spacing:.2px}
     #boot .bb i{color:var(--teal,#3fb6b2);font-style:normal}
+    #boot #boot-bar{width:150px;height:2px;border-radius:2px;background:var(--line,#2a3340);overflow:hidden}
+    #boot #boot-bar > i{display:block;height:100%;width:8%;border-radius:2px;background:var(--cyan,#5cc8ff);transition:width .45s ease}
     #boot #boot-msg{font-size:12.5px}
   </style>
 </head>
 <body>
   <div id="app"></div>
-  <div id="boot"><div class="bi"><div class="bs"></div><div class="bb">pagoda<i>3</i></div><div id="boot-msg">Loading…</div></div></div>
+  <div id="boot"><div class="bi"><div class="bs"></div><div class="bb">pagoda<i>3</i></div><div id="boot-bar"><i></i></div><div id="boot-msg">Loading…</div></div></div>
   <script type="module" src="/src/main.ts"></script>
 </body>
 </html>

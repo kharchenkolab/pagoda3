@@ -38,7 +38,8 @@ let localDatasetOpen = false;
 // app is up (or a checklist card / error overlay has taken over). Idempotent + null-safe (it's gone after the
 // first open, and absent in embed/test contexts).
 const bootMsg = (m: string) => { const el = document.getElementById("boot-msg"); if (el) el.textContent = m; };
-const dropBootSplash = () => { const b = document.getElementById("boot"); if (b) { b.classList.add("hide"); setTimeout(() => b.remove(), 300); } };
+const bootBar = (pct: number) => { const f = document.querySelector<HTMLElement>("#boot-bar > i"); if (f) f.style.width = pct + "%"; };
+const dropBootSplash = () => { const b = document.getElementById("boot"); if (b) { bootBar(100); b.classList.add("hide"); setTimeout(() => b.remove(), 300); } };
 
 // Build the whole stack (reader → view → coord → ctx → app) around `store` and mount it. Called once
 // for the URL/meta store, and again to swap in a dropped local file (Phase 4) — re-init disposes the
@@ -180,11 +181,16 @@ async function boot() {
     const ac = new AbortController();
     let carded = false;
     const onSplash = () => !!document.getElementById("boot");   // the first-paint splash is covering us (first open)
+    // The splash's thin bar ratchets forward one notch per stage (Reading dataset → embedding → Rendering),
+    // then dropBootSplash fills it to 100%. Monotonic + count-based, so it stays sensible regardless of the
+    // exact stage messages or how many fire.
+    let barStep = 0; const BAR = [22, 52, 80];
+    const bumpBar = () => { bootBar(BAR[Math.min(barStep, BAR.length - 1)]); barStep++; };
     // A store with NO embedding computes a layout in-browser — that non-trivial work upgrades to the CHECKLIST
     // card (retiring the splash). A normal open never `step()`s, so it stays on the splash's status line.
     const raise = () => { if (!carded) { carded = true; dropBootSplash(); showLoading(title); beginChecklist("Opening " + title, "Preparing this dataset for viewing", () => ac.abort()); } };
     const progress: OpenProgress = {
-      stage: (m) => { if (carded) return; onSplash() ? bootMsg(m) : setLoadingStatus(m); },   // advance the splash (first open) or the small overlay (a re-open, once the splash is gone)
+      stage: (m) => { if (carded) return; if (onSplash()) { bootMsg(m); bumpBar(); } else setLoadingStatus(m); },   // advance the splash (first open) or the small overlay (a re-open, once the splash is gone)
       step: (id, label, status, detail) => { raise(); setStep(id, label, status, detail); },
       signal: ac.signal,
     };
