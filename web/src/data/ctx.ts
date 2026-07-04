@@ -7,12 +7,18 @@ import type { Role } from "../anno/roles.ts";
 
 export interface HandleMeta { prov?: string; caveat?: string; }
 
+// The label fields warmed first at init, in this preference order (a sensible default grouping order):
+// clusterings, then cell types, then the common design covariates. Any OTHER label field the store carries
+// is warmed too (below), just after these. Also the canonical ordering key for categoricalFields().
+const COMMON_LABELS = ["leiden", "cell_type", "sample", "condition", "patient", "outcome"];
+
 export class Ctx {
   view: LstarView;
   coord: Coord;
   embedding!: { data: Float32Array; n: number };                  // the default embedding ("umap")
   embeddings = new Map<string, { data: Float32Array; n: number }>(); // every 2D cell embedding, by field name
   private meta = new Map<string, Metadata>();
+  private metaInflight = new Map<string, Promise<Metadata>>();   // in-flight metadata reads, so concurrent metaOf() calls for the same field dedupe onto ONE read (init() fires them in parallel)
   private markerCache = new Map<string, Map<string, { gene: number; symbol: string; lfc: number; padj: number }[]>>();
   private annoNames = new Set<string>();   // app-side annotation layers (overlays), surfaced as categoricals
   private fieldRoles = new Map<string, Role>();   // app-side field classification (agent-inferred, user-overridable)
@@ -25,24 +31,32 @@ export class Ctx {
   excludedGeneCount(): number { return this.view.excludedGeneCount(); }
 
   async init() {
-    // load every 2D cell embedding (role=embedding) so panels can render alternates — e.g. the
-    // unintegrated UMAP beside the integrated one (the before/after integration view).
-    for (const nm of this.view.ds.fieldNames()) {
-      const f: any = this.view.ds.field(nm);
-      if (f && f.role === "embedding") { try { const e = await this.view.embedding(nm); if (e.dim === 2) this.embeddings.set(nm, { data: e.data, n: e.n }); } catch { /* skip */ } }
-    }
+    const ds = this.view.ds;
+    const names = ds.fieldNames();
+    const roleOf = (nm: string) => (ds.field(nm) as any)?.role;
+    // The labels to warm: the common ones first (a sensible default grouping order), then any other
+    // label field the store carries (e.g. `louvain` from an .h5ad) so an arbitrary dataset is
+    // colourable/faceted by its OWN clusterings out of the box, not just the names above.
+    const labels = new Set<string>();
+    for (const f of COMMON_LABELS) if (ds.hasField(f)) labels.add(f);
+    for (const nm of names) if (roleOf(nm) === "label") labels.add(nm);
+
+    // Fire EVERY independent read at once — all 2D cell embeddings + all label metadata. At network
+    // latency the old serial for-await version cost ~one round-trip PER field, which dominated the cold
+    // open (worst over a non-cacheable hosted zip: ~30 reads × ~300ms ≈ 10s). In parallel they collapse
+    // to ~one wave. These reads are independent, and metaOf is promise-cached (metaInflight), so later
+    // panel reads dedupe onto these same in-flight promises instead of re-fetching.
+    const embFields = names.filter((nm) => roleOf(nm) === "embedding");
+    const [embReads] = await Promise.all([
+      Promise.all(embFields.map(async (nm) => {
+        try { const e = await this.view.embedding(nm); return e.dim === 2 ? { nm, data: e.data, n: e.n } : null; } catch { return null; }
+      })),
+      Promise.all([...labels].map((nm) => this.metaOf(nm).catch(() => { /* not categorical — skip */ }))),
+    ]);
+    for (const r of embReads) if (r) this.embeddings.set(r.nm, { data: r.data, n: r.n });   // insert in field order → deterministic default-embedding fallback below
     this.embedding = this.embeddings.get("umap") || [...this.embeddings.values()][0] || await this.view.embedding("umap");
-    // warm the common labels
-    for (const f of ["leiden", "cell_type", "sample", "condition", "patient", "outcome"]) if (this.view.ds.hasField(f)) await this.metaOf(f);
-    // …and any other categorical label fields the store carries (e.g. `louvain` from an .h5ad), so an
-    // arbitrary dataset is colourable/faceted by its OWN clusterings out of the box, not just the names above.
-    for (const nm of this.view.ds.fieldNames()) {
-      if (this.meta.has(nm)) continue;
-      const f: any = this.view.ds.field(nm);
-      if (f && f.role === "label") { try { await this.metaOf(nm); } catch { /* not categorical — skip */ } }
-    }
     // default field roles: cell_type is an annotation source out of the box; the agent/user reclassify the rest
-    if (this.view.ds.hasField("cell_type")) this.fieldRoles.set("cell_type", "annotation");
+    if (ds.hasField("cell_type")) this.fieldRoles.set("cell_type", "annotation");
   }
 
   // ---- field roles (agent-inferred, user-overridable; see anno/roles.ts) ----
@@ -63,8 +77,17 @@ export class Ctx {
   embeddingOf(name?: string): { data: Float32Array; n: number } { return (name && this.embeddings.get(name)) || this.embedding; }
 
   async metaOf(field: string): Promise<Metadata> {
-    if (!this.meta.has(field)) this.meta.set(field, await this.view.metadata(field));
-    return this.meta.get(field)!;
+    const cached = this.meta.get(field);
+    if (cached) return cached;
+    // Dedupe concurrent reads of the SAME field onto one view.metadata() call: init() now warms all
+    // labels in parallel, and a panel may ask for a field that's already in flight. Without this the
+    // check-then-set race would fetch the same field twice.
+    let p = this.metaInflight.get(field);
+    if (!p) {
+      p = this.view.metadata(field).then((m) => { this.meta.set(field, m); return m; }).finally(() => { this.metaInflight.delete(field); });
+      this.metaInflight.set(field, p);
+    }
+    return p;
   }
 
   get n() { return this.view.nCells; }
@@ -216,7 +239,20 @@ export class Ctx {
 
   // The categorical metadata fields warmed so far (cell_type, leiden, sample, condition, …) — the fields you
   // can colour by, scope to, or focus on. A superset of groupings() (which is only the marker-precomputed ones).
-  categoricalFields(): string[] { const out: string[] = []; for (const [k, m] of this.meta) if (m.kind === "categorical") out.push(k); return out; }
+  categoricalFields(): string[] {
+    const out: string[] = [];
+    for (const [k, m] of this.meta) if (m.kind === "categorical") out.push(k);
+    // Deterministic order: init() now warms labels in PARALLEL, so `this.meta`'s insertion order is
+    // read-completion order (nondeterministic). Sort to the stable order the old serial warm produced —
+    // the common names first (in that order), then the store's own field order, then overlays/derived
+    // (not in the store) last, keeping their insertion order among themselves (V8 sort is stable).
+    const names = this.view.ds.fieldNames();
+    const rank = (k: string): number => {
+      const ci = COMMON_LABELS.indexOf(k); if (ci >= 0) return ci;
+      const fi = names.indexOf(k); return fi >= 0 ? COMMON_LABELS.length + fi : Number.MAX_SAFE_INTEGER;
+    };
+    return out.sort((a, b) => rank(a) - rank(b));
+  }
   /** The category values of a (cached) categorical field — sync; [] if unknown/unwarmed. */
   categoricalValues(field: string): string[] { const m = this.cachedCat(field); return m ? (m.categories as string[]) : []; }
 

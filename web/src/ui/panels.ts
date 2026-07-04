@@ -602,7 +602,13 @@ async function facetsBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltB
   const fields = ctx.metadataFields();
   const meta = new Map<string, any>();        // warmed categorical metadata (codes/categories/colors)
   const numMeta = new Map<string, any>();     // warmed numeric metadata (values/min/max)
-  for (const f of fields) { try { const m = await ctx.metaOf(f.name); if (m.kind === "categorical") meta.set(f.name, m); else numMeta.set(f.name, m); } catch { /* unreadable — skip */ } }
+  // Warm every facet field in PARALLEL. The categoricals are already cached by ctx.init (metaOf returns
+  // instantly); the numeric covariates (mito, n_umi, …) are NOT — so a serial loop here read them one at
+  // a time (~one round-trip each), a serial tail after the parallel init. Firing them together collapses
+  // that tail to one wave. metaOf is promise-cached, so this races nothing and dedupes concurrent asks.
+  await Promise.all(fields.map(async (f) => {
+    try { const m = await ctx.metaOf(f.name); (m.kind === "categorical" ? meta : numMeta).set(f.name, m); } catch { /* unreadable — skip */ }
+  }));
   const countCache = new Map<string, { value: string; count: number; ci: number }[]>();
   // per-value cell counts over ALL cells, sorted desc — the STABLE row order (kept under a cross-filter so rows
   // don't jump around when you select).
