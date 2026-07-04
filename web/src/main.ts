@@ -118,7 +118,7 @@ async function bootStore(store: LstarStore, opts: { applyLinks?: boolean; freshS
   // renders with the right field selected. A valid colour, or one a session will restore, is left as-is.
   try {
     const cb = coord.state.colorBy, mf = cb.startsWith("meta:") ? cb.slice(5) : "";
-    const cats = ctx.categoricalFields();
+    const cats = ctx.catalogCategoricals();   // what EXISTS (catalog) — not what's warmed; init no longer warms labels
     if (mf && !cats.includes(mf)) { const target = cats.includes(ctx.defaultGrouping()) ? ctx.defaultGrouping() : cats[0]; if (target) coord.setColor("meta:" + target); }
   } catch { /* */ }
   // the new dataset is read + prepared — now retire the old one (its workers + deck) and take over #app

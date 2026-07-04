@@ -58,30 +58,34 @@ test("ctx.catalogCategoricals() enumerates from the catalog with NOTHING warmed 
   // NOTHING warmed (init NOT called) — enumeration must still be complete
   assert.deepEqual(ctx.catalogCategoricals(), ["leiden", "cell_type", "sample"], "catalog lists all categoricals (incl. encoding 'categorical'), excludes numeric/matrix, ordered common-first");
   assert.equal(stats().metaCalls["leiden"], undefined, "catalog enumeration issues NO reads");
-  assert.deepEqual(ctx.categoricalFields(), [], "warmed accessor is empty before init");
-  // after warming, the warmed accessor matches the catalog (for the present categoricals)
+  assert.deepEqual(ctx.categoricalFields(), [], "warmed accessor is empty before anything is read");
+  // ctx.init() warms the universal minimum: embeddings + the DEFAULT GROUPING (leiden here) — the other labels
+  // stay LAZY (cell_type/sample are not warmed until a panel pulls them)
   await ctx.init();
-  assert.deepEqual(ctx.categoricalFields(), ["leiden", "cell_type", "sample"], "warmed set == catalog once init warms them");
+  assert.deepEqual(ctx.categoricalFields(), ["leiden"], "ctx.init() warms only the default grouping, not every label");
+  // materialize the rest on use (what a panel does when it renders) → the warmed accessor reflects it, catalog-ordered
+  await Promise.all([ctx.metaOf("leiden"), ctx.metaOf("cell_type"), ctx.metaOf("sample")]);
+  assert.deepEqual(ctx.categoricalFields(), ["leiden", "cell_type", "sample"], "warmed set == the materialized categoricals, catalog-ordered");
 });
 
-test("ctx.init() reads all embeddings + labels in PARALLEL (not serially)", async () => {
+test("ctx.init() warms embeddings + the default grouping in parallel; other labels stay lazy", async () => {
   const fields: FieldDef[] = [
     { name: "umap", role: "embedding" },
-    { name: "leiden", role: "label" },
-    { name: "cell_type", role: "label" },
-    { name: "sample", role: "label" },
-    { name: "condition", role: "label" },
-    { name: "louvain", role: "label" },   // an extra label not in COMMON_LABELS — still warmed
+    { name: "pca", role: "embedding" },
+    { name: "tsne", role: "embedding" },
+    { name: "leiden", role: "label", encoding: "utf8", span: ["cells"] },
+    { name: "cell_type", role: "label", encoding: "utf8", span: ["cells"] },
   ];
   const { view, stats } = makeFakeView(fields);
   const ctx = new Ctx(view, {} as any);
   await ctx.init();
   const s = stats();
-  // 1 embedding + 5 labels = 6 independent reads all in flight at once; the old serial loop peaked at 1.
-  assert.ok(s.maxConcurrent >= 6, `expected parallel reads, got maxConcurrent=${s.maxConcurrent}`);
-  // every label read EXACTLY once (no duplicate reads from the common-names + role-label loops overlapping)
-  for (const f of ["leiden", "cell_type", "sample", "condition", "louvain"]) assert.equal(s.metaCalls[f], 1, `${f} read once`);
-  assert.equal(s.embCalls["umap"], 1, "umap embedding read once (not re-read by the default-embedding fallback)");
+  // the 3 embeddings + the default grouping all warm at once (the universal minimum); old serial loop peaked at 1
+  assert.ok(s.maxConcurrent >= 3, `embeddings should warm in parallel, got maxConcurrent=${s.maxConcurrent}`);
+  assert.equal(s.embCalls["umap"], 1, "umap read once (not re-read by the default-embedding fallback)");
+  assert.equal(s.metaCalls["leiden"], 1, "the default grouping (leiden) IS warmed — the embedding's colour on first paint");
+  // every OTHER label is lazy — a panel materializes it when it renders
+  assert.equal(s.metaCalls["cell_type"], undefined, "a non-default label is NOT warmed by init (lazy)");
 });
 
 test("ctx.metaOf() dedupes concurrent reads of the same field onto one underlying read", async () => {
@@ -94,18 +98,20 @@ test("ctx.metaOf() dedupes concurrent reads of the same field onto one underlyin
   assert.equal(stats().metaCalls["leiden"], 1, "a later metaOf() is served from cache");
 });
 
-test("ctx.categoricalFields() is deterministic (common names first, then store order) despite parallel completion", async () => {
+test("categorical order is deterministic (common names first, then store order) — catalog + warmed", async () => {
   // store field order deliberately scrambled vs COMMON_LABELS; `louvain` is an extra store label.
   const fields: FieldDef[] = [
-    { name: "umap", role: "embedding" },
-    { name: "louvain", role: "label" },
-    { name: "condition", role: "label" },
-    { name: "leiden", role: "label" },
-    { name: "sample", role: "label" },
+    { name: "umap", role: "embedding", span: ["cells", "d2"] },
+    { name: "louvain", role: "label", encoding: "utf8", span: ["cells"] },
+    { name: "condition", role: "label", encoding: "utf8", span: ["cells"] },
+    { name: "leiden", role: "label", encoding: "utf8", span: ["cells"] },
+    { name: "sample", role: "label", encoding: "utf8", span: ["cells"] },
   ];
   const { view } = makeFakeView(fields);
   const ctx = new Ctx(view, {} as any);
-  await ctx.init();
-  // COMMON_LABELS order for the ones present (leiden, sample, condition), then store-order extras (louvain).
+  // CATALOG order (no reads): COMMON_LABELS-present first (leiden, sample, condition), then store-order (louvain)
+  assert.deepEqual(ctx.catalogCategoricals(), ["leiden", "sample", "condition", "louvain"]);
+  // the WARMED accessor matches once materialized (in scrambled completion order → still catalog-ordered)
+  await Promise.all([ctx.metaOf("louvain"), ctx.metaOf("condition"), ctx.metaOf("leiden"), ctx.metaOf("sample")]);
   assert.deepEqual(ctx.categoricalFields(), ["leiden", "sample", "condition", "louvain"]);
 });

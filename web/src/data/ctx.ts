@@ -34,24 +34,24 @@ export class Ctx {
     const ds = this.view.ds;
     const names = ds.fieldNames();
     const roleOf = (nm: string) => (ds.field(nm) as any)?.role;
-    // The labels to warm: the common ones first (a sensible default grouping order), then any other
-    // label field the store carries (e.g. `louvain` from an .h5ad) so an arbitrary dataset is
-    // colourable/faceted by its OWN clusterings out of the box, not just the names above.
-    const labels = new Set<string>();
-    for (const f of COMMON_LABELS) if (ds.hasField(f)) labels.add(f);
-    for (const nm of names) if (roleOf(nm) === "label") labels.add(nm);
-
-    // Fire EVERY independent read at once — all 2D cell embeddings + all label metadata. At network
-    // latency the old serial for-await version cost ~one round-trip PER field, which dominated the cold
-    // open (worst over a non-cacheable hosted zip: ~30 reads × ~300ms ≈ 10s). In parallel they collapse
-    // to ~one wave. These reads are independent, and metaOf is promise-cached (metaInflight), so later
-    // panel reads dedupe onto these same in-flight promises instead of re-fetching.
+    // UNIVERSAL MINIMUM only: warm the 2D cell embeddings (the shared spatial frame every workspace needs to
+    // render at all; small + cheap), in parallel. Labels / group-stats / markers are NOT warmed here — each
+    // panel materializes what IT renders, lazily (deduped by metaOf/the reader cache), and enumeration reads the
+    // CATALOG (catalogCategoricals), so the boot no longer warms a field just to make it enumerable. (Was: warm
+    // all embeddings + COMMON_LABELS + every label — a central recipe coupled to the default workspaces; the
+    // modular-provisioning refactor dissolves it so it can't go stale as data/panels/workspaces broaden.)
     const embFields = names.filter((nm) => roleOf(nm) === "embedding");
+    // ALSO warm the default grouping — the field the embedding colours by on first paint — CONCURRENTLY with the
+    // embeddings, so first paint isn't delayed one round-trip (measured: warming it here keeps the cold open ~1s;
+    // deferring it to the embedding's own fill cost ~+300ms + serialized the categoricals behind it). It's derived
+    // from the CATALOG (defaultGrouping = groupings()[prefs]), not a hardcoded field — every OTHER label stays lazy
+    // (the panels that render them pull them). This is the "universal minimum": the spatial frame + its colouring.
+    const dg = this.defaultGrouping();
     const [embReads] = await Promise.all([
       Promise.all(embFields.map(async (nm) => {
         try { const e = await this.view.embedding(nm); return e.dim === 2 ? { nm, data: e.data, n: e.n } : null; } catch { return null; }
       })),
-      Promise.all([...labels].map((nm) => this.metaOf(nm).catch(() => { /* not categorical — skip */ }))),
+      (this.view.ds.hasField(dg) ? this.metaOf(dg).catch(() => { /* not categorical — the panels will pull what they need */ }) : Promise.resolve(undefined)),
     ]);
     for (const r of embReads) if (r) this.embeddings.set(r.nm, { data: r.data, n: r.n });   // insert in field order → deterministic default-embedding fallback below
     this.embedding = this.embeddings.get("umap") || [...this.embeddings.values()][0] || await this.view.embedding("umap");

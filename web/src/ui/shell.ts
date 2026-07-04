@@ -963,7 +963,10 @@ export class App {
   // covariates, numeric, genes) + any set_field_roles override; flags the likely pseudobulk replicate. Lives here (not
   // viewpatch) because it composes live ctx accessors; the pure bucketing is fieldroles.ts (node-tested).
   describeData(): string {
-    const cats = this.ctx.categoricalFields().map((f) => ({ name: f, n: this.ctx.categoricalValues(f).length }));
+    // enumerate the FULL catalog (so the agent sees every categorical, even before it's materialized); the
+    // per-value count is best-effort from the warmed data (0 until a panel reads it — the default Metadata
+    // workspace warms them, so in practice the counts are populated).
+    const cats = this.ctx.catalogCategoricals().map((f) => ({ name: f, n: this.ctx.categoricalValues(f).length }));
     const numeric = this.ctx.metadataFields().filter((f) => f.kind === "numeric").map((f) => f.name);
     const b = fieldBuckets(this.ctx.groupings(), cats, numeric, this.ctx.view.nGenes, (f) => this.ctx.fieldRole(f) as any);
     const g = b.groupings.map((x) => `${x.name} (${x.n})`).join(", ") || "—";
