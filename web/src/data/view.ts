@@ -288,9 +288,18 @@ export class LstarView {
     const inSub = new Uint8Array(this.nCells); const nPer = new Int32Array(G);
     for (let i = 0; i < cellIds.length; i++) { const c = (cellIds as any)[i]; inSub[c] = 1; nPer[codes[c]]++; }
     const sum = new Float32Array(G * ng), nz = new Float32Array(G * ng);
-    const uniq = [...new Set(geneCols)]; let gi = 0;
-    const work = async () => { while (gi < uniq.length) { const gcol = uniq[gi++]; const { rows, vals } = await (this.ds as any).cscColumn("counts", gcol); for (let k = 0; k < rows.length; k++) { const c = rows[k]; if (!inSub[c]) continue; const gr = codes[c]; sum[gr * ng + gcol] += Math.log1p(vals[k]); nz[gr * ng + gcol]++; } } };
-    await Promise.all(Array.from({ length: Math.min(16, uniq.length) }, work));   // bounded fan-out of byte-range reads
+    const uniq = [...new Set(geneCols)];
+    const ds: any = this.ds;
+    // ONE coalesced batched read for all displayed marker columns (a few merged range requests) instead of
+    // ~one round-trip per column — the per-column reads all hit the SAME counts chunk and a browser serializes
+    // them on its per-URL cache lock. Fall back to the per-column path on an older reader without cscColumns.
+    const columns = typeof ds.cscColumns === "function"
+      ? (await ds.cscColumns("counts", uniq)).cols
+      : await Promise.all(uniq.map((g) => ds.cscColumn("counts", g)));
+    for (let u = 0; u < uniq.length; u++) {
+      const gcol = uniq[u], { rows, vals } = columns[u];
+      for (let k = 0; k < rows.length; k++) { const c = rows[k]; if (!inSub[c]) continue; const gr = codes[c]; sum[gr * ng + gcol] += Math.log1p(vals[k]); nz[gr * ng + gcol]++; }
+    }
     const mean = new Float32Array(G * ng), frac = new Float32Array(G * ng);
     for (const gcol of uniq) for (let gr = 0; gr < G; gr++) { const denom = nPer[gr] || 1; mean[gr * ng + gcol] = sum[gr * ng + gcol] / denom; frac[gr * ng + gcol] = nz[gr * ng + gcol] / denom; }
     return { mean, frac, n: nPer };
@@ -301,8 +310,9 @@ export class LstarView {
   // every subset, so once cached every later recompute is a cache hit. No-op when the store can't range-read.
   warmColumns(geneCols: number[]): void {
     const ds: any = this.ds;
-    if (typeof ds.cscColumn !== "function") return;
-    for (const g of [...new Set(geneCols)]) ds.cscColumn("counts", g).catch(() => { /* best-effort */ });
+    const cols = [...new Set(geneCols)];
+    if (typeof ds.cscColumns === "function") { ds.cscColumns("counts", cols).catch(() => { /* best-effort */ }); return; }   // one coalesced read warms the cache the subset-recompute reuses
+    if (typeof ds.cscColumn === "function") for (const g of cols) ds.cscColumn("counts", g).catch(() => { /* best-effort */ });   // fallback: older reader
   }
 
   // Ranked marker genes per group. Reads the precomputed table when present, else derives markers
