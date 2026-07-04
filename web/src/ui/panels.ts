@@ -1430,7 +1430,10 @@ function reindexGroupStats(raw: { groups: string[]; nGenes: number; mean: Float3
 
 async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltBody> {
   const grouping = p.group || ctx.defaultGrouping();
-  const markers = await ctx.markers(grouping);   // ROWS: all-cell markers — shared across scopes so two faceted panels align
+  // Warm the marker table AND the group stats CONCURRENTLY — they're the dotplot's two blocking reads and
+  // are independent, so on a hosted store they land in ~one wave instead of two serial ones. loadData()'s
+  // groupStatsCached() below then hits the warmed cache. (The stats warm is best-effort — loadData re-reads.)
+  const [markers] = await Promise.all([ctx.markers(grouping), ctx.groupStatsCached(grouping).catch(() => null)]);   // ROWS: all-cell markers — shared across scopes so two faceted panels align
   // FACETING: if the panel is scoped (e.g. condition=day0), compute the dots WITHIN that population. Columns stay in
   // the grouping's full order, so two scoped panels (day0 / day7) share identical rows AND columns — directly comparable.
   const scope = p.view?.scope as any;

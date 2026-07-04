@@ -207,11 +207,16 @@ export class LstarView {
     if (md.kind !== "categorical") throw new Error(`grouping ${grouping} is not categorical`);
     let groups: string[], S: Float64Array, SS: Float64Array, NE: Float64Array;
     if (this.ds.hasField(`stats_${grouping}_sum`) && this.ds.axisNames().includes(`groups_${grouping}`)) {
-      groups = await this.ds.axisLabels(`groups_${grouping}`);
       const f64 = (a: any) => (a instanceof Float64Array ? a : Float64Array.from(a));
-      S = f64((await this.ds.fieldDense(`stats_${grouping}_sum`)).data);
-      SS = f64((await this.ds.fieldDense(`stats_${grouping}_sumsq`)).data);
-      NE = f64((await this.ds.fieldDense(`stats_${grouping}_nexpr`)).data);
+      // the group labels + the three stat arrays are independent reads — fire them together so a hosted
+      // store pays ~one round-trip, not four serial ones (the dotplot's blocking build over a remote link).
+      const [gl, sumF, sqF, neF] = await Promise.all([
+        this.ds.axisLabels(`groups_${grouping}`),
+        this.ds.fieldDense(`stats_${grouping}_sum`),
+        this.ds.fieldDense(`stats_${grouping}_sumsq`),
+        this.ds.fieldDense(`stats_${grouping}_nexpr`),
+      ]);
+      groups = gl; S = f64(sumF.data); SS = f64(sqF.data); NE = f64(neF.data);
     } else {
       groups = md.categories.slice();
       const G = groups.length, code = md.codes;          // 0-based into categories (== groups order)
@@ -321,9 +326,14 @@ export class LstarView {
     const genes = await this.genes();
     const out = new Map<string, { gene: number; symbol: string; lfc: number; padj: number }[]>();
     if (this.ds.hasField(`markers_${grouping}_lfc`) && this.ds.axisNames().includes(`groups_${grouping}`)) {
-      const groups = await this.ds.axisLabels(`groups_${grouping}`);
-      const lfc = (await this.ds.fieldDense(`markers_${grouping}_lfc`)).data as ArrayLike<number>;
-      const padj = (await this.ds.fieldDense(`markers_${grouping}_padj`)).data as ArrayLike<number>;
+      // group labels + the lfc/padj tables are independent — read them in parallel (one wave, not three serial)
+      const [groups, lfcF, padjF] = await Promise.all([
+        this.ds.axisLabels(`groups_${grouping}`),
+        this.ds.fieldDense(`markers_${grouping}_lfc`),
+        this.ds.fieldDense(`markers_${grouping}_padj`),
+      ]);
+      const lfc = lfcF.data as ArrayLike<number>;
+      const padj = padjF.data as ArrayLike<number>;
       const G = groups.length, ng = genes.length;
       for (let g = 0; g < G; g++) {
         const rows = []; for (let j = 0; j < ng; j++) rows.push({ gene: j, symbol: genes[j], lfc: lfc[j * G + g], padj: padj[j * G + g] });
