@@ -117,7 +117,7 @@ export class App {
         { type: "Heatmap", title: "Marker genes", cap: "top genes per group", group: defGrp }] },
       "Annotate": { colorBy: defGroup, panels: [
         { type: "Embedding", title: "Embedding", bind: "embedding:main", view: { colorBy: "meta:annotation" } },
-        { type: "Reconcile", title: "Reconcile labels", group: "leiden" }] },
+        { type: "Reconcile", title: "Reconcile labels" }] },   // no hardcoded group — the panel picks a stored clustering that EXISTS (a local file may have louvain, not leiden)
       "QC triage": { colorBy: "qc:mito", panels: [
         { type: "Embedding", title: "Embedding", cap: "mito fraction", bind: "embedding:main" },
         { type: "CompositionBars", title: "Composition", cap: "by sample", bind: "composition:bySample" }] },

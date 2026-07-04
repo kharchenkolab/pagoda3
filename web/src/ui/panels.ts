@@ -997,8 +997,24 @@ async function boxBody(p: Panel, ctx: Ctx): Promise<BuiltBody> {
 // draft for the cluster's cells (last-write-wins). Exact agreement across sources gets a ✓; we deliberately do
 // NOT flag "conflict" on a string mismatch (vocabulary differs across sources — the matrix view + agent judge).
 async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltBody> {
-  const base = p.group || (ctx.groupings().includes("leiden") ? "leiden" : ctx.defaultGrouping());
-  const baseMeta: any = await ctx.view.metadata(base);
+  // Reconcile the annotation sources against a stored CLUSTERING (leiden / louvain / …), NOT the working
+  // draft or a derived layer. A local file (or an in-browser-computed .h5ad) may carry `louvain` — or its
+  // own clustering — rather than `leiden`, so pick a partition that actually EXISTS instead of hardcoding
+  // one, and show a clean message rather than throwing "no field leiden" if there's nothing to reconcile.
+  const clusters = ctx.groupings().filter((g) => !ctx.annotationLayers().includes(g) && !ctx.derivedGroupings().includes(g));
+  const cats = ctx.categoricalFields();
+  const base = (p.group && cats.includes(p.group)) ? p.group
+             : clusters.includes("leiden") ? "leiden"
+             : clusters[0] || cats.find((f) => /leiden|louvain|cluster/i.test(f)) || ctx.defaultGrouping();
+  let baseMeta: any;
+  try { baseMeta = await ctx.view.metadata(base); }
+  catch {
+    const m = mk("div", "panelerr");
+    m.textContent = (clusters.length || cats.length)
+      ? `couldn't read the base partition "${base}" — pick a grouping in the panel header`
+      : "No clustering to reconcile against yet — this dataset has no partition (leiden / louvain / …).";
+    return { el: m };
+  }
   if (baseMeta.kind !== "categorical") { const m = mk("div", "panelerr"); m.textContent = `base "${base}" is not a categorical partition`; return { el: m }; }
   const srcNames = ctx.annotationSources();
   const sources: { name: string; codes: ArrayLike<number>; categories: string[] }[] = [];
