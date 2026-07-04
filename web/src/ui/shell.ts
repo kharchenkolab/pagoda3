@@ -4,7 +4,7 @@ import { Coord, handleLabel, EntityRef } from "../data/coord.ts";
 import { Panel, PanelView, PanelHooks, CompReactor, BuiltBody, bodyFor, paintEmbedding, resolvePanelStyleFor } from "./panels.ts";
 import { EmbeddingView } from "../render/embedding.ts";
 import { Agent, Scope } from "../agent/agent.ts";
-import { agentPanelTypes } from "./panel-registry.ts";
+import { agentPanelTypes, getPanelType, type Need } from "./panel-registry.ts";
 import { checkLive } from "../agent/live.ts";
 import { saveCred, clearCred, loadCred, credStatus, detectCred, resolveMode, localCfg, setLocalCfg, setAgentOff, proxyCfg, setProxyCfg, proxyBase } from "../agent/credentials.ts";
 import { getProvider, providerModel, PROVIDER_KEY } from "../agent/providers.ts";
@@ -589,6 +589,16 @@ export class App {
       requestAnimationFrame(() => { el.style.transition = "transform .32s cubic-bezier(.2,.8,.2,1)"; el.style.transform = ""; });
     });
     this.renderRail(); this.renderWS();
+    // PROVISION the mounted panels' declared data needs EAGERLY + concurrently, BEFORE firing the fills — so the
+    // reads a panel would otherwise issue lazily on its own fill start ~one wave earlier (overlapping the shell
+    // mount), and the fills below dedupe onto the same caches. The prefetch is derived from the actual layout
+    // (each panel type's needs(spec, catalog)) — the panel-derived successor to the boot recipe, so it tracks
+    // what's mounted and stays correct as data/panels/workspaces broaden. See ctx.provision + panel-registry Need.
+    try {
+      const needs: Need[] = [];
+      for (const p of this.canvas) { const nd = getPanelType(p.type)?.needs; if (nd) needs.push(...nd(p, this.ctx)); }
+      if (needs.length) this.ctx.provision(needs);
+    } catch { /* provisioning is best-effort — the fills always pull what they need regardless */ }
     // FILL every panel's body concurrently + independently. Each swaps its spinner for the real body when ready,
     // registers its reactor + repaints (see panelShell). No input freeze / no workbench scrim: the shells ARE the
     // live layout, and a still-loading panel just shows its own inert spinner. A per-panel throw is caught in fill.

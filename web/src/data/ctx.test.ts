@@ -88,6 +88,30 @@ test("ctx.init() warms embeddings + the default grouping in parallel; other labe
   assert.equal(s.metaCalls["cell_type"], undefined, "a non-default label is NOT warmed by init (lazy)");
 });
 
+test("ctx.provision() warms declared needs eagerly + deduped (the panel-derived prefetch)", async () => {
+  // provision is the successor to the boot recipe: panels DECLARE what they read (Need[]) and provision warms
+  // it, so the prefetch tracks the mounted layout instead of a hardcoded list. Here: an {allObs} need (the
+  // facet browser) warms EVERY per-cell obs column; obs/grouping needs warm one field; all deduped.
+  const fields: FieldDef[] = [
+    { name: "umap", role: "embedding", span: ["cells", "d2"] },
+    { name: "leiden", role: "label", encoding: "utf8", span: ["cells"] },
+    { name: "cell_type", role: "label", encoding: "categorical", span: ["cells"] },
+    { name: "sample", role: "label", encoding: "utf8", span: ["cells"] },
+    { name: "counts", role: "measure", encoding: "csc", span: ["cells", "genes"] },   // matrix — NOT an obs column
+  ];
+  const { view, stats } = makeFakeView(fields);
+  const ctx = new Ctx(view, { state: { colorBy: "meta:leiden" } } as any);
+  // {allObs} (the MetadataFacets need) warms every obs column; a duplicate obs need for `leiden` must NOT re-read.
+  ctx.provision([{ kind: "allObs" }, { kind: "obs", field: "leiden" }, { kind: "grouping", name: "cell_type" }]);
+  await new Promise((r) => setTimeout(r, 40));   // provision is fire-and-forget — let the warms resolve
+  const m = stats().metaCalls;
+  assert.equal(m["leiden"], 1, "leiden warmed once despite allObs + an explicit obs need (deduped)");
+  assert.equal(m["cell_type"], 1, "cell_type warmed (obs column)");
+  assert.equal(m["sample"], 1, "sample warmed (obs column)");
+  assert.equal(m["counts"], undefined, "the count matrix is not an obs column — never warmed");
+  assert.deepEqual(ctx.categoricalFields().sort(), ["cell_type", "leiden", "sample"], "provisioned obs columns are now materialized");
+});
+
 test("ctx.metaOf() dedupes concurrent reads of the same field onto one underlying read", async () => {
   const { view, stats } = makeFakeView([{ name: "leiden", role: "label" }]);
   const ctx = new Ctx(view, {} as any);

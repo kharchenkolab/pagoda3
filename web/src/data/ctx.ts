@@ -4,6 +4,7 @@
 import type { LstarView, Metadata } from "./view.ts";
 import type { Coord, EntityRef } from "./coord.ts";
 import type { Role } from "../anno/roles.ts";
+import type { Need } from "../ui/panel-registry.ts";   // type-only (no runtime cycle: panel-registry is pure)
 
 export interface HandleMeta { prov?: string; caveat?: string; }
 
@@ -57,6 +58,31 @@ export class Ctx {
     this.embedding = this.embeddings.get("umap") || [...this.embeddings.values()][0] || await this.view.embedding("umap");
     // default field roles: cell_type is an annotation source out of the box; the agent/user reclassify the rest
     if (ds.hasField("cell_type")) this.fieldRoles.set("cell_type", "annotation");
+  }
+
+  // PROVISION the declared needs of the mounted panels — warm each eagerly + concurrently (deduped by
+  // metaOf / the group-stats / marker caches), so first paint isn't serialized behind each panel's OWN lazy
+  // fill. Fire-and-forget: the panel fills read the same caches and dedupe onto these reads. For a PRESENT
+  // field this is a prefetch; for an ABSENT capability the underlying method computes it once (markers /
+  // groupStats fall back to the counts matrix). This is the panel-derived successor to the boot recipe — the
+  // prefetch is a FUNCTION of the actual layout (each panel's needs(spec, catalog)), so it tracks what's
+  // mounted and can't go stale as data/panels/workspaces broaden. See panel-registry Need + shell.fullRender.
+  provision(needs: Need[]): void {
+    const done = new Set<string>();
+    const once = (k: string): boolean => (done.has(k) ? false : (done.add(k), true));
+    const known = (nm: string): boolean => this.view.ds.hasField(nm) || this.meta.has(nm);   // store field OR overlay (annotation/derived)
+    const warmObs = (nm: string) => { if (known(nm) && once("obs:" + nm)) void this.metaOf(nm).catch(() => { /* best-effort prefetch */ }); };
+    for (const nd of needs) {
+      try {
+        switch (nd.kind) {
+          case "obs": warmObs(nd.field); break;
+          case "allObs": if (once("allObs")) for (const f of this.metadataFields()) warmObs(f.name); break;
+          case "grouping": warmObs(nd.name); break;
+          case "groupStats": if (once("gs:" + nd.group)) void this.groupStatsCached(nd.group).catch(() => { /* absent grouping / bare store — the panel fill still computes it */ }); break;
+          case "markers": if (once("mk:" + nd.group)) void this.markers(nd.group).catch(() => { /* absent grouping — fill computes on demand */ }); break;
+        }
+      } catch { /* provisioning is best-effort — a panel fill always pulls what it needs regardless */ }
+    }
   }
 
   // ---- field roles (agent-inferred, user-overridable; see anno/roles.ts) ----

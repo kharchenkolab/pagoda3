@@ -1737,13 +1737,24 @@ function sessionLedgerBody(p: Panel, _ctx: Ctx, hooks: PanelHooks): BuiltBody {
 // ── Built-in panel-type registrations ── (the old hardcoded `bodyFor` switch + agent.ts REGISTRY, now a registry the
 // core looks up; `agent:true` = the model may add/reference it. An EXTERNAL module registers itself the same way —
 // zero edits here. Body signatures are normalized to (p, ctx, hooks).)
-registerPanelType({ type: "Embedding", body: embeddingBody, agent: true });
+registerPanelType({ type: "Embedding", body: embeddingBody, agent: true,
+  // colours by a per-cell field (the global colorBy, or a per-panel view override): warm it so first paint
+  // is coloured, not grey-then-recolour. "meta:X"/"qc:X" name an obs column; "gene:…" is a specific pick, left lazy.
+  needs: (p, ctx) => { const cb: string = (p.view?.colorBy ?? ctx.coord.state.colorBy) || ""; const f = cb.startsWith("meta:") ? cb.slice(5) : cb.startsWith("qc:") ? cb.slice(3) : ""; return f ? [{ kind: "obs", field: f }] : []; } });
 registerPanelType({ type: "DeTable", body: deBody, agent: true });
 registerPanelType({ type: "Volcano", body: (p, ctx) => volcanoBody(p, ctx), agent: true });
-registerPanelType({ type: "CompositionBars", body: compositionBody, agent: true });
-registerPanelType({ type: "MetadataFacets", body: facetsBody, agent: true });
+registerPanelType({ type: "CompositionBars", body: compositionBody, agent: true,
+  // stacks a grouping's proportions across samples: warm sample + the stack grouping.
+  needs: (p, ctx) => { const g = p.view?.colorBy?.startsWith("meta:") ? p.view.colorBy.slice(5) : ctx.defaultGrouping(); return [{ kind: "obs", field: "sample" }, { kind: "grouping", name: g }]; } });
+registerPanelType({ type: "MetadataFacets", body: facetsBody, agent: true,
+  // the cellxgene-style facet browser reads EVERY obs column — warm them all eagerly (this is the read that,
+  // left lazy, filled ~1.4s after mount; provisioning here recovers it). Panel-derived, scales with the data.
+  needs: () => [{ kind: "allObs" }] });
 registerPanelType({ type: "BoxBySample", body: (p, ctx) => boxBody(p, ctx), agent: true });
-registerPanelType({ type: "Heatmap", body: heatmapBody, agent: true });
+registerPanelType({ type: "Heatmap", body: heatmapBody, agent: true,
+  // the dotplot's two blocking reads are the grouping's markers (rows) + its group stats (dots) — warm both
+  // (+ the grouping itself) so the "loading markers" spinner clears fast instead of after two serial waves.
+  needs: (p, ctx) => { const g = p.group || ctx.defaultGrouping(); return [{ kind: "grouping", name: g }, { kind: "markers", group: g }, { kind: "groupStats", group: g }]; } });
 registerPanelType({ type: "Reconcile", body: reconcileBody, agent: true });
 registerPanelType({ type: "SessionLedger", body: sessionLedgerBody, agent: true, title: "Session" });
 registerPanelType({ type: "AnnoRecord", body: annoRecordBody, agent: true });

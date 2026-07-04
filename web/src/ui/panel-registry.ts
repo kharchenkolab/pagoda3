@@ -8,11 +8,29 @@
 // types bind at the registration site (panels.ts) where the actual body functions are passed.
 export type PanelBody = (p: any, ctx: any, hooks: any) => any;
 
+// A panel's DATA NEED — a declarative request the provisioner (ctx.provision) materializes EAGERLY + concurrently
+// (warm a present field / compute an absent capability once, deduped) at render time, instead of the panel pulling
+// it lazily on its own fill. This is the panel-derived successor to the boot recipe: each panel declares what IT
+// reads, as a FUNCTION of its spec + the catalog, so the prefetch tracks the actual mounted layout and can't go
+// stale as data/panels/workspaces broaden. Present field ⇒ a prefetch; absent capability ⇒ the underlying method
+// computes it once (markers/groupStats fall back to the counts matrix). See ctx.provision.
+export type Need =
+  | { kind: "obs"; field: string }         // a per-cell metadata column (categorical or numeric)
+  | { kind: "allObs" }                     // every per-cell metadata column (the Metadata facet browser needs them all)
+  | { kind: "grouping"; name: string }     // a categorical grouping (its codes/categories)
+  | { kind: "groupStats"; group: string }  // per-group sufficient stats for a grouping (dotplot/heatmap)
+  | { kind: "markers"; group: string };    // marker genes for a grouping
+
+// Derive a panel's needs from its spec + the ctx (catalog). Pure + synchronous — it declares intent; the
+// provisioner does the async warming. Omitted ⇒ the panel has no eager needs (fills purely lazily).
+export type PanelNeeds = (p: any, ctx: any) => Need[];
+
 export interface PanelTypeDef {
   type: string;          // the panel-type string (e.g. "Embedding", "Heatmap", "Widget")
   body: PanelBody;       // the renderer
   agent?: boolean;       // true ⇒ in the agent's VALIDATED type list (the model may add:<type> / reference it)
   title?: string;        // optional default title / menu label
+  needs?: PanelNeeds;    // optional: the data this panel type reads, provisioned eagerly at render (see Need)
 }
 
 const REGISTRY = new Map<string, PanelTypeDef>();
