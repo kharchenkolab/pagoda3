@@ -57,6 +57,17 @@ function parseCssColorToRGB(s: string): [number, number, number] | null {
   } catch { return null; }
 }
 
+// Does a labeling look like a PRISTINE cluster placeholder — one label per cluster carrying no biology
+// ("cluster 0", "c3", "7", "leiden 12")? Such a seed adds nothing over the base clustering, so the working
+// annotation should upgrade to a real source (scType). Distinct from a genuine cell_type (T cell, B cell…),
+// which MERGES clusters into named types. Majority-vote so a stray real label doesn't veto the upgrade.
+function looksLikeClusterPlaceholder(categories: string[]): boolean {
+  if (!categories?.length) return false;
+  const re = /^(cluster|clstr|clst|cl|c|leiden|louvain|seurat_clusters?|group|grp|k)?[\s._-]*\d+$/i;
+  const hits = categories.reduce((n, c) => n + (re.test(String(c).trim()) ? 1 : 0), 0);
+  return hits / categories.length >= 0.8;
+}
+
 const COLOR_OPTS: [string, string][] = [
   ["meta:leiden", "leiden"], ["meta:cell_type", "cell type"], ["meta:condition", "condition"],
   ["meta:sample", "sample"], ["qc:mito", "mito %"], ["gene:IL6", "IL6"], ["gene:CD3D", "CD3D"],
@@ -1335,7 +1346,13 @@ export class App {
       void this.runScType().then(() => {
         const L = this.annoLayers.get("annotation");
         const from = L?.provenance?.method === "seed" ? (L.provenance as any)?.params?.from : null;
-        if (from && from !== "cell_type" && this.annoLayers.has("scType")) void this.adoptSource("scType");   // pristine cluster placeholder → the real labeling
+        // Upgrade a PRISTINE placeholder draft to scType (the real labeling). "Pristine" = still the unedited seed
+        // AND carrying no biology: either it was seeded from the CLUSTERING, or from a `cell_type` whose VALUES are
+        // themselves cluster-id placeholders (a store may ship cell_type = "cluster 0".."cluster N"). A genuine
+        // cell_type (T cell, B cell…) is a real labeling and is kept as-is — the source-name check alone missed
+        // the placeholder-cell_type case, leaving the working draft on meaningless cluster ids.
+        const pristine = !!from && (from !== "cell_type" || looksLikeClusterPlaceholder(L!.categories));
+        if (pristine && this.annoLayers.has("scType")) void this.adoptSource("scType");
       }).catch(() => { /* scType is best-effort */ });
     }
     // pre-warm the working draft's per-label markers (a ~2s DE) in the background, so the FIRST record card's
