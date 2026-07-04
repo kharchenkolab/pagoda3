@@ -62,6 +62,45 @@ const COLOR_OPTS: [string, string][] = [
   ["meta:sample", "sample"], ["qc:mito", "mito %"], ["gene:IL6", "IL6"], ["gene:CD3D", "CD3D"],
 ];
 
+// The built-in workspaces (the code-defined starting layouts) — a PURE function of ctx so both the App and the
+// boot's eager-prepare (initialWorkspaceNeeds) read the SAME definitions with no drift. Each WS is a colorBy + a
+// panel list; the panels carry the specs the panel-type needs()/renderers read. defGrp = the catalog-derived
+// default grouping, so a store whose clustering isn't "leiden" still opens on a partition it actually has.
+export function buildDefaultWorkspaces(ctx: Ctx): Record<string, WS> {
+  const defGrp = ctx.defaultGrouping();
+  const defGroup = "meta:" + defGrp;
+  return {
+    Metadata: { colorBy: defGroup, panels: [
+      { type: "Embedding", title: "Embedding", cap: "all cells", bind: "embedding:main" },
+      { type: "MetadataFacets", title: "Metadata", cap: "browse facets", bind: "facets:all" }] },
+    "Markers": { colorBy: defGroup, panels: [
+      { type: "Embedding", title: "Embedding", cap: "clusters", bind: "embedding:main" },
+      { type: "Heatmap", title: "Marker genes", cap: "top genes per group", group: defGrp }] },
+    "Annotate": { colorBy: defGroup, panels: [
+      { type: "Embedding", title: "Embedding", bind: "embedding:main", view: { colorBy: "meta:annotation" } },
+      { type: "Reconcile", title: "Reconcile labels" }] },   // no hardcoded group — the panel picks a stored clustering that EXISTS (a local file may have louvain, not leiden)
+    "QC triage": { colorBy: "qc:mito", panels: [
+      { type: "Embedding", title: "Embedding", cap: "mito fraction", bind: "embedding:main" },
+      { type: "CompositionBars", title: "Composition", cap: "by sample", bind: "composition:bySample" }] },
+  };
+}
+
+// The data NEEDS of the FIRST workspace's panels — provisioned CONCURRENTLY with ctx.init (eager-prepare), so the
+// initial layout's reads (the facets' obs columns) overlap the embedding read instead of serializing one boot
+// phase later at fullRender. Panel-derived (getPanelType().needs) exactly like fullRender, just computed earlier;
+// the first WS is the default open (wsOrder[0]). A session that restores a different WS re-provisions at its own
+// fullRender — this only prefetches the common default-open path. Fulfils the plan invariant "init/view()
+// precomputes ≥ the first workspace's needs → immediate launch never waits on the prefetch".
+export function initialWorkspaceNeeds(ctx: Ctx): Need[] {
+  try {
+    const ws = buildDefaultWorkspaces(ctx);
+    const first = ws[Object.keys(ws)[0]];
+    const needs: Need[] = [];
+    for (const p of first.panels) { const nd = getPanelType(p.type!)?.needs; if (nd) needs.push(...nd(p, ctx)); }
+    return needs;
+  } catch { return []; }
+}
+
 export class App {
   ctx: Ctx; coord: Coord; agent!: Agent;
   root: HTMLElement;
@@ -105,23 +144,9 @@ export class App {
     this.ctx = ctx; this.coord = ctx.coord;
     // Preferred grouping (annotation > cell_type > clusters): the embedding colour AND the marker/composition
     // groupings all open on the SAME named partition, so the panels describe one biology by default.
-    const defGrp = ctx.defaultGrouping();
-    const defGroup = "meta:" + defGrp;
+    const defGroup = "meta:" + ctx.defaultGrouping();
     this.coord.set({ colorBy: defGroup });
-    this.WS = {
-      Metadata: { colorBy: defGroup, panels: [
-        { type: "Embedding", title: "Embedding", cap: "all cells", bind: "embedding:main" },
-        { type: "MetadataFacets", title: "Metadata", cap: "browse facets", bind: "facets:all" }] },
-      "Markers": { colorBy: defGroup, panels: [
-        { type: "Embedding", title: "Embedding", cap: "clusters", bind: "embedding:main" },
-        { type: "Heatmap", title: "Marker genes", cap: "top genes per group", group: defGrp }] },
-      "Annotate": { colorBy: defGroup, panels: [
-        { type: "Embedding", title: "Embedding", bind: "embedding:main", view: { colorBy: "meta:annotation" } },
-        { type: "Reconcile", title: "Reconcile labels" }] },   // no hardcoded group — the panel picks a stored clustering that EXISTS (a local file may have louvain, not leiden)
-      "QC triage": { colorBy: "qc:mito", panels: [
-        { type: "Embedding", title: "Embedding", cap: "mito fraction", bind: "embedding:main" },
-        { type: "CompositionBars", title: "Composition", cap: "by sample", bind: "composition:bySample" }] },
-    };
+    this.WS = buildDefaultWorkspaces(ctx);   // same defs the boot's eager-prepare reads (initialWorkspaceNeeds) — no drift
     this.wsOrder = Object.keys(this.WS);
     this.builtinWS = new Set(this.wsOrder);   // the code-defined workspaces — user-saved ones (the rest) get persisted
     this.root = mk("div", "app");

@@ -31,10 +31,16 @@ export class Ctx {
   geneFilterPatterns(): string[] { return this.view.geneFilterPatterns(); }
   excludedGeneCount(): number { return this.view.excludedGeneCount(); }
 
-  async init() {
+  async init(provide?: Need[]) {
     const ds = this.view.ds;
     const names = ds.fieldNames();
     const roleOf = (nm: string) => (ds.field(nm) as any)?.role;
+    // EAGER-PREPARE: warm the FIRST workspace's declared needs (the facets' obs columns, etc.) CONCURRENTLY with
+    // the embeddings + default grouping below — not one boot-phase later at fullRender. The caller passes the
+    // initial layout's needs (initialWorkspaceNeeds in shell.ts), so the panel-derived prefetch overlaps the
+    // embedding read instead of serializing behind it. Fire-and-forget + deduped: fullRender re-provisions the
+    // mounted panels (a cache hit for anything warmed here). Absent ⇒ ignored, panels compute on their own fill.
+    if (provide && provide.length) this.provision(provide);
     // UNIVERSAL MINIMUM only: warm the 2D cell embeddings (the shared spatial frame every workspace needs to
     // render at all; small + cheap), in parallel. Labels / group-stats / markers are NOT warmed here — each
     // panel materializes what IT renders, lazily (deduped by metaOf/the reader cache), and enumeration reads the

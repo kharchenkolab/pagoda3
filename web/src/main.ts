@@ -8,7 +8,7 @@ import { invalidateColor } from "./render/colors.ts";
 import { LstarView } from "./data/view.ts";
 import { Coord } from "./data/coord.ts";
 import { Ctx } from "./data/ctx.ts";
-import { App } from "./ui/shell.ts";
+import { App, initialWorkspaceNeeds } from "./ui/shell.ts";
 import { getProvider, PROVIDER_KEY, type Provider } from "./agent/providers.ts";
 import { ComputePool } from "./compute/pool.ts";
 import "./ui/example-panel.ts";   // an EXTERNAL panel module that self-registers (proves the panel registry — zero core edits)
@@ -112,7 +112,11 @@ async function bootStore(store: LstarStore, opts: { applyLinks?: boolean; freshS
   const coord = new Coord();
   const ctx = new Ctx(view, coord);
   opts.progress?.stage("Reading the embedding…");   // the layout coords are the big read on a hosted open
-  await ctx.init();
+  // EAGER-PREPARE: warm the FIRST workspace's data needs (the facets' obs columns) CONCURRENTLY with the embedding
+  // read — the panel-derived prefetch overlaps init instead of serializing behind it at fullRender (measured: the
+  // facets land in init's first wave rather than a boot phase later). Needs are read from the same workspace defs
+  // the App uses (initialWorkspaceNeeds → buildDefaultWorkspaces), so nothing here hardcodes a field list.
+  await ctx.init(initialWorkspaceNeeds(ctx));
   // The default colour is `meta:leiden`; if this dataset has no `leiden` field (a dropped .h5ad may have
   // `louvain`, or anything), fall back to a categorical it DOES have — before mount, so the embedding panel
   // renders with the right field selected. A valid colour, or one a session will restore, is left as-is.

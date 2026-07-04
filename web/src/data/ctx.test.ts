@@ -112,6 +112,26 @@ test("ctx.provision() warms declared needs eagerly + deduped (the panel-derived 
   assert.deepEqual(ctx.categoricalFields().sort(), ["cell_type", "leiden", "sample"], "provisioned obs columns are now materialized");
 });
 
+test("ctx.init(provide) eager-prepares the first workspace's needs CONCURRENTLY with the embedding", async () => {
+  // eager-prepare: the boot passes the first workspace's needs so the facets' obs columns warm in init's first
+  // wave (overlapping the embedding read), not one boot phase later at fullRender. Here init({allObs}) must warm
+  // EVERY obs column — including the non-default labels that plain init() leaves lazy — and all in parallel.
+  const fields: FieldDef[] = [
+    { name: "umap", role: "embedding", span: ["cells", "d2"] },
+    { name: "leiden", role: "label", encoding: "utf8", span: ["cells"] },       // default grouping
+    { name: "cell_type", role: "label", encoding: "categorical", span: ["cells"] },
+    { name: "sample", role: "label", encoding: "utf8", span: ["cells"] },
+  ];
+  const { view, stats } = makeFakeView(fields);
+  const ctx = new Ctx(view, {} as any);
+  await ctx.init([{ kind: "allObs" }]);
+  const s = stats();
+  assert.equal(s.metaCalls["leiden"], 1, "default grouping warmed (once — the init warm + allObs dedupe)");
+  assert.equal(s.metaCalls["cell_type"], 1, "a NON-default label IS warmed by init(allObs) — eager-prepared, not lazy");
+  assert.equal(s.metaCalls["sample"], 1, "every obs column eager-prepared");
+  assert.ok(s.maxConcurrent >= 3, `embedding + labels warm in parallel, got maxConcurrent=${s.maxConcurrent}`);
+});
+
 test("ctx.metaOf() dedupes concurrent reads of the same field onto one underlying read", async () => {
   const { view, stats } = makeFakeView([{ name: "leiden", role: "label" }]);
   const ctx = new Ctx(view, {} as any);
