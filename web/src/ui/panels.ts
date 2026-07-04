@@ -1002,7 +1002,7 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
   // own clustering — rather than `leiden`, so pick a partition that actually EXISTS instead of hardcoding
   // one, and show a clean message rather than throwing "no field leiden" if there's nothing to reconcile.
   const clusters = ctx.groupings().filter((g) => !ctx.annotationLayers().includes(g) && !ctx.derivedGroupings().includes(g));
-  const cats = ctx.categoricalFields();
+  const cats = ctx.catalogCategoricals();
   const base = (p.group && cats.includes(p.group)) ? p.group
              : clusters.includes("leiden") ? "leiden"
              : clusters[0] || cats.find((f) => /leiden|louvain|cluster/i.test(f)) || ctx.defaultGrouping();

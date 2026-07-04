@@ -66,7 +66,7 @@ export class Ctx {
   // field classified "annotation" — minus the working draft itself (that's the target, not a source).
   annotationSources(): string[] {
     const set = new Set<string>(this.annoNames);
-    for (const f of this.categoricalFields()) if (this.fieldRoles.get(f) === "annotation") set.add(f);
+    for (const f of this.catalogCategoricals()) if (this.fieldRoles.get(f) === "annotation") set.add(f);
     set.delete("annotation");
     return [...set];
   }
@@ -237,21 +237,32 @@ export class Ctx {
     this.xlateCache.set(key, out); return out;
   }
 
-  // The categorical metadata fields warmed so far (cell_type, leiden, sample, condition, …) — the fields you
-  // can colour by, scope to, or focus on. A superset of groupings() (which is only the marker-precomputed ones).
+  // The categorical fields that EXIST in the dataset — enumerated from the CATALOG (field encodings/roles) +
+  // annotation layers + derived groupings. Synchronous and independent of what's been READ, so enumeration
+  // surfaces (the agent's CellWorld, existence checks, pickers) see every categorical even before its codes are
+  // materialized. Use this for "what categoricals exist"; use categoricalFields() only where the WARMED codes
+  // are needed. (Decouples enumerate-from-catalog from materialize-lazily — the boot recipe no longer has to
+  // warm a field just so it's enumerable.)
+  catalogCategoricals(): string[] {
+    return this.orderCats(this.metadataFields().filter((f) => f.kind === "categorical").map((f) => f.name));
+  }
+  // The categorical fields MATERIALIZED so far (codes/categories read into `this.meta`) — a subset of
+  // catalogCategoricals(). Prefer catalogCategoricals() for enumeration; reach for this only where the warmed
+  // data itself is consumed (categoricalValues / cachedCat), e.g. a crosstab that needs per-value counts.
   categoricalFields(): string[] {
     const out: string[] = [];
     for (const [k, m] of this.meta) if (m.kind === "categorical") out.push(k);
-    // Deterministic order: init() now warms labels in PARALLEL, so `this.meta`'s insertion order is
-    // read-completion order (nondeterministic). Sort to the stable order the old serial warm produced —
-    // the common names first (in that order), then the store's own field order, then overlays/derived
-    // (not in the store) last, keeping their insertion order among themselves (V8 sort is stable).
-    const names = this.view.ds.fieldNames();
+    return this.orderCats(out);
+  }
+  // Stable order shared by both accessors: the common names first (COMMON_LABELS order), then the store's own
+  // field order, then overlays/derived (not in the store) last, keeping their relative order (V8 sort is stable).
+  private orderCats(names: string[]): string[] {
+    const fnames = this.view.ds.fieldNames();
     const rank = (k: string): number => {
       const ci = COMMON_LABELS.indexOf(k); if (ci >= 0) return ci;
-      const fi = names.indexOf(k); return fi >= 0 ? COMMON_LABELS.length + fi : Number.MAX_SAFE_INTEGER;
+      const fi = fnames.indexOf(k); return fi >= 0 ? COMMON_LABELS.length + fi : Number.MAX_SAFE_INTEGER;
     };
-    return out.sort((a, b) => rank(a) - rank(b));
+    return names.slice().sort((a, b) => rank(a) - rank(b));
   }
   /** The category values of a (cached) categorical field — sync; [] if unknown/unwarmed. */
   categoricalValues(field: string): string[] { const m = this.cachedCat(field); return m ? (m.categories as string[]) : []; }
@@ -281,7 +292,7 @@ export class Ctx {
       const perCell = span.length ? (span.length === 1 && span[0] === "cells")
                                   : (Array.isArray(f.shape) && f.shape.length === 1 && f.shape[0] === this.n);
       if (!perCell) continue;
-      const kind: "categorical" | "numeric" = (f.encoding === "utf8" || f.role === "label") ? "categorical" : "numeric";
+      const kind: "categorical" | "numeric" = (f.encoding === "utf8" || f.encoding === "categorical" || f.role === "label") ? "categorical" : "numeric";
       const group: "design" | "covariate" | "annotation" = kind === "numeric" ? "covariate"
         : (groupingSet.has(name) || this.fieldRoles.get(name) === "annotation") ? "annotation" : "design";
       out.push({ name, kind, group }); seen.add(name);
@@ -378,7 +389,7 @@ export class Ctx {
     }
     // candidate categoricals the agent may classify as annotation sources (role still unset) — name (k: a,b,c…)
     const known = new Set(this.groupings());
-    const cands = this.categoricalFields().filter((f) => !known.has(f) && this.fieldRole(f) === undefined);
+    const cands = this.catalogCategoricals().filter((f) => !known.has(f) && this.fieldRole(f) === undefined);
     if (cands.length) parts.push("FIELDS to classify (set_field_roles if any are cell-type annotations vs covariate/qc): " + cands.map((f) => { const m = this.cachedCat(f); return `${f} (${m ? m.categories.length + ": " + m.categories.slice(0, 5).join(", ") : "?"})`; }).join("; "));
     return (this.agentBrief = parts.join(". "));
   }

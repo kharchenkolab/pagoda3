@@ -6,7 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Ctx } from "./ctx.ts";
 
-type FieldDef = { name: string; role: string };
+type FieldDef = { name: string; role: string; encoding?: string; span?: string[] };
 
 // A fake LstarView that records read concurrency + per-field call counts. Every read parks on a timer,
 // so if init() awaited them serially the peak concurrency would be 1; in parallel it equals the number
@@ -28,6 +28,7 @@ function makeFakeView(fields: FieldDef[], latencyMs = 15) {
   };
   const view: any = {
     ds,
+    nCells: 100,   // ctx.n → view.nCells (metadataFields' per-cell shape check)
     embedding(nm: string) {
       embCalls[nm] = (embCalls[nm] || 0) + 1;
       return track(async () => { await delay(); return { data: new Float32Array([0, 0]), n: 1, dim: 2 }; });
@@ -39,6 +40,29 @@ function makeFakeView(fields: FieldDef[], latencyMs = 15) {
   };
   return { view, stats: () => ({ maxConcurrent, metaCalls, embCalls }) };
 }
+
+test("ctx.catalogCategoricals() enumerates from the catalog with NOTHING warmed (no reads)", async () => {
+  // the keystone of the modular-provisioning refactor: "what categoricals EXIST" must come from the catalog
+  // (field encodings/roles), not from what's been READ — so the boot recipe no longer has to warm a field
+  // just to make it enumerable (for the agent world / pickers / existence checks).
+  const fields: FieldDef[] = [
+    { name: "umap", role: "embedding", span: ["cells", "d2"] },
+    { name: "leiden", role: "label", encoding: "utf8", span: ["cells"] },
+    { name: "cell_type", role: "label", encoding: "categorical", span: ["cells"] },   // pandas Categorical → encoding "categorical"
+    { name: "sample", role: "label", encoding: "utf8", span: ["cells"] },
+    { name: "mito", role: "measure", encoding: "dense", span: ["cells"] },             // numeric → NOT a categorical
+    { name: "counts", role: "measure", encoding: "csc", span: ["cells", "genes"] },    // matrix → excluded
+  ];
+  const { view, stats } = makeFakeView(fields);
+  const ctx = new Ctx(view, {} as any);
+  // NOTHING warmed (init NOT called) — enumeration must still be complete
+  assert.deepEqual(ctx.catalogCategoricals(), ["leiden", "cell_type", "sample"], "catalog lists all categoricals (incl. encoding 'categorical'), excludes numeric/matrix, ordered common-first");
+  assert.equal(stats().metaCalls["leiden"], undefined, "catalog enumeration issues NO reads");
+  assert.deepEqual(ctx.categoricalFields(), [], "warmed accessor is empty before init");
+  // after warming, the warmed accessor matches the catalog (for the present categoricals)
+  await ctx.init();
+  assert.deepEqual(ctx.categoricalFields(), ["leiden", "cell_type", "sample"], "warmed set == catalog once init warms them");
+});
 
 test("ctx.init() reads all embeddings + labels in PARALLEL (not serially)", async () => {
   const fields: FieldDef[] = [

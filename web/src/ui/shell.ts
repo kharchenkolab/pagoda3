@@ -248,7 +248,7 @@ export class App {
   datasetFingerprint(): Fingerprint {
     try {
       const overlay = new Set<string>([...this.ctx.annotationLayers(), ...this.ctx.derivedGroupings()]);
-      return { n: this.ctx.n, fields: this.ctx.categoricalFields().filter((f) => !overlay.has(f)).sort() };
+      return { n: this.ctx.n, fields: this.ctx.catalogCategoricals().filter((f) => !overlay.has(f)).sort() };
     } catch { return { n: 0, fields: [] }; }
   }
   // AUTHORED data → materialized in full: every annotation layer's per-cell codes + label names + CAP records.
@@ -983,7 +983,7 @@ export class App {
   // values come from ctx, so they can't go stale. Central per-type (like viewpatch's normalizer that enforces them);
   // A2 will add proper field-ROLE typing for the scope/covariate hint. Returns undefined for types with no data config.
   private panelDataInputs(type: string): Record<string, string> | undefined {
-    const grps = this.ctx.groupings(), cats = this.ctx.categoricalFields();
+    const grps = this.ctx.groupings(), cats = this.ctx.catalogCategoricals();
     const covs = cats.filter((f) => !grps.includes(f));   // rough split (A2 types these properly): non-clustering categoricals read as covariates
     const scopeHint = `restrict to ONE population — scopeGrouping+scopeValue, any categorical${covs.length ? ` (covariates: ${covs.join(", ")})` : ""}; clearScope to undo`;
     if (type === "Heatmap") return {
@@ -1049,7 +1049,7 @@ export class App {
     const all = () => [...this.canvas, ...this.rail];
     const world: World = {
       panelTypes: agentPanelTypes(),
-      categoricals: this.ctx.categoricalFields(),
+      categoricals: this.ctx.catalogCategoricals(),
       groupings: this.ctx.groupings(),
       valuesOf: (f) => this.ctx.categoricalValues(f),
       geneExists: (s) => geneSet.has(s),
@@ -1286,7 +1286,7 @@ export class App {
       // first seed on scType: awaiting it left the panel empty for the seconds scType took (the "empty first visit"
       // bug), and the earlier "seed from scType" fix caused exactly that. (A plain obs cell_type isn't in groupings(),
       // so check the field itself.)
-      const seedSrc = this.ctx.categoricalFields().includes("cell_type") ? "cell_type" : this.ctx.defaultGrouping();
+      const seedSrc = this.ctx.catalogCategoricals().includes("cell_type") ? "cell_type" : this.ctx.defaultGrouping();
       const m: any = await this.ctx.view.metadata(seedSrc);
       if (m.kind === "categorical") { const layer = seedLayer("annotation", "derived", { codes: m.codes, categories: m.categories }); layer.provenance = { method: "seed", params: { from: seedSrc } }; this.commitLayer(layer, true); }   // render NOW — the table + card appear immediately
     }
@@ -1346,7 +1346,7 @@ export class App {
   // Resolve a cell-set expression (the same algebra as compute) to indices — used by the annotate tool.
   resolveCells(spec: CellSet): { ids: Int32Array; error?: string } {
     const ctx = this.ctx;
-    const world: CellWorld = { categoricals: ctx.categoricalFields(), valuesOf: (f) => ctx.categoricalValues(f), hasSelection: this.selectionForCompute().length > 0, hasFocus: !!ctx.coord.state.focus };
+    const world: CellWorld = { categoricals: ctx.catalogCategoricals(), valuesOf: (f) => ctx.categoricalValues(f), hasSelection: this.selectionForCompute().length > 0, hasFocus: !!ctx.coord.state.focus };
     const e = validateCellSet(spec, world, "cells"); if (e) return { ids: new Int32Array(0), error: e };
     const env: CellEnv = { n: ctx.n, category: (g, v) => ctx.cellsOfCategory(g, v), selection: () => this.selectionForCompute(), focus: () => ctx.coord.state.focus?.ids ?? [] };
     return { ids: Int32Array.from(resolveCellSet(spec, env)) };
@@ -1402,7 +1402,7 @@ export class App {
   setFieldRoles(patch: { annotation?: string[]; partition?: string[]; covariate?: string[]; qc?: string[] }): string {
     const applied: string[] = [];
     for (const role of ["annotation", "partition", "covariate", "qc"] as const) {
-      for (const n of (patch[role] || [])) { if (this.ctx.categoricalFields().includes(n) || this.ctx.annotationLayers().includes(n)) { this.ctx.setFieldRole(n, role); applied.push(`${n}=${role}`); } }
+      for (const n of (patch[role] || [])) { if (this.ctx.catalogCategoricals().includes(n) || this.ctx.annotationLayers().includes(n)) { this.ctx.setFieldRole(n, role); applied.push(`${n}=${role}`); } }
     }
     if (applied.length) this.fullRender();
     return applied.length ? `roles set: ${applied.join(", ")}` : "no valid fields in the patch";
@@ -1655,7 +1655,7 @@ export class App {
     const ctx = this.ctx;
     if (input.stat !== "de" && input.stat !== "overdispersion" && input.stat !== "pseudobulk") return { error: `unknown stat "${input.stat}" — use "de", "pseudobulk", or "overdispersion"` };
     if (!input.A) { if (input.stat === "overdispersion") input.A = { all: true } as CellSet; else return { error: "A (a cell set) is required" }; }   // global variable genes when no scope given
-    const world: CellWorld = { categoricals: ctx.categoricalFields(), valuesOf: (f) => ctx.categoricalValues(f), hasSelection: this.selectionForCompute().length > 0, hasFocus: !!ctx.coord.state.focus };
+    const world: CellWorld = { categoricals: ctx.catalogCategoricals(), valuesOf: (f) => ctx.categoricalValues(f), hasSelection: this.selectionForCompute().length > 0, hasFocus: !!ctx.coord.state.focus };
     const eA = validateCellSet(input.A, world, "A"); if (eA) return { error: eA };
     const needsB = input.stat === "de" || input.stat === "pseudobulk";
     const Bexpr: CellSet | undefined = needsB ? (input.B ?? ({ complement: input.A } as CellSet)) : undefined;
@@ -1726,7 +1726,7 @@ export class App {
     if (input.stat === "pseudobulk") {
       const rep = String(input.replicate || "").trim();
       if (!rep) return { error: "pseudobulk needs `replicate` — the donor/sample field that defines biological replicates (e.g. replicate:'sample'). The cells in A and B are aggregated to one value per replicate, then tested across replicates." };
-      if (!ctx.categoricalFields().includes(rep)) return { error: `pseudobulk: replicate "${rep}" is not a categorical field (have: ${ctx.categoricalFields().join(", ")})` };
+      if (!ctx.catalogCategoricals().includes(rep)) return { error: `pseudobulk: replicate "${rep}" is not a categorical field (have: ${ctx.catalogCategoricals().join(", ")})` };
       const md: any = await ctx.view.metadata(rep);
       if (md.kind !== "categorical") return { error: `pseudobulk: replicate "${rep}" must be categorical` };
       const G = md.categories.length, ng = ctx.view.nGenes, minCells = 10;
@@ -1952,7 +1952,7 @@ export class App {
   // handle; otherwise substitute a categorical the dataset actually has, so the embedding isn't left blank.
   private validColor(handle: string): string {
     if (!handle || !handle.startsWith("meta:")) return handle;
-    const cats = this.ctx.categoricalFields();
+    const cats = this.ctx.catalogCategoricals();
     if (cats.includes(handle.slice(5))) return handle;
     const dg = this.ctx.defaultGrouping();
     const target = cats.includes(dg) ? dg : cats[0];
@@ -2455,7 +2455,7 @@ export class App {
     if ((sel as any)?.kind === "category") A.push({ kind: "category", grouping: (sel as any).grouping, value: String((sel as any).value) });
     else if (selIds.length) A.push({ kind: "cells", ids: selIds.slice(), label: `selection · ${selIds.length.toLocaleString()}` });
     let method: "de" | "pseudobulk" = "de";
-    let replicate = this.likelyReplicate() || ctx.categoricalFields()[0] || "";
+    let replicate = this.likelyReplicate() || ctx.catalogCategoricals()[0] || "";
     let target: "A" | "B" = "B";
     let dragRef: { m: Member; from: "A" | "B" } | null = null;
     const esc = (s: string) => String(s).replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]!));
@@ -2502,7 +2502,7 @@ export class App {
         `<div class="delab a">Group A</div><div class="degrp${A.length ? "" : " empty"}" data-box="A">${chips(A, "A")}</div>` +
         `<div class="delab b">Group B</div><div class="degrp${B.length ? "" : " empty"}" data-box="B">${chips(B, "B")}</div>` +
         `<div class="derow">add <select class="deadd" style="flex:1;min-width:0">${addOptions()}</select> to <button class="detgt mini${target === "A" ? " ona" : ""}" data-t="A">A</button><button class="detgt mini${target === "B" ? " onb" : ""}" data-t="B">B</button></div>` +
-        `<div class="derow" style="border-top:1px solid var(--line2);padding-top:9px">test <select class="demethod"><option value="de"${pb ? "" : " selected"}>cell-level (ranking)</option><option value="pseudobulk"${pb ? " selected" : ""}>pseudobulk (paired)</option></select>${pb ? ` across <select class="derep">${ctx.categoricalFields().map((f) => `<option value="${esc(f)}"${f === replicate ? " selected" : ""}>${esc(f)}</option>`).join("")}</select>` : ""}</div>` +
+        `<div class="derow" style="border-top:1px solid var(--line2);padding-top:9px">test <select class="demethod"><option value="de"${pb ? "" : " selected"}>cell-level (ranking)</option><option value="pseudobulk"${pb ? " selected" : ""}>pseudobulk (paired)</option></select>${pb ? ` across <select class="derep">${ctx.catalogCategoricals().map((f) => `<option value="${esc(f)}"${f === replicate ? " selected" : ""}>${esc(f)}</option>`).join("")}</select>` : ""}</div>` +
         `<div class="deread"><span class="ca">A:</span> ${fmt(Math.max(0, aN - overlap))} cells &nbsp;vs&nbsp; <span class="cb">B:</span> ${bRest ? "rest · " + fmt(bN) : fmt(Math.max(0, bN - overlap)) + " cells"}</div>` +
         (note ? `<div class="denote">${note}</div>` : "") +
         `<div class="defoot"><span style="font-size:11px;color:var(--faint);margin-right:auto">${pb ? "paired t across " + esc(replicate) + " → real p-value" : "ranking-grade · no p-value"}</span><button class="mini derun"${A.length ? "" : " disabled"}>Run DE</button></div>`;
@@ -2756,7 +2756,7 @@ export class App {
     // drop options that don't apply to THIS dataset — the choices list is seeded with common defaults
     // (leiden/cell_type/…) + grows as you colour by things, so on a dropped file it would otherwise offer
     // categories/genes it doesn't have. meta: → the categorical must exist; gene: → the gene must exist.
-    const hasField = (n: string) => this.ctx.view.ds.hasField(n) || this.ctx.groupings().includes(n) || this.ctx.categoricalFields().includes(n);
+    const hasField = (n: string) => this.ctx.view.ds.hasField(n) || this.ctx.groupings().includes(n) || this.ctx.catalogCategoricals().includes(n);
     const applies = ([h]: [string, string]) => {
       const i = h.indexOf(":"), cls = h.slice(0, i), name = h.slice(i + 1);
       if (cls === "meta") return hasField(name);
