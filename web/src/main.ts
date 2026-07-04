@@ -4,7 +4,7 @@ import { localStore } from "./data/localstore.ts";
 import { installOpenLocal } from "./ui/openlocal.ts";
 import { showLoading, setLoadingStatus, hideLoading, showLoadError, beginChecklist, setStep, finishChecklist, showPicker, type OpenProgress } from "./ui/loading.ts";
 import { finalizeSpec, storeToSpec } from "./data/intake.ts";
-import { invalidateColor, colorsFor } from "./render/colors.ts";
+import { invalidateColor } from "./render/colors.ts";
 import { LstarView } from "./data/view.ts";
 import { Coord } from "./data/coord.ts";
 import { Ctx } from "./data/ctx.ts";
@@ -40,19 +40,12 @@ let localDatasetOpen = false;
 const bootMsg = (m: string) => { const el = document.getElementById("boot-msg"); if (el) el.textContent = m; };
 const bootBar = (pct: number) => { const f = document.querySelector<HTMLElement>("#boot-bar > i"); if (f) f.style.width = pct + "%"; };
 
-// Counts in-flight store reads so the boot path can hold the splash until the first workspace's panels have
-// actually READ their data — not just mounted. On a slow link the panels paint async (facets read a field per
-// histogram, the dotplot reads its stats), so without this the layout reveals as empty frames while fields
-// download. Wrapping at the STORE boundary keeps this general (covers whatever a workspace pulls) and modular
-// (the boot path never learns panel specifics). `whenIdle` resolves once reads have been settled for `quietMs`
-// (to bridge between read waves), capped so a genuinely stuck read can't hold the splash forever.
-class TrackedStore {
-  inflight = 0;
-  // LRU byte cache for whole-key `get` reads (one zarr chunk). lstar's reader caches its byte-RANGE reads
-  // (csrRows) but NOT `_get` (fieldDense — facets, dotplot stats, embedding), so switching workspaces re-fetched
-  // the SAME fields over the network every time (fast on localhost's HTTP cache, slow over a hosted zip). Cache
-  // the chunk bytes here, keyed by key, LRU-evicted to a budget → a re-visited workspace reads from memory, no
-  // network. getRange is left to the reader's own _rcache (don't double-cache the range path).
+// LRU byte cache for whole-key `get` reads (one zarr chunk). lstar's reader caches its byte-RANGE reads
+// (csrRows) but NOT `_get` (fieldDense — facets, dotplot stats, embedding), so switching workspaces re-fetched
+// the SAME fields over the network every time (fast on localhost's HTTP cache, slow over a hosted zip). Cache
+// the chunk bytes here, keyed by key, LRU-evicted to a budget → a re-visited workspace reads from memory, no
+// network. getRange is left to the reader's own _rcache (don't double-cache the range path).
+class CachingStore {
   private cache = new Map<string, Uint8Array>();
   private cacheBytes = 0;
   private budget = 128 * 1024 * 1024;   // 128MB
@@ -60,26 +53,16 @@ class TrackedStore {
   getRange?: (key: string, start: number, end: number) => Promise<Uint8Array | undefined>;
   constructor(inner: LstarStore) {
     this.get = (k) => this.cachedGet(inner, k);
-    if (inner.getRange) this.getRange = (k, a, b) => this.track(inner.getRange!(k, a, b));
+    if (inner.getRange) this.getRange = (k, a, b) => inner.getRange!(k, a, b);
   }
   private async cachedGet(inner: LstarStore, k: string): Promise<Uint8Array | undefined> {
     const hit = this.cache.get(k);
     if (hit) { this.cache.delete(k); this.cache.set(k, hit); return hit; }   // LRU bump; served from memory, no read
-    const v = await this.track(inner.get(k));
+    const v = await inner.get(k);
     if (v && v.byteLength > 0 && v.byteLength <= this.budget) { this.cache.set(k, v); this.cacheBytes += v.byteLength; this.evict(); }
     return v;
   }
   private evict(): void { while (this.cacheBytes > this.budget && this.cache.size) { const k = this.cache.keys().next().value as string; const e = this.cache.get(k)!; this.cache.delete(k); this.cacheBytes -= e.byteLength; } }
-  private track<T>(p: Promise<T>): Promise<T> { this.inflight++; return p.finally(() => { this.inflight--; }); }
-  async whenIdle(quietMs = 300, capMs = 45000): Promise<void> {
-    const t0 = performance.now(); let quietSince = 0;
-    for (;;) {
-      if (performance.now() - t0 >= capMs) return;   // safety net — reveal rather than hang on a stuck read
-      await new Promise((r) => setTimeout(r, 80));
-      if (this.inflight === 0) { if (!quietSince) quietSince = performance.now(); else if (performance.now() - quietSince >= quietMs) return; }
-      else quietSince = 0;
-    }
-  }
 }
 const dropBootSplash = () => { const b = document.getElementById("boot"); if (b) { bootBar(100); b.classList.add("hide"); setTimeout(() => b.remove(), 300); } };
 
@@ -94,7 +77,7 @@ async function bootStore(store: LstarStore, opts: { applyLinks?: boolean; freshS
   _pools = [];
 
   invalidateColor();   // drop the module-level colour caches (metadata snapshots + winsor bounds) from the PREVIOUS dataset — a same-named field must not reuse the old cells' codes/bounds (the view-keying in md() is the primary guard; this also clears the numeric winsor cache)
-  const tracked = new TrackedStore(store);   // count reads so we can hold the reveal until the first workspace's data lands (below)
+  const tracked = new CachingStore(store);   // LRU byte cache so re-visited workspaces read fields from memory, not the network
   opts.progress?.stage("Reading the dataset…");
   let ds = await openLstar(tracked as any);   // byte-range fast path + consolidated `.zmetadata` open
   // A store with NO embedding (a bare convert_anndata output, or a dropped .lstar.zarr with only counts +
@@ -147,21 +130,11 @@ async function bootStore(store: LstarStore, opts: { applyLinks?: boolean; freshS
   _pools.push(widgetPool);
   app.widgetPool = widgetPool;
   if (widgetPool.isolated) void widgetPool.ping().catch(() => { /* best-effort warm */ });
-  // Make the view READY before it's shown — not just mounted. The embedding panel `await`s colorsFor() (a
-  // field-metadata read) before it can setColors, so on a slow link the canvas paints GREY, then recolours once
-  // that read lands — after the splash has already lifted. Prime the default colour here (warms mdCache) so the
-  // panel's own colorsFor() hits cache and the first paint is complete. Best-effort: a failure just falls back to
-  // the progressive fill. (The layout coords were already read in ctx.init above.)
-  opts.progress?.stage("Preparing the view…");
-  try { await colorsFor(view, coord.state.colorBy); } catch { /* non-fatal — colour fills in as before */ }
-  opts.progress?.stage("Rendering…");
+  // Reveal PROGRESSIVELY: mount as soon as the embedding is read; the panels then fill their own data async
+  // (facets, dotplot stats) a beat later — the fast path. (An earlier "prime the colour + hold the splash until
+  // every read settles" delayed first paint badly on slow/serialised reads — the hosted zip sat on the splash
+  // for seconds instead of showing the embedding — so it was reverted to this progressive reveal.)
   await app.mount(document.getElementById("app")!);
-  // mount() only BUILDS the first workspace — its panels then read their fields async (facets: a field per
-  // histogram; a dotplot: its stats). On a slow link that's the gap where the layout showed as empty frames.
-  // Hold here until those reads settle (store idle), so the app is revealed with data, not skeletons. Capped so
-  // a stuck read can't hang the splash; a same-origin/fast store settles in a tick, so this is a no-op there.
-  opts.progress?.stage("Loading the workspace…");
-  await tracked.whenIdle();
   // Phase 3a deep-links: an explicit ?view= (compact, inline) or ?session=<url> (full, fetched) reopens
   // a shared view — applied AFTER mount so it overrides the auto-restored local session. Only on the
   // first (URL) boot — a freshly dropped local dataset has no link to apply.
