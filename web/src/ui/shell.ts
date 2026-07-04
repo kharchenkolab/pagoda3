@@ -563,53 +563,43 @@ export class App {
     if (v && anchor) { this.lastSelAnchor = anchor; this.openSelpop(); }                // affordance: show what you can do with it
   }
 
-  // Workbench "Loading <workspace>…" overlay, shown while a slow fullRender builds panels off-DOM (their field
-  // reads). The scrim lives in .canvas (survives wb.innerHTML=""); JS delay-gates it so fast renders don't flash.
-  private showWorkbenchLoading() {
-    const cv = this.$("workbench")?.parentElement as HTMLElement | null; if (!cv) return;
-    let el = cv.querySelector<HTMLElement>(".wbloading");
-    if (!el) { el = mk("div", "wbloading"); el.innerHTML = `<div class="wbspin"></div><div class="wbltxt"></div>`; cv.appendChild(el); }
-    el.querySelector(".wbltxt")!.textContent = "Loading " + this.currentWS + "…";
-    el.classList.add("on");
-  }
-  private hideWorkbenchLoading() { this.$("workbench")?.parentElement?.querySelector(".wbloading")?.classList.remove("on"); }
 
   async fullRender() {
     if (this.disposed) return;   // a replaced app must not paint into the new app's DOM (shared IDs via global $)
     const wb = this.$("workbench");
-    const token = ++this.renderToken;   // panelEl is async; if a newer render starts mid-build, drop this one (no double-append)
-    // During the async build the OLD panels stay visible — but a click on a stale row would act on stale state
-    // (e.g. select the wrong cluster → the card/rename lands on the wrong label). Freeze input until the swap.
-    wb.style.pointerEvents = "none";
-    // Panels build off-DOM (reading their fields) before the swap below — on a slow link that's a long, frozen,
-    // feedback-less wait. Raise a "Loading…" scrim if the build outlasts a beat (fast/cached renders never flash it).
-    const spin = setTimeout(() => { if (token === this.renderToken) this.showWorkbenchLoading(); }, 350);
+    ++this.renderToken;   // bump the render generation; in-flight fills from an older render bail when their shell is detached below
     const old: Record<string, DOMRect> = {};
-    wb.querySelectorAll<HTMLElement>(".panel[data-pid]").forEach((el) => (old[el.dataset.pid!] = el.getBoundingClientRect()));
-    const built: { dom: HTMLElement; afterAttach?: () => void }[] = [];
-    for (const p of this.canvas) built.push(await this.panelEl(p));   // build off-DOM first; old panels stay visible meanwhile
-    if (token !== this.renderToken) { clearTimeout(spin); return; }   // superseded by a newer fullRender → it owns pointerEvents + the overlay; discard this build
-    this.coordSubs.forEach((u) => u()); this.coordSubs = [];   // tear down old panels' coord subscriptions before rebuilding
-    this.teardowns.forEach((f) => { try { f(); } catch { /* a widget iframe destroy must not abort the render */ } }); this.teardowns = []; this.widgetHandles.clear();   // destroy old widget iframes + their host subscriptions; drop stale handles (re-registered on build)
-    this.embeddings = []; this.compReactors = []; this.geneHoverSinks = []; this.reactorsStale = true;   // new reactors → repaint must dispatch the selection to them once
+    wb.querySelectorAll<HTMLElement>(".panel[data-pid]").forEach((el) => (old[el.dataset.pid!] = el.getBoundingClientRect()));   // FLIP: capture positions before the clear
+    // PROGRESSIVE render: build every panel's SHELL synchronously (frame + header + a loading spinner) and mount
+    // them all at once, so the layout appears immediately (the data-sufficiency threshold — we're ready to show the
+    // panels). Each panel's BODY then fills independently below: a slow/compute-heavy panel spins in its OWN frame
+    // while the rest of the workbench is already live, instead of one all-or-nothing swap gated by the slowest panel.
+    const shells = this.canvas.map((p) => this.panelShell(p));
+    this.coordSubs.forEach((u) => u()); this.coordSubs = [];   // tear down the OLD workspace's coord subscriptions
+    this.teardowns.forEach((f) => { try { f(); } catch { /* a widget iframe destroy must not abort the render */ } }); this.teardowns = []; this.widgetHandles.clear();   // destroy old widget iframes + their host subscriptions
+    this.embeddings = []; this.compReactors = []; this.geneHoverSinks = []; this.reactorsStale = true;   // reset reactor registries — each fill re-registers its panel's reactor (in afterAttach) as it lands
     wb.innerHTML = "";
-    const afters: (() => void)[] = [];
-    for (const b of built) { wb.appendChild(b.dom); if (b.afterAttach) afters.push(b.afterAttach); }
+    for (const s of shells) wb.appendChild(s.dom);
     this.layoutCanvas(wb);   // place panels into the N-column grid (row-major by default; per-panel col pins override)
-    // FLIP for surviving panels
+    // FLIP for surviving panels — the shells carry data-pid, so a panel that persists across the switch animates
+    // from its old slot to its new one (the bodies filling in later don't change positions).
     wb.querySelectorAll<HTMLElement>(".panel[data-pid]").forEach((el) => {
       const o = old[el.dataset.pid!]; if (!o) return; const n = el.getBoundingClientRect(); const dx = o.left - n.left, dy = o.top - n.top; if (!dx && !dy) return;
       el.style.animation = "none"; el.style.transition = "none"; el.style.transform = `translate(${dx}px,${dy}px)`;
       requestAnimationFrame(() => { el.style.transition = "transform .32s cubic-bezier(.2,.8,.2,1)"; el.style.transform = ""; });
     });
-    afters.forEach((f) => f());
-    await this.repaint();
     this.renderRail(); this.renderWS();
-    clearTimeout(spin); this.hideWorkbenchLoading();   // build done → drop the "Loading…" scrim
-    wb.style.pointerEvents = "";   // re-enable input now that the new panels + selection are in place
+    // FILL every panel's body concurrently + independently. Each swaps its spinner for the real body when ready,
+    // registers its reactor + repaints (see panelShell). No input freeze / no workbench scrim: the shells ARE the
+    // live layout, and a still-loading panel just shows its own inert spinner. A per-panel throw is caught in fill.
+    void Promise.all(shells.map((s) => s.fill().catch(() => { /* per-panel error already shown in-panel */ })));
   }
 
-  async panelEl(p: Panel): Promise<{ dom: HTMLElement; afterAttach?: () => void }> {
+  // Build a panel's SHELL synchronously (frame + header + controls + a loading spinner) and return a `fill`
+  // thunk that reads the body and swaps it in. fullRender mounts all shells at once, then fires every fill
+  // concurrently — so the layout appears immediately and each panel fills independently (a slow one spins in
+  // its own frame instead of gating the whole workspace swap). See `fullRender`.
+  panelShell(p: Panel): { dom: HTMLElement; fill: () => Promise<void> } {
     // a lone panel fills the canvas (no point keeping it in one half of a 2-col grid)
     const isFull = p.full || this.canvas.length === 1;
     const isTall = !!p.tall && this.canvas.length > 1;   // vertical maximize (fill the column); meaningless for a lone panel
@@ -725,14 +715,8 @@ export class App {
     const H = this.ctx.handleOf(p.bind);
     if (H?.caveat && !(p.bind && this.caveatsDismissed.has(p.bind))) d.appendChild(this.caveatEl(p.bind, H.caveat));
     const b = mk("div", "pbody");
-    // A panel body that throws (e.g. data this dataset lacks) must NOT abort the whole render — that would
-    // leave the previous workspace's DOM stale. Catch it and show an in-panel notice instead.
-    let built: BuiltBody;
-    try { built = await bodyFor(p, this.ctx, this.hooks()); }
-    catch (err) { const m = mk("div", "panelerr"); m.textContent = `⚠ couldn't render this panel — ${(err as Error)?.message || err}`; built = { el: m }; }
-    if (built.headerControls) sp.insertBefore(built.headerControls, sp.firstChild);   // e.g. a gene filter, in the header
-    if (heatGroupSel) sp.insertBefore(heatGroupSel, sp.firstChild);   // grouping picker leads (left of the heat|dot toggle), matching the embedding's colour dropdown
-    b.appendChild(built.el); d.appendChild(b);
+    b.innerHTML = `<div class="pbodyload"><i></i></div>`;   // per-panel loading spinner until fill() swaps the real body in
+    d.appendChild(b);
     const prov = H?.prov || (this.ctx.handleOf(p.bind)?.prov);
     if (prov) d.appendChild(Object.assign(mk("div", "prov"), { textContent: "◆ " + prov }));
     // drag reorder
@@ -746,11 +730,25 @@ export class App {
       const col = d.dataset.col != null && d.dataset.col !== "" ? Number(d.dataset.col) : undefined;            // join the target's column (0-based)
       this.reorderTo((this as any)._drag, p.id, after, col); });
     d.oncontextmenu = (e) => { e.preventDefault(); this.openCtx(e.clientX, e.clientY, p); };
-    return { dom: d, afterAttach: () => {
+    // The BODY fills independently: the shell above is already mounted; this thunk reads the panel's data,
+    // swaps out the spinner, wires the body-derived header controls, runs afterAttach (which registers this
+    // panel's reactor), and repaints — so a slow/compute-heavy panel spins in its OWN frame while the rest of
+    // the workbench is live. A body that throws (data this dataset lacks) becomes an in-panel notice, never
+    // aborting the render. Guarded: a newer fullRender clears the workbench, detaching `d` → the stale fill bails.
+    const fill = async () => {
+      let built: BuiltBody;
+      try { built = await bodyFor(p, this.ctx, this.hooks()); }
+      catch (err) { const m = mk("div", "panelerr"); m.textContent = `⚠ couldn't render this panel — ${(err as Error)?.message || err}`; built = { el: m }; }
+      if (this.disposed || !d.isConnected) return;   // superseded by a newer render (wb cleared → d detached) or app disposed
+      if (built.headerControls) sp.insertBefore(built.headerControls, sp.firstChild);   // e.g. a gene filter, in the header
+      if (heatGroupSel) sp.insertBefore(heatGroupSel, sp.firstChild);   // grouping picker leads (left of the heat|dot toggle)
+      b.replaceChildren(built.el);   // swap the spinner for the real body
       built.afterAttach?.();
       if (p.type === "Widget" && built.widget) this.wireWidgetControls(p, h, sp, maxtog || close, built.widget);   // the widget's declared toolbar controls (fold like the rest)
-      installOverflow(h, sp);
-    } };   // fold header controls into a ⋯ menu when the panel is too narrow
+      installOverflow(h, sp);   // fold header controls into a ⋯ menu when the panel is too narrow
+      this.reactorsStale = true; await this.repaint();   // this panel registered its reactor in afterAttach → dispatch the current selection + paint it
+    };
+    return { dom: d, fill };
   }
 
   // Render a Widget panel's declared header controls as standard mini buttons (before the maximize button so they

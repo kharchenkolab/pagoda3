@@ -70,6 +70,10 @@ button{font-family:inherit}
 .wbloading .wbspin{width:22px;height:22px;border-radius:50%;border:2.5px solid var(--line);border-top-color:var(--cyan);animation:wbspin .8s linear infinite}
 .wbloading .wbltxt{margin-left:12px;color:var(--dim);font-size:12.5px}
 @keyframes wbspin{to{transform:rotate(360deg)}}
+/* per-panel loading: each panel's body fills independently (progressive render) — a lagging panel spins in
+   its OWN frame while the others are already live, instead of one workbench-wide scrim gating every panel. */
+.pbodyload{display:flex;align-items:center;justify-content:center;min-height:140px;height:100%;box-sizing:border-box}
+.pbodyload i{width:20px;height:20px;border-radius:50%;border:2.5px solid var(--line);border-top-color:var(--cyan);animation:wbspin .8s linear infinite}
 /* the workbench fills the canvas; rows share the height (1fr) and shrink to a 200px floor so up to ~3 rows
    fit the viewport without scrolling (dashboard-style) — only 4+ rows scroll, instead of every 3rd panel. */
 .workbench{flex:1;min-height:0;display:grid;grid-template-columns:1fr 1fr;gap:12px;grid-auto-rows:minmax(200px,1fr)}
