@@ -4,7 +4,7 @@
 // Run: `node --test src/data/ctx.test.ts`.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { Ctx } from "./ctx.ts";
+import { Ctx, looksLikeClusterPlaceholder, resolveCategoryLoose } from "./ctx.ts";
 
 type FieldDef = { name: string; role: string; encoding?: string; span?: string[] };
 
@@ -158,4 +158,29 @@ test("categorical order is deterministic (common names first, then store order) 
   // the WARMED accessor matches once materialized (in scrambled completion order → still catalog-ordered)
   await Promise.all([ctx.metaOf("louvain"), ctx.metaOf("condition"), ctx.metaOf("leiden"), ctx.metaOf("sample")]);
   assert.deepEqual(ctx.categoricalFields(), ["leiden", "sample", "condition", "louvain"]);
+});
+
+test("looksLikeClusterPlaceholder: cluster-id fields are placeholders (kept out of reconcile sources); real cell types aren't", () => {
+  // the demo store's junk cell_type = "cluster 0".."cluster 16", plus other cluster-id shapes
+  assert.equal(looksLikeClusterPlaceholder(["cluster 0", "cluster 1", "cluster 2"]), true);
+  assert.equal(looksLikeClusterPlaceholder(["c0", "c13", "c16"]), true);           // leiden display ids
+  assert.equal(looksLikeClusterPlaceholder(["0", "1", "2", "16"]), true);           // bare numeric
+  assert.equal(looksLikeClusterPlaceholder(["leiden_7", "louvain-3"]), true);
+  // a genuine cell-type labeling is NOT a placeholder
+  assert.equal(looksLikeClusterPlaceholder(["CD4 T cell", "B cell", "NK cell", "Platelet"]), false);
+  // majority vote: one stray cluster-id among real types doesn't flip it
+  assert.equal(looksLikeClusterPlaceholder(["CD4 T cell", "B cell", "NK cell", "cluster 9"]), false);
+  assert.equal(looksLikeClusterPlaceholder([]), false);
+});
+
+test("resolveCategoryLoose: an agent's value-format guess still resolves (13 → c13), but never guesses ambiguously", () => {
+  const leiden = ["c0", "c8", "c13", "c16"];
+  assert.equal(resolveCategoryLoose(leiden, "13"), 2, `"13" resolves to c13`);      // the exact case the agent hit
+  assert.equal(resolveCategoryLoose(leiden, "cluster 13"), 2, `"cluster 13" → c13`);
+  assert.equal(resolveCategoryLoose(["0", "8", "13"], "c13"), 2, `reverse: "c13" → "13"`);
+  assert.equal(resolveCategoryLoose(leiden, "99"), -1, "no such cluster → -1");
+  // non-cluster values are left alone (no false cluster-strip): "d4" must NOT match "CD4 T cell"
+  assert.equal(resolveCategoryLoose(["CD4 T cell", "CD8 T cell"], "d4"), -1);
+  // ambiguity guard: two categories normalizing to the same id → refuse to guess
+  assert.equal(resolveCategoryLoose(["c1", "cluster 1"], "1"), -1);
 });

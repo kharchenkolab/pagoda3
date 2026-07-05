@@ -1,5 +1,5 @@
 import { mk, S } from "./dom.ts";
-import { Ctx } from "../data/ctx.ts";
+import { Ctx, looksLikeClusterPlaceholder } from "../data/ctx.ts";
 import { EmbeddingView } from "../render/embedding.ts";
 import { colorsFor, focusMaskFor, categoryColorOf, setCodeValues } from "../render/colors.ts";
 import { loadCollection, listCollections, parseGmt, registerCustomCollection, GeneSetDB, Collection } from "../compute/genesets.ts";
@@ -1018,7 +1018,9 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
   if (baseMeta.kind !== "categorical") { const m = mk("div", "panelerr"); m.textContent = `base "${base}" is not a categorical partition`; return { el: m }; }
   const srcNames = ctx.annotationSources();
   const sources: { name: string; codes: ArrayLike<number>; categories: string[] }[] = [];
-  for (const n of srcNames) { const m: any = await ctx.view.metadata(n); if (m.kind === "categorical") sources.push({ name: n, codes: m.codes, categories: m.categories }); }
+  // A source whose values are just cluster ids ("cluster 0"…) carries no cell-type signal — don't reconcile
+  // against it (a common placeholder in converted/demo stores that a name-based role default mislabels "annotation").
+  for (const n of srcNames) { const m: any = await ctx.view.metadata(n); if (m.kind === "categorical" && !looksLikeClusterPlaceholder(m.categories)) sources.push({ name: n, codes: m.codes, categories: m.categories }); }
   // FOCUS restricts the table to the focused subpopulation (a cross-panel restriction): only clusters with
   // focus cells appear, counts/fractions are within-focus. (The embedding greys non-focus cells in parallel.)
   const focus = ctx.coord.state.focus;
@@ -1052,6 +1054,11 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
   for (const [m, lbl] of segItems) { const b = mk("button", "mini" + (m === mode ? " on" : ""), lbl) as HTMLButtonElement; b.dataset.m = m; b.title = reconTip[m] || lbl; seg.appendChild(b); }
   if (segItems.length >= 2) hdr.appendChild(seg);
   w.appendChild(hdr);
+  // one-line legend so the columns aren't a guessing game: which is the answer, which are candidates, where L1/L2 went
+  const derived = ctx.derivedGroupings();
+  const legend = mk("div"); legend.style.cssText = "flex:0 0 auto;padding:2px 10px 6px;font-size:10.5px;color:var(--faint);border-bottom:1px solid var(--line2)";
+  legend.innerHTML = `<b style="color:var(--dim);font-weight:600">annotation</b> = the field you colour by (the answer) · the rest are candidate <b style="color:var(--dim);font-weight:600">sources</b> to reconcile from${derived.length ? ` · coarser <b style="color:var(--dim);font-weight:600">${esc(derived.join(" / "))}</b> rollups are in the Metadata facets` : ""}`;
+  w.appendChild(legend);
   const host = mk("div"); host.style.cssText = "flex:1 1 auto;min-height:0;overflow:auto"; w.appendChild(host);
   const mhost = mk("div"); mhost.style.cssText = "flex:1 1 auto;min-height:0;overflow:auto;display:none;padding:8px 10px"; w.appendChild(mhost);
   const lhost = mk("div"); lhost.style.cssText = "flex:1 1 auto;min-height:0;overflow:auto;display:none;padding:8px 10px"; w.appendChild(lhost);
@@ -1144,11 +1151,11 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
   const WORKBG = "var(--warm)";   // the canonical "working annotation" column — a warm designation tint (theme-aware)
   // header row sits on a distinct shade (--inset) so it reads apart from the body rows (on --panel)
   const HEADBG = "var(--inset)";
-  const th = (label: string, extra = "") => `<th style="padding:4px 8px;position:sticky;top:0;background:${HEADBG};border-bottom:1px solid var(--line)${extra}">${label}</th>`;
+  const th = (label: string, extra = "", title = "") => `<th${title ? ` title="${esc(title)}"` : ""} style="padding:4px 8px;position:sticky;top:0;background:${HEADBG};border-bottom:1px solid var(--line)${extra}">${label}</th>`;
   let html = `<table class="rctab" style="width:100%;border-collapse:collapse"><thead><tr style="color:var(--faint);text-align:left">
-    ${th("cluster")}
-    ${th("working annotation", `;box-shadow:inset 0 0 0 999px ${WORKBG};color:var(--dim)`)}
-    ${sources.map((s) => th(esc(s.name))).join("")}
+    ${th("cluster", "", `base partition (${base}) — the reconciliation unit`)}
+    ${th(`annotation <span style="color:var(--faint);font-weight:400">· working draft</span>`, `;box-shadow:inset 0 0 0 999px ${WORKBG};color:var(--dim)`, "the `annotation` field in your Metadata facets — the FINAL labeling; colour by this. Coarser L1/L2 rollups live in the facets.")}
+    ${sources.map((s) => th(esc(s.name), "", `${s.name} — a candidate source; use ⤵ in the header to adopt it into the working draft`)).join("")}
     ${th("")}</tr></thead><tbody>`;
   rows.forEach((r: ReconRow, gi) => {
     const wl = workRows ? workRows[gi].sources[0].label : null;

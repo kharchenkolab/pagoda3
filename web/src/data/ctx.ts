@@ -13,6 +13,31 @@ export interface HandleMeta { prov?: string; caveat?: string; }
 // is warmed too (below), just after these. Also the canonical ordering key for categoricalFields().
 const COMMON_LABELS = ["leiden", "cell_type", "sample", "condition", "patient", "outcome"];
 
+// True when a categorical's values are (mostly) just cluster ids — "cluster 0", "c3", "leiden_7", "12" … —
+// i.e. a partition placeholder that carries NO cell-type signal. Used to keep such a field OUT of the
+// annotation SOURCES (a `cell_type` that's really cluster numbers shouldn't be reconciled against), and to
+// avoid seeding the working draft from it. Shared by ctx (role default) and shell (draft seeding).
+export function looksLikeClusterPlaceholder(categories: string[]): boolean {
+  if (!categories?.length) return false;
+  const re = /^(cluster|clstr|clst|cl|c|leiden|louvain|seurat_clusters?|group|grp|k)?[\s._-]*\d+$/i;
+  const hits = categories.reduce((n, c) => n + (re.test(String(c).trim()) ? 1 : 0), 0);
+  return hits / categories.length >= 0.8;
+}
+
+// Tolerant category-value match for cluster-ish ids, used only when an EXACT match already failed. Strip a
+// leading cluster prefix that precedes a digit ("c13"→"13", "cluster 13"→"13", "13"→"13") from both the query
+// and each category, and match on the remainder — but ONLY if it maps to EXACTLY ONE category (never guess
+// when ambiguous). Non-cluster values ("CD4", "T cell") have no digit after the prefix, so they're left as-is
+// (the fallback then reduces to a case-insensitive exact match). So an agent that guesses `leiden="13"` when
+// the values are "c13" resolves on the first try instead of silently labeling 0 cells. Returns index or -1.
+export function resolveCategoryLoose(categories: string[], value: string): number {
+  const norm = (s: string) => String(s).trim().toLowerCase().replace(/^(?:cluster|clstr|clst|cl|leiden|louvain|seurat_clusters?|group|grp|c|k)?[\s._-]*(?=\d)/i, "");
+  const target = norm(value); if (!target) return -1;
+  let hit = -1;
+  for (let i = 0; i < categories.length; i++) if (norm(categories[i]) === target) { if (hit >= 0) return -1; hit = i; }   // ambiguous → no guess
+  return hit;
+}
+
 export class Ctx {
   view: LstarView;
   coord: Coord;
@@ -62,7 +87,9 @@ export class Ctx {
     ]);
     for (const r of embReads) if (r) this.embeddings.set(r.nm, { data: r.data, n: r.n });   // insert in field order → deterministic default-embedding fallback below
     this.embedding = this.embeddings.get("umap") || [...this.embeddings.values()][0] || await this.view.embedding("umap");
-    // default field roles: cell_type is an annotation source out of the box; the agent/user reclassify the rest
+    // default field roles: cell_type is an annotation source out of the box; the agent/user reclassify the rest.
+    // (A cell_type whose values are just cluster ids — "cluster 0"… — is filtered out of the RECONCILE sources
+    // where its metadata is read, not here: init stays lazy — it must not read a non-default label like cell_type.)
     if (ds.hasField("cell_type")) this.fieldRoles.set("cell_type", "annotation");
   }
 
@@ -222,7 +249,9 @@ export class Ctx {
   /** The cells of a category — a cluster-click/category-click resolves to this cell SET (the canonical selection). */
   cellsOfCategory(grouping: string, value: string): Int32Array {
     const m = this.cachedCat(grouping); if (!m) return new Int32Array(0);
-    const ci = m.categories.indexOf(value); if (ci < 0) return new Int32Array(0);
+    let ci = m.categories.indexOf(value);
+    if (ci < 0) ci = resolveCategoryLoose(m.categories, value);   // exact miss → tolerant cluster-id match (so "13" finds "c13"; agent value-format guesses don't silently no-op)
+    if (ci < 0) return new Int32Array(0);
     const out: number[] = []; for (let i = 0; i < this.n; i++) if (m.codes[i] === ci) out.push(i);
     return Int32Array.from(out);
   }

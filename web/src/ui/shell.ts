@@ -1,5 +1,5 @@
 import { mk } from "./dom.ts";
-import { Ctx } from "../data/ctx.ts";
+import { Ctx, looksLikeClusterPlaceholder } from "../data/ctx.ts";
 import { Coord, handleLabel, EntityRef } from "../data/coord.ts";
 import { Panel, PanelView, PanelHooks, CompReactor, BuiltBody, bodyFor, paintEmbedding, resolvePanelStyleFor } from "./panels.ts";
 import { EmbeddingView } from "../render/embedding.ts";
@@ -57,16 +57,9 @@ function parseCssColorToRGB(s: string): [number, number, number] | null {
   } catch { return null; }
 }
 
-// Does a labeling look like a PRISTINE cluster placeholder — one label per cluster carrying no biology
-// ("cluster 0", "c3", "7", "leiden 12")? Such a seed adds nothing over the base clustering, so the working
-// annotation should upgrade to a real source (scType). Distinct from a genuine cell_type (T cell, B cell…),
-// which MERGES clusters into named types. Majority-vote so a stray real label doesn't veto the upgrade.
-function looksLikeClusterPlaceholder(categories: string[]): boolean {
-  if (!categories?.length) return false;
-  const re = /^(cluster|clstr|clst|cl|c|leiden|louvain|seurat_clusters?|group|grp|k)?[\s._-]*\d+$/i;
-  const hits = categories.reduce((n, c) => n + (re.test(String(c).trim()) ? 1 : 0), 0);
-  return hits / categories.length >= 0.8;
-}
+// `looksLikeClusterPlaceholder` (does a labeling look like PRISTINE cluster ids — "cluster 0", "c3", "7" —
+// carrying no biology?) now lives in data/ctx.ts and is imported above, so the role default (ctx) and the
+// draft-seed decision (here) share one definition.
 
 const COLOR_OPTS: [string, string][] = [
   ["meta:leiden", "leiden"], ["meta:cell_type", "cell type"], ["meta:condition", "condition"],
