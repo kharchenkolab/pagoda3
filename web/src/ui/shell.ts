@@ -79,7 +79,10 @@ export function buildDefaultWorkspaces(ctx: Ctx): Record<string, WS> {
       { type: "MetadataFacets", title: "Metadata", cap: "browse facets", bind: "facets:all" }] },
     "Markers": { colorBy: defGroup, panels: [
       { type: "Embedding", title: "Embedding", cap: "clusters", bind: "embedding:main" },
-      { type: "Heatmap", title: "Marker genes", cap: "top genes per group", group: defGrp }] },
+      // NO frozen `group`: the Heatmap resolves `p.group || ctx.defaultGrouping()` at render time, so the
+      // dotplot FOLLOWS the current best grouping — it switches to `annotation` on its own once one exists
+      // (defaultGrouping prefers annotation > cell_type > leiden), no need to re-open the workspace or add a panel.
+      { type: "Heatmap", title: "Marker genes", cap: "top genes per group" }] },
     "Annotate": { colorBy: defGroup, panels: [
       { type: "Embedding", title: "Embedding", bind: "embedding:main", view: { colorBy: "meta:annotation" } },
       { type: "Reconcile", title: "Reconcile labels" }] },   // no hardcoded group — the panel picks a stored clustering that EXISTS (a local file may have louvain, not leiden)
