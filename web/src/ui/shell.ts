@@ -114,6 +114,8 @@ export function initialWorkspaceNeeds(ctx: Ctx): Need[] {
 
 export class App {
   ctx: Ctx; coord: Coord; agent!: Agent;
+  liveReady: Promise<boolean> = Promise.resolve(false);   // resolves when the boot live-check settles — openWithAsk (?ask=) awaits it
+  pendingAsk: string | null = null;                        // a ?ask= directive queued while the agent is offline; runs when it connects
   root: HTMLElement;
   canvas: Panel[] = []; rail: Panel[] = []; proposal: any = null;
   WS: Record<string, WS>; wsOrder: string[]; currentWS = "";   // "" until the first switchWS loads one (so it doesn't clobber a def on startup)
@@ -239,12 +241,13 @@ export class App {
     // connect the live planner if its backend is reachable — checks the ACTIVE provider (Anthropic OAuth, or the
     // local vLLM model) and labels with the real model so "live on …" never lies about which model is driving.
     const prov = getProvider();
-    checkLive(prov).then((ok) => { this.agent.live = ok; this.renderAskBtn(); if (ok) {   // reflect online/offline on the Ask pip
+    this.liveReady = checkLive(prov).then((ok) => { this.agent.live = ok; this.renderAskBtn(); if (ok) {   // reflect online/offline on the Ask pip
       const model = prov === "openai" ? providerModel(prov) : "Opus";
       this.toast("Live agent connected · " + model, prov === "openai"
         ? "A LOCAL OpenAI-compatible model (vLLM) is driving the agent — switch back with p2.setProvider('anthropic')."
         : "The agent is the real Anthropic planner now — it drives the coordination space through tools, at the lowest sufficient rung.");
-    } });
+      if (this.pendingAsk) { const d = this.pendingAsk; this.pendingAsk = null; void this.agent.ask(d, null, { restrictCode: true }); }   // a ?ask= that queued while the health check was slow (>openWithAsk's wait) runs the moment it lands
+    } return ok; }).catch(() => false);
     // first-run greeting — a shine on the Ask button inviting the user to try it (only for a FRESH session, not a restore)
     setTimeout(() => { if (!this.restoredSession) this.agent.armIntro(); }, 2600);
   }
@@ -365,6 +368,22 @@ export class App {
   // as opening a session file: any widget source it carries lands behind the consent gate.
   async applySessionUrl(url: string): Promise<boolean> {
     try { const r = await fetch(url); if (!r.ok) return false; return this.applyImported(await r.text()).ok; } catch { return false; }
+  }
+  // Run a `?ask=<directive>` deep-link ONCE on load (the GENERATIVE sibling of ?view= — see
+  // sharelink.parseDeepLinkAsk): a link-origin auto-run of the copilot, RESTRICTED to the safe view+compute
+  // toolset (no code-exec/external tools — live.ts toolsFor). Non-blocking + graceful: the store already
+  // rendered; a failure here must never break the load. If the live agent isn't connected, QUEUE the directive
+  // + surface the connect card, so it runs the moment the agent comes online (rather than falling to the mock).
+  async openWithAsk(directive: string): Promise<void> {
+    try {
+      // wait (bounded) for the boot live-check to settle, then decide — never hang the flow on a stuck health check
+      const live = await Promise.race([this.liveReady, new Promise<boolean>((r) => setTimeout(() => r(!!this.agent.live), 4000))]);
+      if (this.disposed) return;
+      if (live) { void this.agent.ask(directive, null, { restrictCode: true }); return; }
+      this.pendingAsk = directive;   // offline → run it on connect (see the reconnect check in showAgentConfig's checkLive)
+      this.toast("Opened with a request — connect the agent to run it", directive);
+      this.showAgentConfig();
+    } catch { /* a deep-link ask must never break the load */ }
   }
   private applyViewDoc(doc: any): void {
     this.applySessionViews(doc);
@@ -2255,7 +2274,9 @@ export class App {
       else if (!loadCred()) { this.toast("Paste an API key or token first", null); return; }
     }
     close();
-    void checkLive(getProvider()).then((ok) => { this.agent.live = ok; this.renderAskBtn(); });
+    void checkLive(getProvider()).then((ok) => { this.agent.live = ok; this.renderAskBtn();
+      if (ok && this.pendingAsk) { const d = this.pendingAsk; this.pendingAsk = null; void this.agent.ask(d, null, { restrictCode: true }); }   // a queued ?ask= directive runs the moment the agent connects
+    });
     const m = resolveMode(getProvider());
     this.toast("Agent connection updated", m === "off" ? "Copilot is off — the viewer works on its own." : "Mode: " + (m === "oauth" ? "OAuth token" : m === "key" ? "API key" : m) + (m === "proxy" || m === "local" ? "" : " · browser-direct"));
   }

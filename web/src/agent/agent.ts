@@ -24,17 +24,18 @@ export class Agent {
   constructor(app: App) { this.app = app; }
   get ctx() { return this.app.ctx; }
 
-  // dispatcher: real Anthropic planner when available, faithful mock otherwise
-  async ask(qraw: string, sc?: Scope | null) {
+  // dispatcher: real Anthropic planner when available, faithful mock otherwise. opts.restrictCode gates the
+  // code-executing tools (a link-origin ?ask= auto-run gets the safe view+compute subset — see live.ts toolsFor).
+  async ask(qraw: string, sc?: Scope | null, opts?: { restrictCode?: boolean }) {
     this.app.askScope = sc || null;   // PIN the selection for this turn — a compute that resolves {selection} late (after the user moved on) still runs on the cells they asked about
-    if (this.live) return this.askLive(qraw, sc);
+    if (this.live) return this.askLive(qraw, sc, opts);
     return this.askMock(qraw, sc);
   }
-  async askLive(qraw: string, sc?: Scope | null) {
+  async askLive(qraw: string, sc?: Scope | null, opts?: { restrictCode?: boolean }) {
     this.app.hideSelpop();
     const ctrl = this.abortCtrl = new AbortController();
     this.running = true; this.app.refreshAskBtn();
-    try { await runLive(this.app, qraw, ctrl.signal); }
+    try { await runLive(this.app, qraw, ctrl.signal, opts); }
     catch (e) {
       if (!ctrl.signal.aborted) {   // a GENUINE failure (proxy/token) — fall back to the local planner, once
         const lm = this.app.liveMessages; if (lm.length && typeof lm[lm.length - 1]?.content === "string") lm.pop();   // drop the dangling user turn so continuity stays clean

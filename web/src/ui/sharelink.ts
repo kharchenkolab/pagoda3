@@ -39,3 +39,17 @@ export async function encodeViewToken(json: string): Promise<string> {
 export async function decodeViewToken(token: string): Promise<string> {
   return gunzip(b64urlDecode(token));
 }
+
+/**
+ * The `?ask=<directive>` deep-link parameter: a natural-language directive the copilot auto-runs ONCE on
+ * load — the GENERATIVE sibling of `?view=` (which reproduces an exact serialized view). A launcher (e.g.
+ * ABA) emits `?store=<url>&ask=<directive>` so a single URL opens the data AND runs the analysis. Returns
+ * the decoded, trimmed directive, or null when absent/blank. `search` is a `location.search` string
+ * (`"?a=b&ask=…"`) or a bare query; URLSearchParams handles the leading `?` and percent-decoding.
+ */
+export function parseDeepLinkAsk(search: string): string | null {
+  let raw: string | null = null;
+  try { raw = new URLSearchParams(search).get("ask"); } catch { return null; }
+  const dir = (raw ?? "").trim();
+  return dir ? dir : null;
+}

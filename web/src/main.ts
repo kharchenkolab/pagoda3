@@ -9,6 +9,7 @@ import { LstarView } from "./data/view.ts";
 import { Coord } from "./data/coord.ts";
 import { Ctx } from "./data/ctx.ts";
 import { App, initialWorkspaceNeeds } from "./ui/shell.ts";
+import { parseDeepLinkAsk } from "./ui/sharelink.ts";
 import { getProvider, PROVIDER_KEY, type Provider } from "./agent/providers.ts";
 import { ComputePool } from "./compute/pool.ts";
 import "./ui/example-panel.ts";   // an EXTERNAL panel module that self-registers (proves the panel registry — zero core edits)
@@ -147,6 +148,14 @@ async function bootStore(store: LstarStore, opts: { applyLinks?: boolean; freshS
     const sessionUrl = params.get("session"), viewTok = params.get("view");
     if (sessionUrl) await app.applySessionUrl(new URL(sessionUrl, location.href).href).catch(() => {});
     else if (viewTok) await app.applyViewLink(viewTok).catch(() => {});
+    // ?ask=<directive> — the GENERATIVE deep link: auto-run the copilot ONCE, restricted to the safe
+    // view+compute toolset (openWithAsk). Strip the param FIRST so a reload/HMR never re-runs or re-bills it,
+    // then fire non-blocking after the store + any restored view are in place. Independent of ?view=/?session=.
+    const ask = parseDeepLinkAsk(location.search);
+    if (ask) {
+      try { const u = new URL(location.href); u.searchParams.delete("ask"); history.replaceState(history.state, "", u.href); } catch { /* replaceState is best-effort */ }
+      void app.openWithAsk(ask);
+    }
   }
   // Dev switch between the Anthropic agent and the local OpenAI-compatible model (vLLM/qwen3). No UI — flip it from
   // the console: p2.setProvider("openai"). getProvider() is read at the start of every ask, so the NEXT ask uses it

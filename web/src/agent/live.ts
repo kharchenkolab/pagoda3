@@ -3,6 +3,7 @@
 // thread (the live tip), interruptible. Falls back to the mock planner if unreachable.
 import type { App } from "../ui/shell.ts";
 import { CODE_API_DOC } from "./codeapi.ts";
+import { filterTools } from "./tooltrust.ts";   // link-origin (?ask=) tool restriction — safe view+compute subset
 import { olsLookup } from "../anno/ols.ts";
 import { WIDGET_API_DOC } from "../widget/contract.ts";
 import { capabilityMenu } from "./capabilities.ts";
@@ -346,8 +347,14 @@ async function fetchUrlText(url: string): Promise<string> {
   } catch (e) { return "fetch_url failed: " + String((e as any)?.message || e); }
 }
 
+/** The tool list offered to the model: the full set, or (for a link-origin ?ask= auto-run) the safe subset with
+ *  the code-executing / external tools removed. Delegates to the node-testable tooltrust module. */
+export function toolsFor(restrictCode?: boolean): Tool[] {
+  return filterTools(TOOLS, restrictCode);
+}
+
 // ---- the streaming tool-use loop ----
-export async function runLive(app: App, userText: string, abort: AbortSignal): Promise<void> {
+export async function runLive(app: App, userText: string, abort: AbortSignal, opts?: { restrictCode?: boolean }): Promise<void> {
   const ag = app.agent;
   // Persist ONE running conversation across asks so follow-ups keep context — e.g. the agent asks "A or B?" and
   // the user's next message "B" is understood as the answer, not a fresh request. The loop below appends the
@@ -364,7 +371,7 @@ export async function runLive(app: App, userText: string, abort: AbortSignal): P
   let emptyRetries = 0; const loop = newLoopState();
   for (let turn = 0; turn < 12; turn++) {   // headroom for multi-step flows like widget authoring (template → preview → fix → save)
     if (abort.aborted) break;
-    const res = await agentStream(adapter.buildBody({ system: sys, messages, tools: TOOLS, maxTokens: 8192 }), { provider, model, store: app.currentStore() }, abort);
+    const res = await agentStream(adapter.buildBody({ system: sys, messages, tools: toolsFor(opts?.restrictCode), maxTokens: 8192 }), { provider, model, store: app.currentStore() }, abort);
     // A pasted credential that's expired/invalid comes back 401/403. Detect it gracefully mid-run: flag it (so the
     // connection UI shows "expired"), tell the user plainly, and stop this turn — don't fall through to the generic
     // "unreachable" path (which throws + drops to the offline fallback).
