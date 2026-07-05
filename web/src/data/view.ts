@@ -7,7 +7,7 @@ import { sample, overdispersed, deCore, groupStatsForCellsCore } from "../comput
 // The viewer-compute RECIPE, single-sourced in lstar (@lstar/core). We own the READ (fieldAsCsc for the whole
 // matrix, csrRows for a subset) + the cell-major subset REDUCTION; lstar owns the layout-independent MATH
 // (sufficient stats, markers, the pagoda2 overdispersion LOWESS/F-test). Pass our WASM handle as the trailing M?.
-import { groupSufficientStats as lsGroupStats, markers as lsMarkers, groupSizes as lsGroupSizes, overdispersionFromStats as lsOverdispersion } from "../../../../lstar/js/core/compute.ts";
+import { groupSufficientStats as lsGroupStats, markers as lsMarkers } from "../../../../lstar/js/core/compute.ts";
 import type { ComputePool } from "../compute/pool.ts";
 import { isolationAvailable } from "../compute/pool.ts";
 
@@ -349,18 +349,15 @@ export class LstarView {
       }
       return out;
     }
+    // DERIVE (bare store, no precomputed table): the 1-vs-rest marker math is single-sourced in lstar's
+    // markers() (from the colSumByGroup sufficient stats), byte-identical to the retired hand-rolled formula.
+    // It returns GENE-major lfc/padj (ng × G) — the SAME orientation as the precomputed tables above, so the
+    // per-group row assembly below is identical to the precomputed branch.
     const { groups, n, S, NE } = await this.groupSufficientStats(grouping);
     const G = groups.length, ng = this.nGenes, N = this.nCells;
-    const grand = new Float64Array(ng);
-    for (let g = 0; g < G; g++) for (let j = 0; j < ng; j++) grand[j] += S[g * ng + j];
+    const { lfc, padj } = await lsMarkers(S, NE, n, G, ng, N, await kernels());   // n = per-group sizes (nper)
     for (let g = 0; g < G; g++) {
-      const ng1 = Math.max(n[g], 1), nr = Math.max(N - n[g], 1);
-      const rows = [];
-      for (let j = 0; j < ng; j++) {
-        const mu = S[g * ng + j] / ng1, mr = (grand[j] - S[g * ng + j]) / nr, lfc = mu - mr;
-        const padj = Math.min(Math.max(Math.exp(-Math.abs(lfc * Math.sqrt(NE[g * ng + j] + 1))), 1e-12), 1);
-        rows.push({ gene: j, symbol: genes[j], lfc, padj });
-      }
+      const rows = []; for (let j = 0; j < ng; j++) rows.push({ gene: j, symbol: genes[j], lfc: lfc[j * G + g], padj: padj[j * G + g] });
       rows.sort((a, b) => b.lfc - a.lfc); out.set(groups[g], this.filterRanked(rows).slice(0, topN));
     }
     return out;
@@ -630,7 +627,7 @@ export class LstarView {
       return order.slice(0, topN).map((g) => ({ gene: g, symbol: symbols[g], mean: 0, varr: 0, resid: od[g], nobs: cellIds.length }));
     }
     // REORDERED store: the selection's rows are physically contiguous, so read the FULL selection via csrRows (1-few
-    // coalesced reads — latency-cheap regardless of size) and let overdispersedCore subsample IN MEMORY. Pre-subsampling
+    // coalesced reads — latency-cheap regardless of size) and let overdispersed() subsample IN MEMORY. Pre-subsampling
     // would scatter within the contiguous block and forfeit the ordering. (Canonical store → the size-gated path below.)
     if (this.dePanelCache === undefined && this.ds.hasField("counts_cellmajor_order") && cellIds.length <= this.nCells * 0.5) {
       try {
