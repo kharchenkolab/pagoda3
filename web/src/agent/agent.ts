@@ -152,9 +152,14 @@ export class Agent {
 
   proposeWorkspace(target: string) {
     if (this.app.locked) { this.addRail({ type: "DeTable", title: "Markers", cap: "vs rest", bind: "de:leiden:c0" }); this.app.toast("Layout is locked — answer sent to the rail instead", "You locked the layout, so the agent won't reconfigure it. You stay in control."); return this.app.checkpoint("deep-dive (locked→rail)", "Downgraded to a rail answer."); }
-    this.app.proposalWhy = "A different task warrants a different layout — but the agent proposes rather than imposes. Reversible either way.";
-    this.app.proposal = { title: `Switch to “${target}”?`, diff: `<span class="rm">− current ${this.app.currentWS} panels</span><br><span class="add">+ ${this.app.WS[target].panels.map((p) => p.title).join(", ")}</span>`, label: "workspace → " + target, apply: () => this.app.switchWS(target, false) };
-    this.app.renderRail(); this.app.toast("Proposed a workspace switch", "Big layout moves are proposals, not surprises — Apply or Discard in the rail.");
+    const ws = this.app.WS[target]; if (!ws || target === this.app.currentWS) return;   // unknown workspace, or already there → nothing to do
+    // APPLY directly — don't gate a REQUESTED, fully-reversible layout change behind a modal. A blocking
+    // "Apply/Discard" on a thing you just asked for is friction; reversibility (the checkpoint below → step back
+    // in History) is the safety, not a confirmation. switchWS rebuilds the panels + repaints.
+    const from = this.app.currentWS;
+    this.app.switchWS(target, false);
+    this.app.checkpoint("workspace → " + target, `The agent switched to the “${target}” workspace for this task — reversible: step back to “${from}” in History.`);
+    this.app.toast(`Switched to “${target}”`, `A different task can warrant a different layout — reversible: “${from}” is a step back in History.`);
   }
 
   // ================= presence: thread / pip / modes =================

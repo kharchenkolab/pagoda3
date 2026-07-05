@@ -1972,14 +1972,8 @@ export class App {
   }
   private async _renderRailInner() {
     const rb = this.$("railbody"); rb.innerHTML = "";
-    if (this.proposal) {
-      const d = mk("div", "rcard proposal");
-      d.innerHTML = `<div class="rch"><span class="rt">NEEDS YOUR OK</span></div><div class="body"><h4>${this.proposal.title}</h4><div class="diff">${this.proposal.diff}</div></div>`;
-      const acts = mk("div", "acts");
-      const ap = mk("button", "apply", "Apply"); ap.onclick = () => { const lbl = this.proposal.label, fn = this.proposal.apply; this.proposal = null; fn(); this.checkpoint(lbl, this.proposalWhy); this.fullRender(); };
-      const dc = mk("button", "dismiss", "Discard"); dc.onclick = () => { this.proposal = null; this.renderRail(); this.toast("Proposal discarded", "Your workbench is exactly as it was — proposals never change anything until you apply them."); };
-      acts.appendChild(ap); acts.appendChild(dc); d.querySelector(".body")!.appendChild(acts); rb.appendChild(d);
-    }
+    // (Workspace switches used to render a blocking "NEEDS YOUR OK" proposal card here; the agent now applies them
+    // directly + reversibly — see agent.proposeWorkspace. The rail is disposable answers only.)
     for (const p of this.rail) {
       const d = mk("div", "rcard"); const h = mk("div", "rch");
       h.appendChild(Object.assign(mk("span", "rtitle"), { textContent: p.title, title: p.title }));   // PRIMARY — tooltip recovers it if truncated
