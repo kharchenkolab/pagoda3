@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { sample, overdispersedCore, deCore, groupStatsForCellsCore, meanVarCore, logFupperTail, pseudobulkDECore, pseudobulkPairedDECore, type ODPanel } from "./odcore.ts";
+import { sample, overdispersedReduce, overdispersedRank, overdispersed, deCore, groupStatsForCellsCore, meanVarCore, logFupperTail, pseudobulkDECore, pseudobulkPairedDECore, type ODPanel, type ODResult } from "./odcore.ts";
+import { overdispersionFromStats as lsOverdispersion } from "../../../../lstar/js/core/compute.ts";   // the single-sourced scorer, for the composition check
 
 // Build a cell-major CSR panel from a dense [cell][gene] matrix (stores only nonzeros, like the real panel).
 function buildPanel(dense: number[][], lognorm = true): ODPanel {
@@ -16,34 +17,81 @@ test("sample: deterministic stride (no Math.random) — worker + main pick the S
   assert.deepEqual(sample([0, 1, 2, 3, 4, 5], 5), sample([0, 1, 2, 3, 4, 5], 5));   // repeatable
 });
 
-test("overdispersedCore: same MEAN, higher VARIANCE ranks as more overdispersed; zero-variance excluded; deterministic", () => {
-  // 10 cells × 5 genes (lognorm values given directly). g0=LO and g1=HI share mean 1.5 but HI has 9× the variance.
-  // g4=FLAT is constant (variance 0) → must be excluded. g2/g3 are filler so the LOWESS trend has enough points.
-  const col = (lo: number, hi: number) => [lo, lo, lo, lo, lo, hi, hi, hi, hi, hi];
-  const LO = col(1, 2), HI = col(0, 3), F2 = col(0.5, 1.5), F3 = col(3, 4), FLAT = col(2, 2);
-  const dense = LO.map((_, c) => [LO[c], HI[c], F2[c], F3[c], FLAT[c]]);
-  const panel = buildPanel(dense);
+// The overdispersion path is now SPLIT: pagoda3 owns the cell-major subset REDUCE (overdispersedReduce) +
+// the RANK/filter (overdispersedRank); the layout-independent scoring (pagoda2 LOWESS/F-test) is single-
+// sourced in lstar's overdispersionFromStats, reached via overdispersed(). The two pure halves are unit-
+// tested WASM-free here; the WASM-backed end-to-end is the convergence regression at the end.
+const OD_COL = (lo: number, hi: number) => [lo, lo, lo, lo, lo, hi, hi, hi, hi, hi];
+function odPanel(): ODPanel {
+  // 10 cells × 5 genes (lognorm values direct). g0=LO and g1=HI share mean 1.5 but HI has 9× the variance.
+  // g4=FLAT is constant (variance 0) → must be excluded. g2/g3 are filler so the LOWESS trend has points.
+  const LO = OD_COL(1, 2), HI = OD_COL(0, 3), F2 = OD_COL(0.5, 1.5), F3 = OD_COL(3, 4), FLAT = OD_COL(2, 2);
+  return buildPanel(LO.map((_, c) => [LO[c], HI[c], F2[c], F3[c], FLAT[c]]));
+}
+
+test("overdispersedReduce: per-gene mean/var/nobs over a cell subset (the cell-major reduce we own); deterministic", () => {
+  const panel = odPanel();
+  const r = overdispersedReduce(panel, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], 1000);
+  // means: LO(g0) and HI(g1) both 1.5; variance HI ≫ LO (0=>3 vs 1=>2, i.e. 9× the spread)
+  assert.ok(Math.abs(r.mean[0] - 1.5) < 1e-9 && Math.abs(r.mean[1] - 1.5) < 1e-9);
+  assert.ok(r.varr[1] > r.varr[0] * 3, "HI variance ≫ LO variance");
+  assert.equal(r.varr[4], 0, "FLAT gene has zero variance");
+  assert.equal(r.nobs[0], 10, "g0 (LO=[1×5,2×5]) expressed in all 10 cells");
+  assert.equal(r.nobs[1], 5, "g1 (HI=[0×5,3×5]) expressed in 5 cells (zeros dropped)");
+  // determinism: identical output across runs (deterministic stride sampler, no Math.random)
+  const r2 = overdispersedReduce(panel, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], 1000);
+  assert.deepEqual(Array.from(r2.mean), Array.from(r.mean));
+  assert.deepEqual(Array.from(r2.varr), Array.from(r.varr));
+});
+
+test("overdispersedRank: filters zero-variance genes, sorts by resid desc, honors topN (the rank we own)", () => {
+  const r = { mean: Float64Array.from([1.5, 1.5, 1, 2, 2]), varr: Float64Array.from([0.25, 2.25, 0.5, 0.5, 0]), nobs: Int32Array.from([10, 10, 10, 10, 10]) };
+  const scores = [0.1, 0.9, 0.5, 0.3, 99];   // g1 top; g4's score is high but it's FLAT (var 0) so must be dropped
+  const out = overdispersedRank(r, scores, 50);
+  const byG: Record<number, ODResult> = {}; for (const x of out) byG[x.g] = x;
+  assert.ok(out.every((x) => "g" in x && "mean" in x && "varr" in x && "resid" in x && "nobs" in x));
+  for (let i = 1; i < out.length; i++) assert.ok(out[i - 1].resid >= out[i].resid, "sorted by resid desc");
+  assert.equal(out[0].g, 1, "highest-resid non-flat gene ranks #1");
+  assert.equal(byG[4], undefined, "zero-variance gene excluded even with a huge score");
+  assert.equal(overdispersedRank(r, scores, 2).length, 2, "topN caps the table");
+});
+
+// Build a 10-cell panel from per-gene (mean, var) targets: a two-value column (5 cells at mean+d, 5 at
+// mean-d, d=√var) hits any (mean, var) exactly. Used to lay genes on a clean mean–variance trend so the
+// pagoda2 LOWESS fit is well-posed (a 5-gene toy degenerates to all-zero residuals in either implementation).
+function trendPanel(targets: Array<{ m: number; v: number }>): ODPanel {
+  const dense = Array.from({ length: 10 }, (_, c) => targets.map(({ m, v }) => { const d = Math.sqrt(v); return c < 5 ? m + d : m - d; }));
+  return buildPanel(dense);
+}
+
+test("overdispersed (convergence): reduce + lstar overdispersionFromStats + rank — outlier scores high, flat excluded, WASM non-degenerate", async () => {
+  // End-to-end via the SHARED lstar kernel (WASM) — the retired odcore LOWESS/F-test is now single-sourced.
+  // 27 genes on a Poisson-ish trend (var ≈ 0.15·mean) + one clear over-dispersed outlier at mean 2 (var 1.5,
+  // ~10× the trend) + one flat gene (var 0). (Byte-identity to the old pure-JS path was proven on real data in
+  // the Q3 gate; here we lock in the composition + behavior through the new call.)
+  const OUT_G = 27, FLAT_G = 28;
+  const targets = Array.from({ length: 27 }, (_, i) => { const m = 0.5 + (3.5 * i) / 26; return { m, v: 0.15 * m }; });
+  targets.push({ m: 2.0, v: 1.5 });   // g27 = over-dispersed outlier
+  targets.push({ m: 2.0, v: 0 });     // g28 = flat (must be excluded)
+  const panel = trendPanel(targets);
   const cells = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
 
-  const out = overdispersedCore(panel, cells, 10, 1000);
-  const byG: Record<number, any> = {}; for (const r of out) byG[r.g] = r;
+  const out = await overdispersed(panel, cells, 1000, 1000);
+  const byG: Record<number, ODResult> = {}; for (const r of out) byG[r.g] = r;
 
-  // shape
-  assert.ok(out.every((r) => "g" in r && "mean" in r && "varr" in r && "resid" in r && "nobs" in r));
-  // sorted by resid desc
-  for (let i = 1; i < out.length; i++) assert.ok(out[i - 1].resid >= out[i].resid);
-  // means: LO and HI both 1.5
-  assert.ok(Math.abs(byG[0].mean - 1.5) < 1e-9 && Math.abs(byG[1].mean - 1.5) < 1e-9);
-  // HI variance ≫ LO variance
-  assert.ok(byG[1].varr > byG[0].varr * 3);
-  // the OVERDISPERSION call: HI (g1) is more overdispersed than LO (g0), and is the top hit
-  assert.ok(byG[1].resid > byG[0].resid, "higher-variance gene must score higher");
-  assert.equal(out[0].g, 1, "the high-variance gene ranks #1");
-  // zero-variance gene excluded
-  assert.equal(byG[4], undefined, "constant (zero-variance) gene is not scored");
+  // sorted by resid desc; flat gene dropped
+  for (let i = 1; i < out.length; i++) assert.ok(out[i - 1].resid >= out[i].resid, "sorted by resid desc");
+  assert.equal(byG[FLAT_G], undefined, "constant (zero-variance) gene is not scored");
+  // WASM actually engaged (a degenerate fit returns all-zero residuals — guard against that regression)
+  assert.ok(out.some((r) => r.resid !== 0), "overdispersion residuals are non-degenerate (WASM fit resolved)");
+  // the outlier is over-dispersed vs a trend gene at the SAME mean (g13 has m≈2.25) and ranks near the top
+  assert.ok(byG[OUT_G].resid > byG[13].resid, "the off-trend outlier scores above an on-trend gene at similar mean");
+  assert.ok(out.slice(0, 3).some((r) => r.g === OUT_G), "the outlier ranks in the top 3");
 
-  // determinism: identical output across runs
-  assert.deepEqual(overdispersedCore(panel, cells, 10, 1000), out);
+  // composition correctness: overdispersed() == reduce → overdispersionFromStats → rank (M threaded through)
+  const r = overdispersedReduce(panel, cells, 1000);
+  const s = await lsOverdispersion(r.mean, r.varr, r.nobs);
+  assert.deepEqual(out, overdispersedRank(r, s, 1000));
 });
 
 test("deCore: A-high gene has lfc>0, B-high lfc<0; ranked by |logFC|; group means correct; deterministic", () => {

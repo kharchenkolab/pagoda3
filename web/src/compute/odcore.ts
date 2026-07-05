@@ -1,9 +1,10 @@
-// PURE numeric core for overdispersion (HVG) — extracted from data/view.ts so it can run in THREE places from ONE
-// definition: the main-thread fallback (view.ts), the compute worker (compute/worker.ts), and node unit tests. No DOM,
-// no WASM, no app imports → byte-identical wherever it runs. The kernel is pagoda2's gene-relative overdispersion:
-// per-gene mean/var of log1p over a (deterministically) subsampled cell set, a LOWESS mean-variance trend, and the
-// F-test on the variance ratio (effective d.o.f. = expressing cells). Returns the PANEL gene index `g`; the caller maps
-// g -> {gene, symbol} (so no symbol table crosses into the worker).
+// Numeric cores for the viewer's cell-major SUBSET compute — the reductions that iterate the selected cells' rows
+// (read via csrRows): DE (deCore), group stats (groupStatsForCellsCore), pseudobulk, and the overdispersion REDUCE
+// (per-gene mean/var of log1p + expressing count). These stay HERE — pure, node-testable, run in the worker + the
+// main-thread fallback. The layout-INDEPENDENT overdispersion MATH (pagoda2 adjustVariance: LOWESS + F-test) is now
+// lstar's single-sourced WASM kernel: `overdispersed()` reduces here, then calls @lstar/core overdispersionFromStats
+// (Q3: byte-identical to the retired JS LOWESS). Cores return the PANEL gene index `g`; the caller maps g -> {gene, symbol}.
+import { overdispersionFromStats as lsOverdispersion } from "../../../../lstar/js/core/compute.ts";
 
 export interface ODPanel {
   data: ArrayLike<number>;      // CSR values (cell-major), raw counts unless `lognorm`
@@ -27,7 +28,10 @@ export function sample(arr: ArrayLike<number>, k: number): number[] {
 }
 
 // The kernel. cellIds = the cell set; subsampled to maxCells. Returns genes ranked by overdispersion score (resid = -log p).
-export function overdispersedCore(panel: ODPanel, cellIds: ArrayLike<number>, topN = 50, maxCells = 2000): ODResult[] {
+// REDUCE (ours, cell-major, PURE): per-gene zero-aware mean/var of log1p + expressing count over a
+// (deterministically) subsampled cell set. The inputs the shared overdispersion kernel needs.
+export function overdispersedReduce(panel: ODPanel, cellIds: ArrayLike<number>, maxCells = 2000):
+    { mean: Float64Array; varr: Float64Array; nobs: Int32Array } {
   const { data, indices, indptr, nGenes, lognorm } = panel;
   const cells = sample(cellIds, maxCells);
   const n = Math.max(cells.length, 1);
@@ -37,20 +41,27 @@ export function overdispersedCore(panel: ODPanel, cellIds: ArrayLike<number>, to
     sum[g] += v; sumsq[g] += v * v; nobs[g]++;
   }
   const mean = new Float64Array(nGenes), varr = new Float64Array(nGenes);
-  const xs: number[] = [], ys: number[] = [], gi: number[] = [];
-  for (let g = 0; g < nGenes; g++) {
-    const m = sum[g] / n, vv = Math.max(sumsq[g] / n - (sum[g] / n) ** 2, 0);
-    mean[g] = m; varr[g] = vv;
-    if (m > 0 && vv > 0 && nobs[g] >= 3) { xs.push(Math.log(m)); ys.push(Math.log(vv)); gi.push(g); }
-  }
-  const trend = lowess(xs, ys);
-  const out: ODResult[] = gi.map((g, j) => {
-    const res = ys[j] - trend(xs[j]);
-    const lp = logFupperTail(Math.exp(res), nobs[g], nobs[g]);
-    return { g, mean: mean[g], varr: varr[g], resid: -lp, nobs: nobs[g] };
-  });
+  for (let g = 0; g < nGenes; g++) { const m = sum[g] / n; mean[g] = m; varr[g] = Math.max(sumsq[g] / n - m * m, 0); }
+  return { mean, varr, nobs };
+}
+
+// RANK (PURE): the genes the trend is fit on (mean>0, var>0, >=3 expressing cells), scored by the shared kernel,
+// sorted, topN. Same output set + order as the old JS core (only the trend/F-test math moved to lstar).
+export function overdispersedRank(r: { mean: Float64Array; varr: Float64Array; nobs: Int32Array }, scores: ArrayLike<number>, topN = 50): ODResult[] {
+  const out: ODResult[] = [];
+  for (let g = 0; g < r.mean.length; g++)
+    if (r.mean[g] > 0 && r.varr[g] > 0 && r.nobs[g] >= 3) out.push({ g, mean: r.mean[g], varr: r.varr[g], resid: Number(scores[g]), nobs: r.nobs[g] });
   out.sort((a, b) => b.resid - a.resid);
   return out.slice(0, topN);
+}
+
+// Full overdispersion (HVG): our cell-major reduce → lstar's shared LOWESS/F-test kernel → rank. `M` is the caller's
+// WASM handle (main-thread kernels() or the worker's wasm()) so the kernel isn't reloaded. Needs WASM (the JS LOWESS
+// is retired — Q3 proved the kernel is byte-identical).
+export async function overdispersed(panel: ODPanel, cellIds: ArrayLike<number>, topN = 50, maxCells = 2000, M?: any): Promise<ODResult[]> {
+  const r = overdispersedReduce(panel, cellIds, maxCells);
+  const scores = await lsOverdispersion(r.mean, r.varr, r.nobs, M);
+  return overdispersedRank(r, scores, topN);
 }
 
 // Subsample DE reduction — A and B are PRE-SUBSAMPLED cell sets (the deterministic sample() runs on the main thread).
@@ -174,38 +185,8 @@ export function pseudobulkPairedDECore(
 }
 
 // ----- LOWESS: tricube-weighted local linear fit of y~x at anchors, linearly interpolated -----
-function lowess(xs: number[], ys: number[], span = 0.3, nAnchor = 200): (x: number) => number {
-  const n = xs.length;
-  if (n < 3) { const my = ys.reduce((s, v) => s + v, 0) / Math.max(n, 1); return () => my; }
-  const ord = Array.from({ length: n }, (_, i) => i).sort((a, b) => xs[a] - xs[b]);
-  const sx = ord.map((i) => xs[i]), sy = ord.map((i) => ys[i]);
-  const win = Math.max(2, Math.floor(span * n));
-  const ax: number[] = [], ay: number[] = [];
-  for (let a = 0; a < nAnchor; a++) {
-    const x0 = sx[0] + (sx[n - 1] - sx[0]) * a / (nAnchor - 1);
-    let l = Math.max(0, lowerBound(sx, x0) - (win >> 1)); const r = Math.min(n, l + win); l = Math.max(0, r - win);
-    let maxd = 1e-9; for (let i = l; i < r; i++) maxd = Math.max(maxd, Math.abs(sx[i] - x0));
-    let sw = 0, swx = 0, swy = 0, swxx = 0, swxy = 0;
-    for (let i = l; i < r; i++) {
-      const d = Math.abs(sx[i] - x0) / maxd, w = (1 - d * d * d) ** 3, xi = sx[i], yi = sy[i];
-      sw += w; swx += w * xi; swy += w * yi; swxx += w * xi * xi; swxy += w * xi * yi;
-    }
-    const denom = sw * swxx - swx * swx;
-    ay.push(Math.abs(denom) < 1e-12 ? swy / sw : ((swy - (sw * swxy - swx * swy) / denom * swx) / sw) + (sw * swxy - swx * swy) / denom * x0);
-    ax.push(x0);
-  }
-  return (x: number) => {
-    if (x <= ax[0]) return ay[0];
-    if (x >= ax[ax.length - 1]) return ay[ax.length - 1];
-    const j = lowerBound(ax, x);
-    return ay[j - 1] + (ay[j] - ay[j - 1]) * (x - ax[j - 1]) / (ax[j] - ax[j - 1]);
-  };
-}
-function lowerBound(arr: number[], x: number): number {
-  let lo = 0, hi = arr.length;
-  while (lo < hi) { const m = (lo + hi) >> 1; if (arr[m] < x) lo = m + 1; else hi = m; }
-  return lo;
-}
+// (The JS LOWESS mean-variance trend that fed the overdispersion F-test is retired — that layout-independent math is
+//  now lstar's single-sourced WASM kernel, called via overdispersionFromStats in overdispersed() above.)
 
 // ----- overdispersion F-test (matches pagoda2 adjustVariance: pf(var-ratio, nobs, nobs, upper, log)) -----
 function lgammaFn(x: number): number {

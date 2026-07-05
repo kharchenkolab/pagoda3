@@ -3,7 +3,7 @@
 // S0 proved the SAB→worker→result round-trip; S1 runs the first real kernel (overdispersion) here. The numeric cores
 // live in pure modules (compute/odcore.ts) imported by BOTH this worker and node tests, so the math is unit-tested
 // while the wiring is OODA'd live under cross-origin isolation.
-import { overdispersedCore, deCore, groupStatsForCellsCore, meanVarCore, type ODPanel } from "./odcore.ts";
+import { overdispersed, deCore, groupStatsForCellsCore, meanVarCore, type ODPanel } from "./odcore.ts";   // overdispersed() reduces here + calls lstar's shared kernel (pass the worker's WASM handle)
 // STATIC import so the bundler resolves the kernels' .mjs + .wasm relative to the worker chunk —
 // base-agnostic (works at any mount path / behind an OOD proxy), unlike an origin-absolute /wasm/
 // URL. The emscripten module is worker-aware and fetches its .wasm relative to its own module URL.
@@ -58,7 +58,7 @@ function run(op: string, args: any): any {
     case "spin": { const end = Date.now() + (args.ms || 0); while (Date.now() < end) { /* busy */ } return { spun: args.ms || 0 }; }
     // de-risk: prove libstar WASM loads + runs in the worker.
     case "wasmVersion": return wasm().then((M: any) => ({ version: M ? M.version() : null }));
-    case "overdispersion": return overdispersedCore(panelFrom(args.panel), args.cellIds, args.topN, args.maxCells);
+    case "overdispersion": return wasm().then((M: any) => overdispersed(panelFrom(args.panel), args.cellIds, args.topN, args.maxCells, M));   // reduce in-worker, LOWESS/F-test via the worker-local WASM kernel
     case "de": return deCore(panelFrom(args.panel), args.A, args.B);
     case "groupStatsForCells": return groupStatsForCellsCore(panelFrom(args.panel), args.geneCol, args.ngGlobal, args.codes, args.G, args.cellIds);
     // S5 — the widget render/compute split with KERNELS: run untrusted widget code (shadowed globals, like codeapi) with
@@ -97,8 +97,8 @@ function runWidgetCode(args: any): Promise<any> {
       if (o.genes) rk = rk.filter((r) => o.genes.has(String(symFor(r.g))));   // gene-subset filter (g-level, before mapping)
       return rk.slice(0, o.topN).map((r) => ({ symbol: symFor(r.g), lfc: r.lfc, meanA: r.meanA, meanB: r.meanB }));
     } : undefined,
-    overdispersion: panel ? (cells: number[], opt?: any) => {
-      const o = optOf(opt, 50); let rk = overdispersedCore(panel, cells, o.genes ? 1e9 : o.topN, 2000);
+    overdispersion: panel ? async (cells: number[], opt?: any) => {
+      const o = optOf(opt, 50); let rk = await overdispersed(panel, cells, o.genes ? 1e9 : o.topN, 2000, await wasm());
       if (o.genes) rk = rk.filter((r) => o.genes.has(String(symFor(r.g))));
       return rk.slice(0, o.topN).map((r) => ({ symbol: symFor(r.g), score: r.resid, mean: r.mean }));
     } : undefined,

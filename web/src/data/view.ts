@@ -3,7 +3,7 @@
 import type { LstarDataset } from "./store.ts";
 import { kernels } from "./kernels.ts";
 import { DIM_RGB, DIM_A, recedeInto, themeIsDark } from "../render/theme.ts";   // theme-aware non-focus dot colour (live binding)
-import { sample, overdispersedCore, deCore, groupStatsForCellsCore } from "../compute/odcore.ts";   // pure kernel cores (shared by the fallback, the worker, and node tests)
+import { sample, overdispersed, deCore, groupStatsForCellsCore } from "../compute/odcore.ts";   // cell-major subset cores (shared by the fallback, the worker, and node tests); overdispersed() reduces here then calls lstar's kernel
 // The viewer-compute RECIPE, single-sourced in lstar (@lstar/core). We own the READ (fieldAsCsc for the whole
 // matrix, csrRows for a subset) + the cell-major subset REDUCTION; lstar owns the layout-independent MATH
 // (sufficient stats, markers, the pagoda2 overdispersion LOWESS/F-test). Pass our WASM handle as the trailing M?.
@@ -508,8 +508,8 @@ export class LstarView {
       let raw: { g: number; meanA: number; meanB: number; lfc: number }[];
       if (this.computePool?.isolated && dp.shared) {
         try { raw = await this.computePool.run("de", { panel: { data: dp.data.buffer, indices: dp.indices.buffer, indptr: dp.indptr.buffer, nGenes: dp.nGenes, lognorm: dp.lognorm }, A, B }); }
-        catch { raw = inline(); }
-      } else { raw = inline(); }
+        catch { raw = await inline(); }
+      } else { raw = await inline(); }
       const ranked: DEResult[] = raw.map((r) => ({ gene: dp.geneCol ? dp.geneCol[r.g] : r.g, symbol: dp.symbols[r.g], meanA: r.meanA, meanB: r.meanB, lfc: r.lfc }));
       return { ranked: this.filterRanked(ranked), nA: A.length, nB: B.length, approx, panel: true, nGenesRanked: dp.nGenes };
     }
@@ -636,8 +636,8 @@ export class LstarView {
       try {
         const cells = await (this.ds as any).sampleRows("counts_cellmajor", cellIds, maxCells);   // read ONLY ~maxCells (windowed) — the kernel scores them all; a capped sample ≈ the full ranking
         const sp = await this.subRowsPanel(cells);
-        if (sp) return this.filterRanked(overdispersedCore(sp.panel, sp.pos, topN, maxCells)
-          .map((r) => ({ gene: r.g, symbol: sp.symbols[r.g], mean: r.mean, varr: r.varr, resid: r.resid, nobs: r.nobs })));
+        if (sp) { const od = await overdispersed(sp.panel, sp.pos, topN, maxCells, await kernels());
+          return this.filterRanked(od.map((r) => ({ gene: r.g, symbol: sp.symbols[r.g], mean: r.mean, varr: r.varr, resid: r.resid, nobs: r.nobs }))); }
       } catch { /* fall through */ }
     }
     // SUBSET fast path: if the whole cell-major matrix isn't already cached AND this is a smallish selection, read
@@ -650,16 +650,16 @@ export class LstarView {
     if (this.dePanelCache === undefined && !this.ds.hasField("counts_cellmajor_order") && cellIds.length <= SUBSET_MAX) {
       try {
         const sp = await this.subRowsPanel(sample(cellIds, maxCells));
-        if (sp) return this.filterRanked(overdispersedCore(sp.panel, sp.pos, topN, sp.pos.length)
-          .map((r) => ({ gene: r.g, symbol: sp.symbols[r.g], mean: r.mean, varr: r.varr, resid: r.resid, nobs: r.nobs })));
+        if (sp) { const od = await overdispersed(sp.panel, sp.pos, topN, sp.pos.length, await kernels());
+          return this.filterRanked(od.map((r) => ({ gene: r.g, symbol: sp.symbols[r.g], mean: r.mean, varr: r.varr, resid: r.resid, nobs: r.nobs }))); }
       } catch { /* fall through to the whole-matrix panel */ }
     }
     const dp = await this.dePanel();
     if (!dp) return [];
-    // OFF the main thread when isolated + the panel is SAB-backed (posting it SHARES, no copy); else run the SAME core
-    // inline. Both paths call overdispersedCore → byte-identical; only the thread differs. The core returns the PANEL
-    // gene index g; we map g -> {global gene, symbol} HERE (so no symbol table crosses to the worker).
-    const inline = () => overdispersedCore({ data: dp.data, indices: dp.indices, indptr: dp.indptr, nGenes: dp.nGenes, lognorm: dp.lognorm }, cellIds, topN, maxCells);
+    // OFF the main thread when isolated + the panel is SAB-backed (posting it SHARES, no copy); else run the SAME path
+    // inline. Both reduce cell-major then score via lstar's shared kernel → byte-identical; only the thread + which WASM
+    // handle differs. The path returns the PANEL gene index g; we map g -> {global gene, symbol} HERE (no symbol table crosses to the worker).
+    const inline = async () => overdispersed({ data: dp.data, indices: dp.indices, indptr: dp.indptr, nGenes: dp.nGenes, lognorm: dp.lognorm }, cellIds, topN, maxCells, await kernels());
     let raw: { g: number; mean: number; varr: number; resid: number; nobs: number }[];
     if (this.computePool?.isolated && dp.shared) {
       // worker is an OPTIMIZATION; any worker failure degrades to the identical main-thread core (never throws on the kernel).
@@ -668,9 +668,9 @@ export class LstarView {
           panel: { data: dp.data.buffer, indices: dp.indices.buffer, indptr: dp.indptr.buffer, nGenes: dp.nGenes, lognorm: dp.lognorm },
           cellIds: Array.from(cellIds), topN, maxCells,
         });
-      } catch { raw = inline(); }
+      } catch { raw = await inline(); }
     } else {
-      raw = inline();
+      raw = await inline();
     }
     return this.filterRanked(raw.map((r) => ({ gene: dp.geneCol ? dp.geneCol[r.g] : r.g, symbol: dp.symbols[r.g], mean: r.mean, varr: r.varr, resid: r.resid, nobs: r.nobs })));
   }
