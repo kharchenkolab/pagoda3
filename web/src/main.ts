@@ -131,6 +131,16 @@ async function bootStore(store: LstarStore, opts: { applyLinks?: boolean; freshS
   try { oldApp?.dispose?.(); } catch { /* */ }
   const app = new App(ctx);
   app.freshSession = !!opts.freshSession;   // a dropped local file starts CLEAN — never inherits the previous dataset's annotation/panels/results/chat (all dropped files share the "default" session slot; the fingerprint alone is too weak to tell two same-size files apart)
+  // A DEEP LINK supplies its own state (a ?ask directive, a ?view snapshot, a ?session doc), so it boots FRESH —
+  // never accreting onto the auto-restored local session. That accretion was the "in-between" open: ?ask ran on
+  // top of whatever a previous tab left in the shared session. A ?ask link is additionally DISPOSABLE — a
+  // self-contained reproducible recipe that doesn't persist over your saved session (keep it by save/publish).
+  if (opts.applyLinks) {
+    const dl = new URLSearchParams(location.search);
+    const askDir = parseDeepLinkAsk(location.search);
+    if (askDir || dl.has("view") || dl.has("session")) app.freshSession = true;   // clean baseline BEFORE the link applies (must be set before mount → restoreSession)
+    app.disposableSession = !!askDir;
+  }
   const widgetPool = new ComputePool();   // S5: untrusted widget runCompute code runs in its OWN workers (separate from the app kernel pool), with kernels over the shared SAB
   _pools.push(widgetPool);
   app.widgetPool = widgetPool;

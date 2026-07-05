@@ -124,6 +124,7 @@ export class App {
   renderToken = 0;         // guards fullRender against concurrent re-entry (async panel build → stale double-append)
   liveMessages: any[] = [];   // the running Anthropic conversation (persists across asks so follow-ups keep context)
   freshSession = false;   // set by a deliberate NEW-dataset load (openLocal) → restoreSession skips ALL dataset-specific state (annotation draft, panels, results, chat) even if the fingerprint happens to match a prior file. Only the URL/demo boot (page refresh = same dataset) restores dataset-specific state.
+  disposableSession = false;   // a ?ask= deep-link opens a self-contained REPRODUCIBLE recipe → persistSession is a no-op so it never clobbers the user's saved session (keep a link's result by save/publish). Set in bootStore for a ?ask= URL.
   annoLayers = new Map<string, AnnotationLayer>();   // rich annotation layers (records/provenance); codes also mirrored into ctx as categoricals
   results = new ResultRegistry();   // session RESULTS (DE / pseudobulk / markers / HVG) as first-class re-runnable artifacts — the session ledger lists these
   embeddings: EmbeddingView[] = [];
@@ -303,6 +304,7 @@ export class App {
     if (Array.isArray(conv.history) && conv.history.length) { this.history = conv.history.map((h: any, i: number) => ({ ...h, i })); this.viewing = -1; this.renderSpine(); if (this.threadDocked) this.agent.renderThread(); }
   }
   persistSession() {
+    if (this.disposableSession) return;   // a ?ask= recipe session is disposable — never overwrite the user's saved session (explicit save/publish still works; it doesn't route through here)
     const userWS = this.wsOrder.filter((n) => !this.builtinWS.has(n) && this.WS[n]).map((n) => ({ name: n, ws: this.WS[n] }));
     const base = { store: this.currentStore(), fingerprint: this.datasetFingerprint(), currentWS: this.currentWS, colorBy: this.coord.state.colorBy, canvas: this.captureLayout(), userWS, annotation: this.serializeAnnotation(), catColors: serializeCategoryColors(), style: (this.coord.state as any).style, customPalette: serializeCustomPalette(), results: this.results.serialize(), customGeneSets: serializeCustomCollections(), geneFilter: this.ctx.geneFilterPatterns() };
     // Quota ladder (~5MB localStorage): full doc → drop the chat log → drop RESULT ROWS (keep each result as a
