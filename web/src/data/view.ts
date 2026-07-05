@@ -4,6 +4,10 @@ import type { LstarDataset } from "./store.ts";
 import { kernels } from "./kernels.ts";
 import { DIM_RGB, DIM_A, recedeInto, themeIsDark } from "../render/theme.ts";   // theme-aware non-focus dot colour (live binding)
 import { sample, overdispersedCore, deCore, groupStatsForCellsCore } from "../compute/odcore.ts";   // pure kernel cores (shared by the fallback, the worker, and node tests)
+// The viewer-compute RECIPE, single-sourced in lstar (@lstar/core). We own the READ (fieldAsCsc for the whole
+// matrix, csrRows for a subset) + the cell-major subset REDUCTION; lstar owns the layout-independent MATH
+// (sufficient stats, markers, the pagoda2 overdispersion LOWESS/F-test). Pass our WASM handle as the trailing M?.
+import { groupSufficientStats as lsGroupStats, markers as lsMarkers, groupSizes as lsGroupSizes, overdispersionFromStats as lsOverdispersion } from "../../../../lstar/js/core/compute.ts";
 import type { ComputePool } from "../compute/pool.ts";
 import { isolationAvailable } from "../compute/pool.ts";
 
@@ -226,7 +230,8 @@ export class LstarView {
       const cc = await this.countsCSC();
       const M = await kernels();
       if (M) {
-        const g = M.colSumByGroup(cc.data, cc.indptr, cc.indices, this.nCells, cc.nGenes, Int32Array.from(code), G, true);
+        // full-matrix (gene-major CSC) reduction → lstar's shared sufficient-stats primitive (over log1p).
+        const g = await lsGroupStats({ data: cc.data, indptr: cc.indptr, indices: cc.indices, ncells: this.nCells, ngenes: cc.nGenes }, Int32Array.from(code), G, { lognorm: true }, M);
         S = g.sum as Float64Array; SS = g.sumsq as Float64Array; NE = g.n_expr as Float64Array;
       } else {
         S = new Float64Array(G * ng); SS = new Float64Array(G * ng); NE = new Float64Array(G * ng);
