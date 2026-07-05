@@ -173,7 +173,10 @@ export class LstarView {
   // Full counts in CSC (gene-major), loaded + cached once. Backs the group-stats / DE fallbacks.
   private async countsCSC() {
     if (!this.cscCache) {
-      const sp = await this.ds.fieldSparse("counts");
+      // fieldAsCsc single-sources the measure→CSC read in the lstar reader: a DENSE or CSR on-disk counts is
+      // densified/transposed to gene-major CSC (a native CSC passes straight through). Plain fieldSparse here was
+      // both a crash on a dense measure AND a silent orientation bug on a CSR one — the kernels need gene-major CSC.
+      const sp = await this.ds.fieldAsCsc("counts");
       // SAB-back data + indptr when isolated (gene-major CSC → those are all colMeanVar needs) so a widget's
       // api.meanVar can run the WASM kernel over them in the worker, zero-copy. indices stays regular (not needed
       // for colMeanVar; saves the extra SAB). Transparent to the main-thread fallback callers.
