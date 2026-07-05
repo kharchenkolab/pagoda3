@@ -264,6 +264,15 @@ button{font-family:inherit}
 .convostop{position:absolute;right:7px;top:50%;transform:translateY(-50%);width:20px;height:20px;border:0;border-radius:5px;background:var(--text);cursor:pointer;padding:0}
 .convostop:hover{background:var(--bad)}
 
+/* "N new messages ⌄" pill — floats at the bottom of a chat surface when the user has scrolled up (so new
+   output no longer yanks them down). position:sticky keeps it at the viewport bottom of its scroller; it lives
+   INSIDE the flex message column, so align-self centres it. Click scrolls to the latest (see agent.pinChat). */
+.chatpill{position:sticky;bottom:8px;align-self:center;z-index:5;margin-top:2px;display:inline-flex;align-items:center;gap:5px;
+  background:var(--cyan);color:var(--on-accent);border:0;border-radius:14px;padding:5px 12px;
+  font-family:var(--sans);font-size:11.5px;font-weight:600;cursor:pointer;box-shadow:0 3px 12px rgba(0,0,0,.35)}
+.chatpill:hover{filter:brightness(1.08)}
+.chatpill .chev{font-size:13px;line-height:1;margin-top:-1px}
+
 /* ---------- timeline strip + live thread ---------- */
 .timeline{flex:0 0 auto;background:var(--panel);border-top:1px solid var(--line)}
 .thread{max-height:0;overflow:hidden;transition:max-height .3s ease;border-bottom:1px solid var(--line)}

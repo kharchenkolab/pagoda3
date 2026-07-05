@@ -21,6 +21,7 @@ export class Agent {
   live = false;                 // set true when the proxy + token are reachable
   running = false;              // a live turn is in flight (drives the Stop affordances on the Ask button + docked chat)
   private abortCtrl?: AbortController;
+  private chatSeen: Record<string, number> = {};   // per-surface "messages the user has seen" baseline — for the "N new" pill (see pinChat)
   constructor(app: App) { this.app = app; }
   get ctx() { return this.app.ctx; }
 
@@ -162,6 +163,27 @@ export class Agent {
     this.app.toast(`Switched to “${target}”`, `A different task can warrant a different layout — reversible: “${from}” is a step back in History.`);
   }
 
+  // Keep a chat surface pinned to the bottom on new output — UNLESS the user scrolled up, in which case
+  // HOLD their place and float a "N new ⌄" pill (click → jump down) instead of yanking them to the latest.
+  // Both chat surfaces (the floating thread + the docked convo) rebuild their content every render, so the
+  // caller reads the PRE-rebuild scroll state and passes it in; we persist only the seen-count baseline per
+  // surface `key`. `scroller` is the overflow:auto element; `col` is the flex message column the pill sticks in.
+  private pinChat(key: string, scroller: HTMLElement, col: HTMLElement, wasAtBottom: boolean, savedTop: number) {
+    const NEAR = 48;   // within this many px of the bottom counts as "at the bottom" (stay pinned)
+    const total = scroller.querySelectorAll(".cxex, .turn").length;   // message bubbles (past exchanges + live turns; tool steps don't count)
+    const rmPill = () => scroller.querySelector(".chatpill")?.remove();
+    const atBottom = () => scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < NEAR;
+    const jump = () => { scroller.scrollTop = scroller.scrollHeight; this.chatSeen[key] = total; rmPill(); };
+    if (wasAtBottom) { scroller.scrollTop = scroller.scrollHeight; this.chatSeen[key] = total; }   // was tracking the tail → keep it there
+    else {
+      scroller.scrollTop = Math.min(savedTop, scroller.scrollHeight);   // hold the user's position (new content appends BELOW, so this stays put)
+      const n = total - (this.chatSeen[key] ?? total);
+      if (n > 0) { const pill = mk("button", "chatpill"); pill.innerHTML = `${n} new message${n > 1 ? "s" : ""} <span class="chev">⌄</span>`; pill.title = "scroll to the latest"; pill.onclick = jump; col.appendChild(pill); }
+    }
+    // once the user scrolls back to the bottom themselves, clear the pill + reset the baseline
+    scroller.onscroll = () => { if (atBottom()) { this.chatSeen[key] = total; rmPill(); } };
+  }
+
   // ================= presence: thread / pip / modes =================
   renderThread() {
     if (this.app.disposed) return;   // a torn-down app's agent must not paint the old conversation into the new app's #thread/#convo (global $)
@@ -169,8 +191,10 @@ export class Agent {
     const host = this.app.$("thread"); const t = this.app.thread;
     if (!t) { host.classList.remove("show"); setTimeout(() => { if (!this.app.thread) host.innerHTML = ""; }, 300); return; }
     const wasShown = host.classList.contains("show");
+    const wasAtBottom = !wasShown || host.scrollHeight - host.scrollTop - host.clientHeight < 48;   // fresh-open → pin to the tail; else honour where the user scrolled
+    const savedTop = host.scrollTop;
     host.innerHTML = ""; const inner = mk("div", "thrinner"); this.appendThreadGuts(inner); host.appendChild(inner);
-    host.classList.add("show"); host.scrollTop = host.scrollHeight;
+    host.classList.add("show"); this.pinChat("thread", host, inner, wasAtBottom, savedTop);
     if (!wasShown) { host.classList.add("flash"); setTimeout(() => host.classList.remove("flash"), 900); this.app.$("timeline").scrollIntoView({ block: "end" }); }
   }
   appendThreadGuts(inner: HTMLElement) {
@@ -198,7 +222,11 @@ export class Agent {
   }
   renderDockedConvo() {
     this.app.$("thread").classList.remove("show"); this.app.$("thread").innerHTML = "";
-    const host = this.app.$("convo"); host.classList.add("open"); host.innerHTML = "";
+    const host = this.app.$("convo");
+    const prevBody = host.querySelector<HTMLElement>(".convobody");   // read scroll state BEFORE the wipe + rebuild below
+    const wasAtBottom = !prevBody || prevBody.scrollHeight - prevBody.scrollTop - prevBody.clientHeight < 48;
+    const savedTop = prevBody ? prevBody.scrollTop : 0;
+    host.classList.add("open"); host.innerHTML = "";
     const hd = mk("div", "convohd"); hd.appendChild(mk("span", "t", "CONVERSATION · PINNED")); const x = mk("span", "x", "⇤"); x.title = "collapse"; x.onclick = () => this.setThreadDock(false); hd.appendChild(x); host.appendChild(hd);
     const body = mk("div", "convobody");
     let lastCard: HTMLElement | null = null;
@@ -221,7 +249,8 @@ export class Agent {
     inrow.appendChild(inp);
     // while a live turn runs, a STOP square sits at the right edge of the entry field (the side-chat stop)
     if (running) { const stop = mk("button", "convostop"); stop.title = "stop the agent"; stop.onclick = () => this.stopLive(); inrow.appendChild(stop); }
-    foot.appendChild(inrow); host.appendChild(foot); body.scrollTop = body.scrollHeight;
+    foot.appendChild(inrow); host.appendChild(foot);
+    this.pinChat("convo", body, body, wasAtBottom, savedTop);
     if (awaiting) inp.focus();
   }
   // a past user↔agent exchange, collapsed to question + answer, click to expand the full trace
