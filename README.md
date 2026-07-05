@@ -93,6 +93,14 @@ uploaded anywhere.
 cd web && npm install && npm run dev             # -> http://localhost:8787  (agent proxy auto-spawns)
 ```
 
+## Documentation
+
+- **[docs/deployment.md](docs/deployment.md)** — how to run and share it: open a file, launch from
+  R/Python, send a dataset, self-host the viewer, and enable the AI assistant.
+- **[docs/architecture.md](docs/architecture.md)** — how it's built and why: the generative UI, the
+  coordination model, self-registering panels, and how custom widgets stay contained.
+- **[docs/widget-format.md](docs/widget-format.md)** — the portable format for custom widgets.
+
 ## What's inside
 
 - **Coordination space + generative viewer** — colour/focus the shared scope, a disposable answer

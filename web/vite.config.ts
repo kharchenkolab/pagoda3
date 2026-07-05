@@ -58,11 +58,10 @@ function agentProxyPlugin() {
   return {
     name: "agent-proxy",
     configureServer(server: any) {
-      // PAGODA_AGENT_DEBUG on by default in dev → the proxy dumps full agent transcripts (tool args + replies)
-      // to /tmp/pagoda-debug (current.json + sess-<runId>.jsonl) for inspecting live sessions. Override with
-      // PAGODA_AGENT_DEBUG=0 in the environment. (Dev-only; production is a static build with no proxy.)
-      const env = { ...process.env, PAGODA_AGENT_DEBUG: process.env.PAGODA_AGENT_DEBUG ?? "1" };
-      const child = spawn("node", [path.resolve(__dirname, "../server/proxy.mjs")], { stdio: "inherit", env });
+      // Set PAGODA_AGENT_DEBUG=1 in the environment to have the proxy dump full agent transcripts (tool args +
+      // replies) to /tmp/pagoda-debug (current.json + sess-<runId>.jsonl) for inspecting a live session. OFF by
+      // default — it writes whole conversations to disk. (Dev-only anyway; a production build has no proxy.)
+      const child = spawn("node", [path.resolve(__dirname, "../server/proxy.mjs")], { stdio: "inherit", env: process.env });
       const kill = () => { try { child.kill(); } catch {} };
       server.httpServer?.once("close", kill);
       process.once("exit", kill);

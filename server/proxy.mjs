@@ -1,7 +1,8 @@
-// pagoda2 agent proxy — keeps the Anthropic credential server-side and relays the
-// Messages API (SSE) to the browser. Auth borrows the local Claude Code OAuth token
-// (~/.aba/oauth.json), per project directive; refreshes near expiry. An API-key mode
-// and a browser OAuth (PKCE/UI-forwarding) sign-in are stubbed for later.
+// pagoda3 agent proxy — keeps the Anthropic credential server-side and relays the
+// Messages API (SSE) to the browser. Auth: set ANTHROPIC_API_KEY (the standard path for any
+// self-hosted / public deployment). For local development you can instead set PAGODA_DEV_OAUTH=1
+// to borrow a signed-in Claude Code OAuth token from ~/.aba/oauth.json (refreshed near expiry).
+// A second, optional upstream is a local OpenAI-compatible server (vLLM/qwen) for a swappable model.
 //
 //   GET  /api/health            -> { ok, mode, expires_in }
 //   POST /api/agent/stream      -> body {system, messages, tools, model, max_tokens}
@@ -125,9 +126,13 @@ async function refresh(store) {
 }
 
 async function bearer() {
+  // Standard path: an Anthropic API key. This is what a self-hosted / public deployment uses.
   if (process.env.ANTHROPIC_API_KEY) return { mode: "apikey", key: process.env.ANTHROPIC_API_KEY };
+  // Dev-only convenience: borrow the local Claude Code OAuth token (~/.aba/oauth.json). OFF unless
+  // PAGODA_DEV_OAUTH is set — it's specific to a machine that has Claude Code signed in, not a deploy path.
+  if (!process.env.PAGODA_DEV_OAUTH) throw new Error("set ANTHROPIC_API_KEY to enable the agent (or PAGODA_DEV_OAUTH=1 to borrow a local Claude Code login)");
   const store = loadStore();
-  if (!store?.access_token) throw new Error("no OAuth token in ~/.aba/oauth.json and no ANTHROPIC_API_KEY");
+  if (!store?.access_token) throw new Error("PAGODA_DEV_OAUTH set but no OAuth token in ~/.aba/oauth.json — set ANTHROPIC_API_KEY instead");
   if (store.refresh_token && store.expires_at && Date.now() / 1000 >= store.expires_at - REFRESH_SKEW) {
     return { mode: "oauth", token: await refresh(store) };
   }

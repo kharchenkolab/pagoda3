@@ -19,7 +19,7 @@ UX**: the surface where agent-driven analysis is steered and verified, not hand-
 - **High inertia (separate concern):** the agent keeps the UI consistent and changes the minimum needed,
   so the user isn't disoriented as the view evolves.
 
-## lstar relationship (fixed — see misc/note_from_lstar.md)
+## lstar relationship (fixed — see docs/architecture.md)
 - pagoda3 → lstar is a HARD dependency; lstar → pagoda3 is SOFT (`Suggests` + `lstar.view()` delegating).
   Never flip the direction.
 - lstar owns THE RECIPE — `extend_for_viewer` + kernels, systematic across Py/R/C++/JS. pagoda3 owns THE
