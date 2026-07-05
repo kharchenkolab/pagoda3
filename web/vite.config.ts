@@ -58,7 +58,11 @@ function agentProxyPlugin() {
   return {
     name: "agent-proxy",
     configureServer(server: any) {
-      const child = spawn("node", [path.resolve(__dirname, "../server/proxy.mjs")], { stdio: "inherit" });
+      // PAGODA_AGENT_DEBUG on by default in dev → the proxy dumps full agent transcripts (tool args + replies)
+      // to /tmp/pagoda-debug (current.json + sess-<runId>.jsonl) for inspecting live sessions. Override with
+      // PAGODA_AGENT_DEBUG=0 in the environment. (Dev-only; production is a static build with no proxy.)
+      const env = { ...process.env, PAGODA_AGENT_DEBUG: process.env.PAGODA_AGENT_DEBUG ?? "1" };
+      const child = spawn("node", [path.resolve(__dirname, "../server/proxy.mjs")], { stdio: "inherit", env });
       const kill = () => { try { child.kill(); } catch {} };
       server.httpServer?.once("close", kill);
       process.once("exit", kill);
