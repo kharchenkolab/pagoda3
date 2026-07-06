@@ -1,0 +1,95 @@
+name: Release
+
+# On a version tag (or a manual run against an existing tag), build the release artifacts and attach
+# them to the GitHub Release:
+#   - pagoda3-viewer-<version>.zip          the built web app (drop on any static host)
+#   - pagoda3-<version>-py3-none-any.whl    the Python package (bundles the viewer)
+#   - pagoda3_<version>.tar.gz              the R source package (bundles the viewer)
+#
+# The viewer imports lstar's JS reader + compiled WASM kernels. lstar ships the SOURCE; its js/dist
+# (the .mjs/.wasm) is a build artifact, not committed — so we check out the public lstar repo as a
+# SIBLING of pagoda3 and build its Emscripten kernels first. pagoda3's web build resolves lstar by
+# relative path (../../../../lstar/js/...), which is why both repos live side by side under the workspace.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to build + attach assets to (e.g. v0.1.0)'
+        required: true
+
+permissions:
+  contents: write   # create the release / upload assets
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve the tag
+        id: v
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          echo "tag=$TAG"          >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}"  >> "$GITHUB_OUTPUT"
+
+      # pagoda3 and lstar must sit side by side under the workspace: the web build imports
+      # ../../../../lstar/js/... — a fresh checkout of the two as siblings reproduces the dev layout.
+      - name: Check out pagoda3
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.v.outputs.tag }}
+          path: pagoda3
+      - name: Check out lstar (public — the JS reader + WASM kernels the viewer imports)
+        uses: actions/checkout@v4
+        with:
+          repository: kharchenkolab/lstar
+          path: lstar          # NOTE: tracks lstar's default branch; pin a ref here for byte-reproducible rebuilds.
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Set up R
+        uses: r-lib/actions/setup-r@v2
+      - name: Set up Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+
+      - name: Build lstar WASM kernels
+        working-directory: lstar/js
+        run: |
+          npm ci
+          bash build.sh
+          ls -la dist
+
+      - name: Build the viewer bundle + vendor it into the py/R packages
+        working-directory: pagoda3
+        run: |
+          ( cd web && npm ci )
+          bash server/build-bundle.sh
+
+      - name: Package the artifacts
+        run: |
+          VER="${{ steps.v.outputs.version }}"
+          ( cd pagoda3/web/dist && zip -rq "$GITHUB_WORKSPACE/pagoda3-viewer-${VER}.zip" . -x '*.lstar.zarr*' '*.zip' '*.h5ad' )
+          python -m pip install --upgrade pip wheel
+          pip wheel ./pagoda3/py --no-deps -w "$GITHUB_WORKSPACE"
+          R CMD build --no-build-vignettes --no-manual pagoda3/r
+          mv pagoda3_*.tar.gz "$GITHUB_WORKSPACE/"
+          echo "--- artifacts ---"
+          ls -lh "$GITHUB_WORKSPACE"/pagoda3-viewer-*.zip "$GITHUB_WORKSPACE"/pagoda3-*.whl "$GITHUB_WORKSPACE"/pagoda3_*.tar.gz
+
+      - name: Attach the artifacts to the GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.v.outputs.tag }}
+          files: |
+            pagoda3-viewer-*.zip
+            pagoda3-*.whl
+            pagoda3_*.tar.gz
