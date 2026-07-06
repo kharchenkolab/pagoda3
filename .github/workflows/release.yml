@@ -80,8 +80,7 @@ jobs:
           ( cd pagoda3/web/dist && zip -rq "$GITHUB_WORKSPACE/pagoda3-viewer-${VER}.zip" . -x '*.lstar.zarr*' '*.zip' '*.h5ad' )
           python -m pip install --upgrade pip wheel
           pip wheel ./pagoda3/py --no-deps -w "$GITHUB_WORKSPACE"
-          R CMD build --no-build-vignettes --no-manual pagoda3/r
-          mv pagoda3_*.tar.gz "$GITHUB_WORKSPACE/"
+          R CMD build --no-build-vignettes --no-manual pagoda3/r   # writes the tarball to the CWD ($GITHUB_WORKSPACE)
           echo "--- artifacts ---"
           ls -lh "$GITHUB_WORKSPACE"/pagoda3-viewer-*.zip "$GITHUB_WORKSPACE"/pagoda3-*.whl "$GITHUB_WORKSPACE"/pagoda3_*.tar.gz
 
