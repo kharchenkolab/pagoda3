@@ -89,12 +89,25 @@ function ensure(): HTMLDivElement {
   d.querySelector<HTMLButtonElement>(".ldclose")!.onclick = () => hideLoading();
   d.querySelector<HTMLButtonElement>(".ldcancel")!.onclick = () => { const cb = onCancelCb; hideLoading(); cb?.(); };
   d.querySelector<HTMLButtonElement>(".ldok")!.onclick = () => { const cb = onOkCb; hideLoading(); cb?.(); };
-  // Enter confirms — click the OK button when it's live (card finished). Ignored while running (OK disabled) and in
-  // the small/error modes. Capture phase so it fires before any panel handler.
+  // Keyboard across every overlay mode: Enter = the primary action, Escape = dismiss. Capture phase so it fires
+  // before any focused element's own Enter/Escape (and preventDefault stops a focused button double-firing). Each
+  // branch just clicks the already-wired button that's VISIBLE + enabled for the current mode.
   document.addEventListener("keydown", (e) => {
-    if (e.key !== "Enter" || !el || !el.classList.contains("show") || !el.classList.contains("card") || el.classList.contains("err")) return;
-    const ok = el.querySelector<HTMLButtonElement>(".ldok");
-    if (ok && !ok.disabled) { e.preventDefault(); e.stopPropagation(); ok.click(); }
+    if (!el || !el.classList.contains("show")) return;
+    if (e.key !== "Enter" && e.key !== "Escape") return;
+    const cls = el.classList;
+    const click = (sel: string): boolean => {
+      const b = el!.querySelector<HTMLButtonElement>(sel);
+      if (b && !b.disabled && b.offsetParent !== null) { e.preventDefault(); e.stopPropagation(); b.click(); return true; }
+      return false;
+    };
+    if (e.key === "Enter") {
+      if (cls.contains("err")) click(".ldretry") || click(".ldclose");   // "Try it anyway" if offered, else dismiss
+      else if (cls.contains("card")) click(".ldok");                     // finished checklist → Open
+    } else {   // Escape = dismiss whatever this mode offers (error → Close, running card / picker → Cancel)
+      if (cls.contains("err")) click(".ldclose");
+      else click(".ldcancel");
+    }
   }, true);
   document.body.appendChild(d);
   el = d;
