@@ -52,9 +52,14 @@ class CachingStore {
   private budget = 128 * 1024 * 1024;   // 128MB
   get: (key: string) => Promise<Uint8Array | undefined>;
   getRange?: (key: string, start: number, end: number) => Promise<Uint8Array | undefined>;
+  getSuffix?: (key: string, n: number) => Promise<Uint8Array | undefined>;
   constructor(inner: LstarStore) {
     this.get = (k) => this.cachedGet(inner, k);
     if (inner.getRange) this.getRange = (k, a, b) => inner.getRange!(k, a, b);
+    // Forward getSuffix (the v3 SHARDED byte-range fast path: suffix-read a shard's index, then range-read the
+    // chunk). Without it the reader sees no getSuffix on the wrapped store and falls back to whole-array reads on
+    // every sharded array — defeating v3 sharding's whole point (range-readable hosting with fewer HTTP objects).
+    if (inner.getSuffix) this.getSuffix = (k, n) => inner.getSuffix!(k, n);
   }
   private async cachedGet(inner: LstarStore, k: string): Promise<Uint8Array | undefined> {
     const hit = this.cache.get(k);

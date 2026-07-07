@@ -69,6 +69,10 @@ export class MemStore implements LstarStore {
     const v = this.files.get(this.norm(key));
     return v ? v.subarray(start, end) : undefined;
   }
+  async getSuffix(key: string, n: number): Promise<Uint8Array | undefined> {   // last n bytes — v3 shard-index reads
+    const v = this.files.get(this.norm(key));
+    return v ? v.subarray(Math.max(0, v.byteLength - n)) : undefined;
+  }
 }
 
 export class ZipStore implements LstarStore {
@@ -82,6 +86,10 @@ export class ZipStore implements LstarStore {
   async getRange(key: string, start: number, end: number): Promise<Uint8Array | undefined> {
     const v = await this.get(key);
     return v ? v.subarray(start, end) : undefined;   // [start, end) — same contract as HttpStore
+  }
+  async getSuffix(key: string, n: number): Promise<Uint8Array | undefined> {   // last n bytes — v3 shard-index reads
+    const v = await this.get(key);
+    return v ? v.subarray(Math.max(0, v.byteLength - n)) : undefined;
   }
 }
 
@@ -118,6 +126,10 @@ export class DirHandleStore implements LstarStore {
     const f = await this.fileFor(key);
     return f ? new Uint8Array(await f.slice(start, end).arrayBuffer()) : undefined;   // true disk range read
   }
+  async getSuffix(key: string, n: number): Promise<Uint8Array | undefined> {   // last n bytes — v3 shard-index reads
+    const f = await this.fileFor(key);
+    return f ? new Uint8Array(await f.slice(Math.max(0, f.size - n)).arrayBuffer()) : undefined;
+  }
 }
 
 export class FileListStore implements LstarStore {
@@ -138,6 +150,10 @@ export class FileListStore implements LstarStore {
   async getRange(key: string, start: number, end: number): Promise<Uint8Array | undefined> {
     const f = this.files.get(key[0] === "/" ? key.slice(1) : key);
     return f ? new Uint8Array(await f.slice(start, end).arrayBuffer()) : undefined;
+  }
+  async getSuffix(key: string, n: number): Promise<Uint8Array | undefined> {   // last n bytes — v3 shard-index reads
+    const f = this.files.get(key[0] === "/" ? key.slice(1) : key);
+    return f ? new Uint8Array(await f.slice(Math.max(0, f.size - n)).arrayBuffer()) : undefined;
   }
 }
 
