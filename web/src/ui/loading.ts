@@ -27,6 +27,10 @@ function ensure(): HTMLDivElement {
     #ldov.show{display:flex}
     #ldov .ldcard{min-width:320px;max-width:460px;padding:22px 24px;border-radius:12px;
       background:var(--panel,#161a22);color:var(--text);border:1px solid var(--line,#2a2f3a);box-shadow:0 12px 40px rgba(0,0,0,.5)}
+    /* Card / picker hold a checklist or list that FILLS IN as work reports — pin the width (to the max) so the box
+       doesn't snap wider when a long step detail lands (e.g. "UMAP · 30 PCs · 1500 HVGs"). A long detail wraps
+       within the fixed width instead of jerking the whole dialog. Small + error modes stay content-sized. */
+    #ldov.card .ldcard,#ldov.pick .ldcard{width:460px}
     #ldov .ldspin{width:20px;height:20px;border-radius:50%;flex:0 0 auto;
       border:2.5px solid var(--line,#2a2f3a);border-top-color:var(--cyan);animation:ldspin .8s linear infinite}
     @keyframes ldspin{to{transform:rotate(360deg)}}
