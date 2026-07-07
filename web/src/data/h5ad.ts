@@ -42,6 +42,16 @@ function sparseFmt(node: H5): { fmt: "csr" | "csc"; shape: number[] } | null {
   return null;
 }
 
+// Classify a measure by its NONZERO values (a sample): any negative → "scaled" (z-scored — NOT a usable
+// HVG/marker basis; lstar's selectCountsBasis rejects it), else all-integer → "raw", else "lognorm".
+// Tagging a scaled X "lognorm" would silently feed z-scored values into markers/overdispersion (var-of-
+// scaled, and negatives → NaN in the log mean-variance trend); "scaled" makes the prep fail loud instead.
+function measureState(sample: ArrayLike<number>): "raw" | "lognorm" | "scaled" {
+  let raw = true; const n = Math.min(sample.length, 5000);
+  for (let i = 0; i < n; i++) { const x = sample[i] as number; if (x < 0) return "scaled"; if (x !== Math.round(x)) raw = false; }
+  return raw ? "raw" : "lognorm";
+}
+
 // An obs/var column → its viewer field shape, mirroring lstar's _read_column. Handles modern encodings
 // (categorical, nullable-integer, nullable-boolean) and plain datasets (bool/int/float, and plain string
 // columns → labels). Returns null for an encoding we don't surface.
@@ -140,9 +150,7 @@ export async function anndataSpec(f: H5): Promise<DatasetSpec> {
   const csc = await readCounts(M, countsNode, ncells, ngenes);
   if (csc) {
     assertSparseOk(csc, ncells, ngenes);   // catch a truncated/corrupt matrix before we compute on garbage (the CSC is gene-major → ncols = ngenes)
-    const sample = csc.data as ArrayLike<number>;
-    let raw = true; for (let i = 0; i < Math.min(sample.length, 5000); i++) if (sample[i] !== Math.round(sample[i] as number)) { raw = false; break; }
-    fields.counts = { role: "measure", span: ["cells", "genes"], encoding: "csc", state: raw ? "raw" : "lognorm",
+    fields.counts = { role: "measure", span: ["cells", "genes"], encoding: "csc", state: measureState(csc.data as ArrayLike<number>),
                       shape: [ncells, ngenes], data: csc.data, indices: csc.indices, indptr: csc.indptr };
   }
 
@@ -226,9 +234,7 @@ async function legacyAnndataSpec(f: H5, M: any): Promise<DatasetSpec> {
   if (countsNode) {
     const csc = await readCounts(M, countsNode, ncells, ngenes);
     if (csc) {
-      const s = csc.data as ArrayLike<number>; let raw = true;
-      for (let i = 0; i < Math.min(s.length, 5000); i++) if (s[i] !== Math.round(s[i] as number)) { raw = false; break; }
-      fields.counts = { role: "measure", span: ["cells", "genes"], encoding: "csc", state: raw ? "raw" : "lognorm",
+      fields.counts = { role: "measure", span: ["cells", "genes"], encoding: "csc", state: measureState(csc.data as ArrayLike<number>),
                         shape: [ncells, ngenes], data: csc.data, indices: csc.indices, indptr: csc.indptr };
     }
   }

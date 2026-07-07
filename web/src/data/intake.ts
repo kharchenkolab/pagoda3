@@ -50,6 +50,15 @@ export async function finalizeSpec(spec: DatasetSpec, progress?: OpenProgress, o
   // Declare the WHOLE checklist upfront (the plan is known once parsed) so the card shows every row from the
   // start and just ticks each from pending → active → done — no expanding list. 'present' = read from the file.
   const cf0: any = spec.fields.counts;
+  // A scaled / z-scored expression matrix (negative values) is NOT a valid basis for variable genes or markers —
+  // lstar's prep trusts a measure literally named "counts" and would produce degenerate/misleading stats. Fail loud
+  // (overridable): re-export with raw counts, or "Try it anyway" to browse the embedding + metadata.
+  if (cf0 && cf0.state === "scaled" && !force)
+    throw Object.assign(new Error(
+      "This file's expression matrix is scaled / z-scored (it has negative values) and carries no raw counts " +
+      "(no layers['counts']) — pagoda3 needs raw counts or log-normalized values to compute variable genes and markers. " +
+      "Re-export with raw counts in layers['counts'] (or .raw), or open anyway to browse the embedding + metadata (gene statistics will be unreliable)."),
+      { overridable: true });
   const labelsNow = Object.entries(spec.fields).filter(([, x]) => (x as any).role === "label" && (x as any).encoding === "utf8").map(([k]) => k);
   const clusteringNow = labelsNow.filter((n) => /leiden|louvain|cluster|cell.?type|annotation/i.test(n));
   const willEmbed = !hasEmbedding && !!cf0;
@@ -105,7 +114,7 @@ export async function finalizeSpec(spec: DatasetSpec, progress?: OpenProgress, o
     const labelFields = Object.entries(spec.fields).filter(([, x]) => (x as any).role === "label" && (x as any).encoding === "utf8").map(([k]) => k);
     const clusteringLike = labelFields.filter((n) => /leiden|louvain|cluster|cell.?type|annotation/i.test(n));
     const groupings = clusteringLike.length ? clusteringLike : labelFields.slice(0, 1);
-    if (groupings.length && spec.fields.counts) {
+    if (groupings.length && spec.fields.counts && cf0.state !== "scaled") {   // scaled basis (force-opened) → skip: markers/HVG would be degenerate
       if (progress?.signal?.aborted) throw Object.assign(new Error("Cancelled"), { aborted: true });
       progress?.step("markers", "Marker genes", "active");
       const { extendForViewer } = await import("../../../../lstar/js/core/extend.ts");
