@@ -84,9 +84,8 @@ export function buildDefaultWorkspaces(ctx: Ctx): Record<string, WS> {
       // exists, else by the base clustering — so an empty draft never paints a blank grey map.
       { type: "Embedding", title: "Embedding", bind: "embedding:main" },
       { type: "Reconcile", title: "Reconcile labels" }] },   // no hardcoded group — the panel picks a stored clustering that EXISTS (a local file may have louvain, not leiden)
-    "QC triage": { colorBy: "qc:mito", panels: [
-      { type: "Embedding", title: "Embedding", cap: "mito fraction", bind: "embedding:main" },
-      { type: "CompositionBars", title: "Composition", cap: "by sample", bind: "composition:bySample" }] },
+    // (No dedicated "QC triage" workspace — QC is reachable without one: colour by `qc:mito` from the picker, and
+    // the Metadata facets already browse the QC numeric fields as histograms.)
   };
 }
 

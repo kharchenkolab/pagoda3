@@ -147,7 +147,7 @@ export class Agent {
       return this.app.checkpoint("what changed?", "Disposable marker answer in the rail.");
     }
     // rung 2 — propose workspace
-    if (/deep.?dive|set me up|workspace|switch to/.test(q)) { const target = /qc|quality/.test(q) ? "QC triage" : "Markers"; this.proposeWorkspace(target); return; }
+    if (/deep.?dive|set me up|workspace|switch to/.test(q)) { const target = /qc|quality/.test(q) ? "Metadata" : "Markers"; this.proposeWorkspace(target); return; }   // QC lives in the Metadata facets now (no dedicated QC workspace)
     this.app.toast("I'm not sure how to act on that", "Try ⌘K — the suggestions show the different ways the agent responds.");
   }
 
