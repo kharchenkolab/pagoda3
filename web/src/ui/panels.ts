@@ -76,6 +76,7 @@ export interface PanelHooks {
     annoLayer: (name: string) => AnnotationLayer | undefined;   // the rich annotation layer (with CAP records)
     saveRecord: (layerName: string, record: CapRecord) => void; // persist a per-label CAP record
     adoptSource: (name: string) => void;                        // set the working draft to a source's per-cluster labeling
+    runScType: () => Promise<{ ok?: string; error?: string }>;  // run scType (marker-based cell typing) → a candidate source, on explicit request
     renameLabel: (layerName: string, from: string, to: string) => void;   // rename a working label (to an existing one = merge)
     proposeRecord: (layerName: string, label: string) => void;  // ask the agent to suggest a CAP record for one label
     proposeAllNames: (layerName: string) => void;               // ask the agent to name+explain all working clusters
@@ -1054,11 +1055,27 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
   for (const [m, lbl] of segItems) { const b = mk("button", "mini" + (m === mode ? " on" : ""), lbl) as HTMLButtonElement; b.dataset.m = m; b.title = reconTip[m] || lbl; seg.appendChild(b); }
   if (segItems.length >= 2) hdr.appendChild(seg);
   w.appendChild(hdr);
-  // one-line legend so the columns aren't a guessing game: which is the answer, which are candidates, where L1/L2 went
-  const derived = ctx.derivedGroupings();
-  const legend = mk("div"); legend.style.cssText = "flex:0 0 auto;padding:2px 10px 6px;font-size:10.5px;color:var(--faint);border-bottom:1px solid var(--line2)";
-  legend.innerHTML = `<b style="color:var(--dim);font-weight:600">annotation</b> = the field you colour by (the answer) · the rest are candidate <b style="color:var(--dim);font-weight:600">sources</b> to reconcile from${derived.length ? ` · coarser <b style="color:var(--dim);font-weight:600">${esc(derived.join(" / "))}</b> rollups are in the Metadata facets` : ""}`;
-  w.appendChild(legend);
+  if (!workMeta) {
+    // No working annotation yet — INVITE the user to start one; never manufacture tracks on tab-open. Offer to adopt
+    // an existing source (a real cell_type is already a candidate), run scType for a marker-based candidate, or ask
+    // the agent. Nothing runs until the user acts, so labelings never appear from nowhere.
+    const inv = mk("div"); inv.style.cssText = "flex:0 0 auto;padding:7px 10px;border-bottom:1px solid var(--line2);font-size:11.5px;display:flex;align-items:center;gap:6px;flex-wrap:wrap";
+    const adoptBtns = sources.map((s) => `<button class="mini rcstart" data-adopt="${esc(s.name)}" title="set the working annotation to ${esc(s.name)}'s per-cluster labeling">adopt ${esc(s.name)}</button>`).join("");
+    const hasScType = ctx.annotationLayers().includes("scType");
+    inv.innerHTML = `<span style="color:var(--dim)">No working annotation yet.</span> ${adoptBtns}`
+      + `${hasScType ? "" : `<button class="mini rcsctype" title="run scType — marker-based cell typing — to add a candidate source">run scType</button>`}`
+      + ` <span style="color:var(--faint)">or ask the agent to annotate.</span>`;
+    w.appendChild(inv);
+    inv.querySelectorAll<HTMLElement>(".rcstart").forEach((el) => el.addEventListener("click", () => hooks.annotation.adoptSource(el.dataset.adopt!)));
+    const sc = inv.querySelector<HTMLButtonElement>(".rcsctype");
+    if (sc) sc.addEventListener("click", async () => { sc.disabled = true; sc.textContent = "running scType…"; await hooks.annotation.runScType(); });
+  } else {
+    // one-line legend (only once there's a draft): which column is the answer, which are candidates, where L1/L2 went.
+    const derived = ctx.derivedGroupings();
+    const legend = mk("div"); legend.style.cssText = "flex:0 0 auto;padding:2px 10px 6px;font-size:10.5px;color:var(--faint);border-bottom:1px solid var(--line2)";
+    legend.innerHTML = `<b style="color:var(--dim);font-weight:600">annotation</b> = the field you colour by (the answer) · the rest are candidate <b style="color:var(--dim);font-weight:600">sources</b> to reconcile from${derived.length ? ` · coarser <b style="color:var(--dim);font-weight:600">${esc(derived.join(" / "))}</b> rollups are in the Metadata facets` : ""}`;
+    w.appendChild(legend);
+  }
   const host = mk("div"); host.style.cssText = "flex:1 1 auto;min-height:0;overflow:auto"; w.appendChild(host);
   const mhost = mk("div"); mhost.style.cssText = "flex:1 1 auto;min-height:0;overflow:auto;display:none;padding:8px 10px"; w.appendChild(mhost);
   const lhost = mk("div"); lhost.style.cssText = "flex:1 1 auto;min-height:0;overflow:auto;display:none;padding:8px 10px"; w.appendChild(lhost);

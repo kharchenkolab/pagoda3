@@ -1,5 +1,5 @@
 import { mk } from "./dom.ts";
-import { Ctx, looksLikeClusterPlaceholder } from "../data/ctx.ts";
+import { Ctx } from "../data/ctx.ts";
 import { Coord, handleLabel, EntityRef } from "../data/coord.ts";
 import { Panel, PanelView, PanelHooks, CompReactor, BuiltBody, bodyFor, paintEmbedding, resolvePanelStyleFor } from "./panels.ts";
 import { EmbeddingView } from "../render/embedding.ts";
@@ -57,10 +57,6 @@ function parseCssColorToRGB(s: string): [number, number, number] | null {
   } catch { return null; }
 }
 
-// `looksLikeClusterPlaceholder` (does a labeling look like PRISTINE cluster ids — "cluster 0", "c3", "7" —
-// carrying no biology?) now lives in data/ctx.ts and is imported above, so the role default (ctx) and the
-// draft-seed decision (here) share one definition.
-
 const COLOR_OPTS: [string, string][] = [
   ["meta:leiden", "leiden"], ["meta:cell_type", "cell type"], ["meta:condition", "condition"],
   ["meta:sample", "sample"], ["qc:mito", "mito %"], ["gene:IL6", "IL6"], ["gene:CD3D", "CD3D"],
@@ -84,7 +80,9 @@ export function buildDefaultWorkspaces(ctx: Ctx): Record<string, WS> {
       // (defaultGrouping prefers annotation > cell_type > leiden), no need to re-open the workspace or add a panel.
       { type: "Heatmap", title: "Marker genes", cap: "top genes per group" }] },
     "Annotate": { colorBy: defGroup, panels: [
-      { type: "Embedding", title: "Embedding", bind: "embedding:main", view: { colorBy: "meta:annotation" } },
+      // No frozen per-panel colour: ensureAnnotation() (run on entry) colours by the working `annotation` once one
+      // exists, else by the base clustering — so an empty draft never paints a blank grey map.
+      { type: "Embedding", title: "Embedding", bind: "embedding:main" },
       { type: "Reconcile", title: "Reconcile labels" }] },   // no hardcoded group — the panel picks a stored clustering that EXISTS (a local file may have louvain, not leiden)
     "QC triage": { colorBy: "qc:mito", panels: [
       { type: "Embedding", title: "Embedding", cap: "mito fraction", bind: "embedding:main" },
@@ -585,6 +583,7 @@ export class App {
         annoLayer: (name) => this.annoLayers.get(name),
         saveRecord: (layerName, record) => { const L = this.annoLayers.get(layerName); if (L) { L.records = L.records || {}; const prev = L.records[record.label]; L.records[record.label] = record; if (layerName === "annotation" && prev?.category !== record.category) { this.refreshHierarchyLevels(L); this.repaint(); this.syncColorSelects(); } } },   // lineage changed → rebuild the L1/L2 rollups
         adoptSource: (name) => { this.adoptSource(name); },
+        runScType: () => this.runScType(),
         renameLabel: (layerName, from, to) => { this.renameLabel(layerName, from, to); },
         proposeRecord: (layerName, label) => { this.proposeRecord(label, layerName); },
         proposeAllNames: (layerName) => { this.proposeAllNames(layerName); },
@@ -1346,35 +1345,16 @@ export class App {
   // Ensure the Annotate workspace has something to work with: a working draft (seeded from cell_type/clusters,
   // non-destructive, no colour change) + at least one computed source (scType). Re-renders when ready.
   async ensureAnnotation(): Promise<void> {
-    if (!this.annoLayers.has("annotation")) {
-      // Seed a working draft IMMEDIATELY so the Reconcile panel is never empty on first visit — cell_type if the
-      // dataset carries a labeling, else the clustering as a PLACEHOLDER we upgrade to scType below. NEVER block this
-      // first seed on scType: awaiting it left the panel empty for the seconds scType took (the "empty first visit"
-      // bug), and the earlier "seed from scType" fix caused exactly that. (A plain obs cell_type isn't in groupings(),
-      // so check the field itself.)
-      const seedSrc = this.ctx.catalogCategoricals().includes("cell_type") ? "cell_type" : this.ctx.defaultGrouping();
-      const m: any = await this.ctx.view.metadata(seedSrc);
-      if (m.kind === "categorical") { const layer = seedLayer("annotation", "derived", { codes: m.codes, categories: m.categories }); layer.provenance = { method: "seed", params: { from: seedSrc } }; this.commitLayer(layer, true); }   // render NOW — the table + card appear immediately
-    }
-    // scType in the BACKGROUND (adds its source column when ready). If the working draft is still the PRISTINE clusters
-    // placeholder (seeded from the clustering, not cell_type, and not yet edited/adopted), UPGRADE it to scType so a
-    // no-cell_type dataset doesn't LINGER on cluster ids — all without ever blocking the first paint.
-    if (!this.annoLayers.has("scType")) {
-      void this.runScType().then(() => {
-        const L = this.annoLayers.get("annotation");
-        const from = L?.provenance?.method === "seed" ? (L.provenance as any)?.params?.from : null;
-        // Upgrade a PRISTINE placeholder draft to scType (the real labeling). "Pristine" = still the unedited seed
-        // AND carrying no biology: either it was seeded from the CLUSTERING, or from a `cell_type` whose VALUES are
-        // themselves cluster-id placeholders (a store may ship cell_type = "cluster 0".."cluster N"). A genuine
-        // cell_type (T cell, B cell…) is a real labeling and is kept as-is — the source-name check alone missed
-        // the placeholder-cell_type case, leaving the working draft on meaningless cluster ids.
-        const pristine = !!from && (from !== "cell_type" || looksLikeClusterPlaceholder(L!.categories));
-        if (pristine && this.annoLayers.has("scType")) void this.adoptSource("scType");
-      }).catch(() => { /* scType is best-effort */ });
-    }
-    // pre-warm the working draft's per-label markers (a ~2s DE) in the background, so the FIRST record card's
-    // marker-evidence chips appear instantly instead of sitting on "computing…" after the first row click.
-    if (this.annoLayers.has("annotation")) this.ctx.markers("annotation").catch(() => {});
+    // PASSIVE: opening the Annotate workspace no longer seeds a working draft or runs scType. Annotation is STARTED
+    // by an explicit action — adopt a source, run scType, annotate, or an agent request — and the Reconcile panel
+    // shows a "start one" invite when there's no draft. So labelings never appear from nowhere (three identical
+    // auto-generated tracks on a dataset that already ships a cell_type was exactly the wrong, surprising behaviour).
+    const hasDraft = this.annoLayers.has("annotation");
+    // Colour the embedding by the working annotation once it exists, else by the BASE clustering (the reconcile
+    // unit) — never a blank grey map from colouring by an annotation that isn't there yet.
+    const base = this.ctx.groupings().find((g) => !this.ctx.annotationLayers().includes(g) && !this.ctx.derivedGroupings().includes(g)) || this.ctx.defaultGrouping();
+    this.coord.setColor("meta:" + (hasDraft ? "annotation" : base));
+    if (hasDraft) this.ctx.markers("annotation").catch(() => {});   // pre-warm the first record card's markers
   }
 
   // Adopt a source as the WORKING draft: set every base cluster to that source's dominant label, in ONE
@@ -1392,6 +1372,7 @@ export class App {
     for (let i = 0; i < codes.length; i++) { const g = baseMeta.codes[i]; codes[i] = (g >= 0 && g < groupToCat.length) ? groupToCat[g] : -1; }
     const layer: AnnotationLayer = { name: "annotation", source: "derived", codes, categories: cats, records: this.annoLayers.get("annotation")?.records || {}, provenance: { method: "adopt", params: { from: sourceName, base: b } } };
     this.commitLayer(layer);
+    this.noteColor("meta:annotation"); this.coord.setColor("meta:annotation");   // adopting starts the working draft → show it (same as the old seed path)
     return { ok: `adopted ${sourceName} → working draft (${cats.length} labels over ${rows.length} ${b} clusters)` };
   }
 
