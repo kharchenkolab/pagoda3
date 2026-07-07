@@ -408,6 +408,18 @@ export class Ctx {
     return gs[0] || "leiden";
   }
 
+  // The base CLUSTERING to reconcile against / colour the Annotate embedding by — the bare partition, NOT an
+  // annotation. Prefer a precomputed grouping, but fall back to a catalog categorical that LOOKS like a clustering
+  // (leiden/louvain/cluster…) — so a store whose markers were skipped (e.g. a force-opened scaled matrix leaves
+  // `louvain` enumerable in the catalog but absent from groupings()) still resolves to a field that EXISTS, never
+  // the literal "leiden" fallback that would colour by a missing field → a blank grey map. Shared by the Reconcile
+  // panel and ensureAnnotation so the embedding and the reconcile table always agree on the base.
+  baseClustering(): string {
+    const clusters = this.groupings().filter((g) => !this.annoNames.has(g) && !this.derivedNames.has(g));
+    if (clusters.includes("leiden")) return "leiden";
+    return clusters[0] || this.catalogCategoricals().find((f) => /leiden|louvain|cluster/i.test(f)) || this.defaultGrouping();
+  }
+
   // Best-guess ORGANISM from gene-symbol CASING — there's no species field in the store yet, and we stay symbol-keyed.
   // HGNC symbols are all-caps (TP53, CD14); MGI/Title-case (Trp53, Cd14) ⇒ a non-human (mouse-style) organism. A few
   // human "orf" symbols carry lowercase, so we go by the MAJORITY of a sample. Cached; defaults to human when ambiguous.

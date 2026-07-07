@@ -1004,9 +1004,7 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
   // one, and show a clean message rather than throwing "no field leiden" if there's nothing to reconcile.
   const clusters = ctx.groupings().filter((g) => !ctx.annotationLayers().includes(g) && !ctx.derivedGroupings().includes(g));
   const cats = ctx.catalogCategoricals();
-  const base = (p.group && cats.includes(p.group)) ? p.group
-             : clusters.includes("leiden") ? "leiden"
-             : clusters[0] || cats.find((f) => /leiden|louvain|cluster/i.test(f)) || ctx.defaultGrouping();
+  const base = (p.group && cats.includes(p.group)) ? p.group : ctx.baseClustering();   // same base the Annotate embedding colours by
   let baseMeta: any;
   try { baseMeta = await ctx.view.metadata(base); }
   catch {

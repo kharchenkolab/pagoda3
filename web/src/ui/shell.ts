@@ -1351,9 +1351,9 @@ export class App {
     // auto-generated tracks on a dataset that already ships a cell_type was exactly the wrong, surprising behaviour).
     const hasDraft = this.annoLayers.has("annotation");
     // Colour the embedding by the working annotation once it exists, else by the BASE clustering (the reconcile
-    // unit) — never a blank grey map from colouring by an annotation that isn't there yet.
-    const base = this.ctx.groupings().find((g) => !this.ctx.annotationLayers().includes(g) && !this.ctx.derivedGroupings().includes(g)) || this.ctx.defaultGrouping();
-    this.coord.setColor("meta:" + (hasDraft ? "annotation" : base));
+    // unit, resolved to a field that EXISTS) — never a blank grey map from colouring by an annotation that isn't
+    // there yet, or by a "leiden" a force-opened scaled file doesn't have.
+    this.coord.setColor("meta:" + (hasDraft ? "annotation" : this.ctx.baseClustering()));
     if (hasDraft) this.ctx.markers("annotation").catch(() => {});   // pre-warm the first record card's markers
   }
 
