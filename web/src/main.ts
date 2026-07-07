@@ -80,6 +80,7 @@ async function bootStore(store: LstarStore, opts: { applyLinks?: boolean; freshS
   // ones down once the new one is ready (no race against dispose; no blank screen if the open fails).
   const oldPools = _pools;
   const oldApp = (window as any).p2?.app;
+  const oldDs = (window as any).p2?.ds;   // the previous LstarDataset — disposed on swap (frees its native libzarr Reader + prefetch cache)
   _pools = [];
 
   invalidateColor();   // drop the module-level colour caches (metadata snapshots + winsor bounds) from the PREVIOUS dataset — a same-named field must not reuse the old cells' codes/bounds (the view-keying in md() is the primary guard; this also clears the numeric winsor cache)
@@ -134,6 +135,7 @@ async function bootStore(store: LstarStore, opts: { applyLinks?: boolean; freshS
   // the new dataset is read + prepared — now retire the old one (its workers + deck) and take over #app
   for (const p of oldPools) { try { p.dispose(); } catch { /* */ } }
   try { oldApp?.dispose?.(); } catch { /* */ }
+  try { oldDs?.dispose?.(); } catch { /* */ }   // free the old dataset's native libzarr Reader + byte cache (idempotent; the WASM module is a shared singleton and stays alive) — steady-state memory in a long, many-dataset session
   const app = new App(ctx);
   app.freshSession = !!opts.freshSession;   // a dropped local file starts CLEAN — never inherits the previous dataset's annotation/panels/results/chat (all dropped files share the "default" session slot; the fingerprint alone is too weak to tell two same-size files apart)
   // A DEEP LINK supplies its own state (a ?ask directive, a ?view snapshot, a ?session doc), so it boots FRESH —
