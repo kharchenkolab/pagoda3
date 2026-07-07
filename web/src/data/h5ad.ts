@@ -13,7 +13,15 @@ import createLstarKernels from "../../../../lstar/js/dist/lstar_kernels.mjs";
 
 type H5 = any;   // an opened h5wasm File / Group (duck-typed; we never import h5wasm types here)
 
-const attr = (it: H5, k: string) => it?.attrs?.[k]?.value;
+// Read ONE attribute by name. h5wasm's `.attrs` getter enumerates every attribute (get_attribute_names),
+// which THROWS on some files whose attr layout it can't list ("name not defined" from inside the WASM) —
+// aborting the whole open even though h5py reads the same attrs fine. So prefer `get_attribute(k)`, which
+// opens the single named attr (no enumeration) and survives those files; fall back to `.attrs` for older
+// h5wasm, and swallow a throwing getter so one unreadable group degrades to `undefined` — never a crash.
+const attr = (it: H5, k: string) => {
+  try { if (it && typeof it.get_attribute === "function") return it.get_attribute(k); } catch { /* fall back */ }
+  try { return it?.attrs?.[k]?.value; } catch { return undefined; }
+};
 const enc = (it: H5) => attr(it, "encoding-type");
 const num = (v: any) => (typeof v === "bigint" ? Number(v) : v);
 // Copy out of WASM heap (h5wasm `.value` / kernel output are heap views, invalid after close/reuse) AND
@@ -35,10 +43,10 @@ const asStrings = (v: any): string[] => v == null ? [] : Array.from(v as any, (x
 // _sparse_attrs: the modern `encoding-type`(csr_matrix/csc_matrix)+`shape`, AND the legacy
 // `h5sparse_format`/`h5sparse_shape` attrs of older h5ad (e.g. an old `raw/X`).
 function sparseFmt(node: H5): { fmt: "csr" | "csc"; shape: number[] } | null {
-  const a = node?.attrs || {};
-  const et = String(a["encoding-type"]?.value || "");
-  if (/csr|csc/.test(et)) return { fmt: et.includes("csc") ? "csc" : "csr", shape: Array.from(a["shape"]?.value || [], num) };
-  if (a["h5sparse_format"]) return { fmt: String(a["h5sparse_format"].value).includes("csc") ? "csc" : "csr", shape: Array.from(a["h5sparse_shape"]?.value || [], num) };
+  const et = String(attr(node, "encoding-type") || "");                              // by-name reads (see `attr`) — never enumerate
+  if (/csr|csc/.test(et)) return { fmt: et.includes("csc") ? "csc" : "csr", shape: Array.from(attr(node, "shape") || [], num) };
+  const legacy = attr(node, "h5sparse_format");
+  if (legacy != null) return { fmt: String(legacy).includes("csc") ? "csc" : "csr", shape: Array.from(attr(node, "h5sparse_shape") || [], num) };
   return null;
 }
 
@@ -152,6 +160,11 @@ export async function anndataSpec(f: H5): Promise<DatasetSpec> {
     assertSparseOk(csc, ncells, ngenes);   // catch a truncated/corrupt matrix before we compute on garbage (the CSC is gene-major → ncols = ngenes)
     fields.counts = { role: "measure", span: ["cells", "genes"], encoding: "csc", state: measureState(csc.data as ArrayLike<number>),
                       shape: [ncells, ngenes], data: csc.data, indices: csc.indices, indptr: csc.indptr };
+  } else if (countsNode) {
+    // We located an X / counts node but couldn't decode it as a matrix — most likely its encoding/shape
+    // attrs are unreadable (h5wasm could neither list nor open them) or it's an unsupported layout. Fail
+    // with a specific message instead of returning a countsless store that breaks opaquely downstream.
+    throw new Error("Couldn't read the count matrix (X) from this .h5ad — its layout couldn't be decoded (unreadable encoding/shape attributes, or an unsupported matrix format).");
   }
 
   // obsm embeddings (X_umap, X_pca, …) -> dense [cells, k] fields, role "embedding"
