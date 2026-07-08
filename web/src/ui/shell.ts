@@ -2661,9 +2661,9 @@ export class App {
   // (6 of 10 were verified end-to-end on the live agent). `t` is the friendly label shown.
   SUGS = [
     { t: "Colour the embedding by a gene", q: "colour the embedding by NKG7", ic: "◐" },
-    { t: "Facet the embedding by condition", q: "facet the embedding by condition", ic: "▦" },
+    { t: "Facet the embedding by condition", q: "facet the embedding by condition", ic: "▦", need: () => this.ctx.catalogCategoricals().includes("condition") },
     { t: "Variable genes in a third column", q: "show the most variable genes in a third column", ic: "◫" },
-    { t: "Composition across samples", q: "show how cell-type composition varies across samples", ic: "▥" },
+    { t: "Composition across samples", q: "show how cell-type composition varies across samples", ic: "▥", need: () => !!this.ctx.sampleField() },
     { t: "Compare two cell types with DE", q: "run differential expression between CD8 T effector and CD8 T memory cells", ic: "⇄" },
     { t: "Name the cell types, with rationale", q: "propose clean cell-type names with a marker-grounded rationale for each cluster", ic: "✎" },
     { t: "Create a custom cell set", q: "create a category of cytotoxic cells with high GZMB and PRF1", ic: "⊕" },
@@ -2711,7 +2711,15 @@ export class App {
     (this.$("selX")).onclick = () => { this.coord.setSelection(null); this.repaint(); this.renderSelChip(); };
   }
   renderScope() { const s = this.$("scope"); if (this.scope) { s.style.display = ""; s.innerHTML = `<span>↳ about ${this.scope.summary}</span><span class="x" id="scx">clear</span>`; this.$("scx").onclick = () => { this.scope = null; this.renderScope(); this.filter((this.$("pin") as HTMLInputElement).value); }; } else s.style.display = "none"; }
-  scopedSugs() { return this.scope ? [{ t: "Run differential expression on this selection", q: "run de", ic: "≢" }, { t: "What cell types are these?", q: "what are these", ic: "?" }, { t: "Colour by condition", q: "colour by condition", ic: "◐" }] : this.SUGS; }
+  // Drop example prompts whose metadata isn't present (a `need` predicate) — e.g. no `condition` field → hide
+  // "facet by condition"; no sample/donor facet → hide "composition across samples". Keeps the palette's
+  // suggestions all actionable on the current dataset.
+  scopedSugs() {
+    const base: any[] = this.scope
+      ? [{ t: "Run differential expression on this selection", q: "run de", ic: "≢" }, { t: "What cell types are these?", q: "what are these", ic: "?" }, { t: "Colour by condition", q: "colour by condition", ic: "◐", need: () => this.ctx.catalogCategoricals().includes("condition") }]
+      : this.SUGS;
+    return base.filter((s) => !s.need || s.need());
+  }
   filter(v: string) { const base = this.scopedSugs(); this.filtered = base.filter((s) => s.t.toLowerCase().includes(v.toLowerCase())); if (v && !this.filtered.length) this.filtered = [{ t: `Ask: “${v}”`, q: v, ic: "➤", free: true }]; this.hot = 0; this.renderSugs(); }
   renderSugs() { const c = this.$("sugs"); c.innerHTML = ""; this.filtered.forEach((s, i) => { const d = mk("div", "sug" + (i === this.hot ? " hot" : "")); d.innerHTML = `<span class="ic">${s.ic || "➤"}</span><span class="lab">${s.t}</span>` + (s.free ? "" : `<span class="hint">enter</span>`); d.onclick = () => { this.closePalette(); this.agent.ask(s.q, this.scope); }; c.appendChild(d); }); }
 
