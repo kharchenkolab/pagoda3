@@ -742,7 +742,7 @@ async function facetsBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltB
     const row = mk("div", "facetf");
     const count = f.kind === "categorical" ? `<span class="fcount">${meta.get(f.name)?.categories.length ?? 0}</span>` : `<span class="fnum" title="numeric covariate">#</span>`;
     row.innerHTML = `<span class="fchev${isOpen ? " open" : ""}">▶</span><span class="fname">${esc(f.name)}</span>${count}<span style="flex:1"></span>`;
-    if (f.group === "annotation") {   // composition-by-sample is meaningful for cell-type/cluster groupings (proportions per sample)
+    if (f.group === "annotation" && ctx.sampleField()) {   // composition-by-sample only when there's a sample/donor facet to split across (else it's one meaningless bar / a broken read)
       const comp = mk("button", "fcomp mini", "▤"); comp.title = `open composition by sample, stacked by ${f.name}`;
       comp.onclick = (e) => { e.stopPropagation(); hooks.addPanel({ type: "CompositionBars", title: `Composition · ${f.name}`, cap: "by sample", bind: "composition:bySample", view: { colorBy: "meta:" + f.name } }); };
       row.appendChild(comp);

@@ -151,19 +151,34 @@ export class Ctx {
 
   get n() { return this.view.nCells; }
 
-  // sample -> condition map (a sample's condition is constant across its cells)
+  /** The sample/donor-level categorical facet to split a composition across, or null when the dataset has
+   *  none — a single-sample store has nothing to compose across, so the "composition by sample" affordances
+   *  hide. Prefers a field literally named `sample`, else a donor/patient/subject/replicate-like name.
+   *  Name-based + sync, so a facet UI can gate on it without an async read. */
+  sampleField(): string | null {
+    const cats = this.catalogCategoricals();
+    return cats.find((f) => f === "sample")
+        ?? cats.find((f) => /^(donor|patient|subject|individual|specimen|replicate)s?$/i.test(f)) ?? null;
+  }
+
+  // sample -> condition map (a sample's condition is constant across its cells); empty when there's no sample
+  // facet, and blank conditions when the store carries no `condition` field.
   async sampleConditions(): Promise<Map<string, string>> {
-    const s = await this.metaOf("sample") as any, c = await this.metaOf("condition") as any;
+    const sf = this.sampleField(); if (!sf) return new Map();
+    const s = await this.metaOf(sf) as any;
+    const c = this.view.ds.hasField("condition") ? await this.metaOf("condition") as any : null;
     const out = new Map<string, string>();
     for (let i = 0; i < this.n && out.size < s.categories.length; i++) {
-      const sm = s.categories[s.codes[i]]; if (!out.has(sm)) out.set(sm, c.categories[c.codes[i]]);
+      const sm = s.categories[s.codes[i]]; if (!out.has(sm)) out.set(sm, c ? c.categories[c.codes[i]] : "");
     }
     return out;
   }
 
-  // per (sample x cluster) proportions, compositional
+  // per (sample x cluster) proportions, compositional. Empty when there's no sample facet to split across.
   async composition(stackBy = "leiden", subset: Int32Array | null = null): Promise<{ samples: string[]; conds: string[]; groups: string[]; props: number[][] }> {
-    const s = await this.metaOf("sample") as any, g = await this.metaOf(stackBy) as any;
+    const sf = this.sampleField();
+    if (!sf) return { samples: [], conds: [], groups: [], props: [] };
+    const s = await this.metaOf(sf) as any, g = await this.metaOf(stackBy) as any;
     const samples = s.categories as string[], groups = g.categories as string[];
     const sc = await this.sampleConditions();
     const counts = samples.map(() => new Array(groups.length).fill(0));

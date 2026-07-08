@@ -2084,10 +2084,12 @@ export class App {
     const esc = (s: string) => String(s).replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]!));
     // ADD TO WORKBENCH = standard built-in panels + the custom-widget library, one searchable list.
     const defGrp = (() => { try { return this.ctx.defaultGrouping(); } catch { return "leiden"; } })();
+    const hasSample = (() => { try { return !!this.ctx.sampleField(); } catch { return false; } })();
     const standard: { name: string; about: string; spec: Partial<Panel> }[] = [
       { name: "Embedding", about: "UMAP scatter of all cells", spec: { type: "Embedding", title: "Embedding", bind: "embedding:main" } },
       { name: "Marker dot-plot", about: "top marker genes per group", spec: { type: "Heatmap", title: "Marker genes", cap: "top genes per group", group: defGrp } },
-      { name: "Composition", about: "stacked cluster proportions per sample", spec: { type: "CompositionBars", title: "Composition", cap: "by sample", bind: "composition:bySample" } },
+      // Composition-by-sample is offered only when a sample/donor facet exists to split across.
+      ...(hasSample ? [{ name: "Composition", about: "stacked cluster proportions per sample", spec: { type: "CompositionBars", title: "Composition", cap: "by sample", bind: "composition:bySample" } as Partial<Panel> }] : []),
       { name: "Variable genes", about: "top overdispersed genes for the current selection (live)", spec: { type: "VariableGenes", title: "Variable genes", cap: "overdispersion" } },
       { name: "Metadata facets", about: "browse / filter / cross-filter metadata", spec: { type: "MetadataFacets", title: "Metadata", cap: "browse facets", bind: "facets:all" } },
       { name: "Session", about: "ledger of everything you've made — categories, results, annotation, apps", spec: { type: "SessionLedger", title: "Session", cap: "session ledger" } },
