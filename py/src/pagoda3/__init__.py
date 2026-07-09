@@ -14,4 +14,4 @@ from .launch import view
 from .publish import publish, pack
 
 __all__ = ["write_viewer", "view", "publish", "pack"]
-__version__ = "0.1.1"
+__version__ = "0.2.0"

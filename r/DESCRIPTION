@@ -1,6 +1,6 @@
 Package: pagoda3
 Title: An Agent-Driven Browser Viewer for Single-Cell Data (via L*/lstar)
-Version: 0.1.1
+Version: 0.2.0
 Authors@R: person("Peter", "Kharchenko", role = c("aut", "cre"),
                   email = "peter.kharchenko@gmail.com")
 Description: Launcher and browsable-store preparation for the pagoda3 single-cell viewer.

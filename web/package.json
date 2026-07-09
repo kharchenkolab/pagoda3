@@ -1,7 +1,7 @@
 {
   "name": "pagoda3-web",
   "private": true,
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "pagoda3 — an agent-driven, browser-native viewer for single-cell data (the web app)",
   "license": "MIT",
   "repository": { "type": "git", "url": "https://github.com/kharchenkolab/pagoda3" },
