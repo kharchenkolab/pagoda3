@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
 authors = [{ name = "Peter Kharchenko and the pagoda3 authors" }]
-dependencies = ["numpy", "scipy", "lstar-sc>=0.1.4"]
+dependencies = ["numpy", "scipy", "lstar-sc>=0.2.0"]
 
 [project.scripts]
 pagoda3 = "pagoda3.cli:main"

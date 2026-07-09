@@ -9,6 +9,6 @@ Description: Launcher and browsable-store preparation for the pagoda3 single-cel
     compute kernels); pagoda3 owns the viewer policy (which navigators to precompute).
 License: MIT + file LICENSE
 Encoding: UTF-8
-Imports: lstar, Matrix, methods, stats, utils
+Imports: lstar (>= 0.2.0), Matrix, methods, stats, utils
 Suggests: testthat (>= 3.0.0)
 RoxygenNote: 7.3.1
