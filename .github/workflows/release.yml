@@ -46,7 +46,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: kharchenkolab/lstar
-          ref: v0.2.0          # pinned to the lstar release the viewer is built + tested against (reproducible)
+          ref: v0.2.1          # pinned to the lstar release the viewer is built + tested against (reproducible)
           path: lstar
 
       - name: Set up Node
