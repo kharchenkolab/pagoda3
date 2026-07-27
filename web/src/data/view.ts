@@ -17,6 +17,17 @@ export type Metadata =
 
 export interface DEResult { gene: number; symbol: string; meanA: number; meanB: number; lfc: number; }
 
+// Dense values → Float32Array. int64/uint64 columns arrive as BigInt64Array/BigUint64Array, and
+// `Float32Array.from(bigIntArray)` THROWS ("Cannot convert a BigInt value to a number") — so an int64 obs
+// column (e.g. a `..._clusters` id written by the R/Seurat path) made metadata()/embedding() reject rather
+// than render. BigInt needs an explicit per-element Number() through the map form.
+export function toF32(data: any): Float32Array {
+  if (data instanceof Float32Array) return data;
+  if (typeof BigInt64Array !== "undefined" && (data instanceof BigInt64Array || data instanceof BigUint64Array))
+    return Float32Array.from(data as any, (v: bigint) => Number(v));
+  return Float32Array.from(data as any);
+}
+
 // Categorical levels arrive in stored / first-seen order, so a numeric grouping like leiden ("0".."27")
 // renders lexically (0,1,10,11,…,2). When EVERY label is a clean number we sort numerically — applied at
 // EVERY place a group order is established (metadata codes, precomputed group stats, markers) so all paths
@@ -109,8 +120,7 @@ export class LstarView {
   async embedding(name = "umap"): Promise<{ data: Float32Array; n: number; dim: number }> {
     const { data, shape } = await this.ds.fieldDense(name);
     const n = shape[0], dim = shape[1] ?? 1;
-    const out = data instanceof Float32Array ? data : Float32Array.from(data as any);
-    return { data: out, n, dim };
+    return { data: toF32(data), n, dim };
   }
 
   // App-side categorical overlays (annotation layers): metadata() returns these before the zarr, so an
@@ -145,7 +155,7 @@ export class LstarView {
       return reorderNumericCategorical({ kind: "categorical", codes, categories: cats });
     }
     const { data } = await this.ds.fieldDense(name);
-    const values = data instanceof Float32Array ? data : Float32Array.from(data as any);
+    const values = toF32(data);
     let mn = Infinity, mx = -Infinity;
     for (const v of values) { if (v < mn) mn = v; if (v > mx) mx = v; }
     return { kind: "numeric", values, min: mn, max: mx };

@@ -184,3 +184,111 @@ test("resolveCategoryLoose: an agent's value-format guess still resolves (13 →
   // ambiguity guard: two categories normalizing to the same id → refuse to guess
   assert.equal(resolveCategoryLoose(["c1", "cluster 1"], "1"), -1);
 });
+
+// ---- reconcile inputs: which track is the BASE, which are the SOURCES ------------------------------
+// Fixture = the real annotated store that exposed this: an Azimuth hierarchy + a CellTypist pair, batch
+// columns, and the actual clustering stored as a NUMERIC column (L* writes an integer obs column as
+// role=measure/dense). Symptom was "no sources — run scType or add one" with base `predicted.celltype.l1`.
+
+const ANNOTATED_STORE: FieldDef[] = [
+  { name: "umap", role: "embedding", span: ["cells", "d2"] },
+  { name: "integrated_clusters", role: "measure", encoding: "dense", span: ["cells"] },   // the REAL partition, numeric
+  { name: "orig.ident", role: "label", encoding: "categorical", span: ["cells"] },
+  { name: "sample", role: "label", encoding: "categorical", span: ["cells"] },
+  { name: "predicted.celltype.l1", role: "label", encoding: "categorical", span: ["cells"] },
+  { name: "predicted.celltype.l2", role: "label", encoding: "categorical", span: ["cells"] },
+  { name: "predicted.celltype.l3", role: "label", encoding: "categorical", span: ["cells"] },
+  { name: "celltypist", role: "label", encoding: "categorical", span: ["cells"] },
+  { name: "celltypist_raw", role: "label", encoding: "categorical", span: ["cells"] },
+  { name: "nCount_RNA", role: "measure", encoding: "dense", span: ["cells"] },
+];
+
+// A fake view that serves NUMERIC values for the cluster column (so the promotion path runs) and supports
+// overlays (so a promoted partition is visible to every later metadata() read, as in the real view).
+function makeStoreView(fields: FieldDef[], numeric: Record<string, number[]> = {}) {
+  const overlays = new Map<string, any>();
+  const ds = {
+    fieldNames: () => fields.map((f) => f.name),
+    field: (nm: string) => fields.find((f) => f.name === nm),
+    hasField: (nm: string) => fields.some((f) => f.name === nm),
+    axisNames: () => fields.filter((f) => f.role === "label").map((f) => "groups_" + f.name),
+  };
+  const view: any = {
+    ds, nCells: 6, overlays,
+    setOverlay: (nm: string, m: any) => overlays.set(nm, m),
+    removeOverlay: (nm: string) => overlays.delete(nm),
+    embedding: async () => ({ data: new Float32Array([0, 0]), n: 1, dim: 2 }),
+    async metadata(nm: string) {
+      if (overlays.has(nm)) return overlays.get(nm);
+      if (numeric[nm]) return { kind: "numeric", values: Float32Array.from(numeric[nm]), min: 0, max: 1 };
+      const f = fields.find((x) => x.name === nm);
+      if (f && f.role === "measure") return { kind: "numeric", values: new Float32Array(6), min: 0, max: 0 };
+      return { kind: "categorical", codes: new Int32Array([0]), categories: [nm + "_a"] };
+    },
+  };
+  return view;
+}
+
+test("a numeric cluster column is promoted to a partition and BECOMES the reconcile base", async () => {
+  const view = makeStoreView(ANNOTATED_STORE, { integrated_clusters: [0, 1, 2, 1, 0, 2] });
+  const ctx = new Ctx(view, {} as any);
+  await ctx.init();
+  assert.deepEqual(ctx.partitionGroupings(), ["integrated_clusters"], "integer cluster ids promoted to a partition");
+  assert.equal(ctx.baseClustering(), "integrated_clusters", "the real clustering is the base");
+  const m: any = await view.metadata("integrated_clusters");
+  assert.equal(m.kind, "categorical", "promoted overlay makes it categorical for every consumer");
+  assert.deepEqual(m.categories, ["0", "1", "2"]);
+  assert.ok(ctx.catalogCategoricals().includes("integrated_clusters"), "enumerated as a categorical");
+});
+
+test("the base is never an ANNOTATION when a real partition exists (the circular-base bug)", async () => {
+  const view = makeStoreView(ANNOTATED_STORE, { integrated_clusters: [0, 1, 2, 1, 0, 2] });
+  const ctx = new Ctx(view, {} as any);
+  await ctx.init();
+  const base = ctx.baseClustering();
+  assert.ok(!base.startsWith("predicted.celltype"), `base must not be a cell-type track (got ${base})`);
+  assert.ok(!ctx.annotationSources().includes(base), "the base is not simultaneously offered as a source");
+});
+
+test("annotation sources auto-detect on OPEN, excluding batch/design columns", async () => {
+  const view = makeStoreView(ANNOTATED_STORE, { integrated_clusters: [0, 1, 2, 1, 0, 2] });
+  const ctx = new Ctx(view, {} as any);
+  await ctx.init();
+  const src = ctx.annotationSources();
+  assert.deepEqual(src.sort(), ["celltypist", "celltypist_raw", "predicted.celltype.l1", "predicted.celltype.l2", "predicted.celltype.l3"],
+    "all five cell-type tracks, with no agent turn needed");
+  for (const batch of ["sample", "orig.ident"]) assert.ok(!src.includes(batch), `${batch} is batch, not an annotation`);
+  assert.ok(!src.includes("integrated_clusters"), "the partition is not an annotation opinion");
+  assert.ok(!src.includes("nCount_RNA"), "numeric covariates are not sources");
+});
+
+test("an explicit field role overrides auto-detection in both directions", async () => {
+  const view = makeStoreView(ANNOTATED_STORE, { integrated_clusters: [0, 1, 2, 1, 0, 2] });
+  const ctx = new Ctx(view, {} as any);
+  await ctx.init();
+  ctx.setFieldRole("predicted.celltype.l3", "covariate");       // user says: not an annotation
+  assert.ok(!ctx.annotationSources().includes("predicted.celltype.l3"), "explicit non-annotation role removes it");
+  ctx.setFieldRole("sample", "annotation");                      // user says: actually it IS one
+  assert.ok(ctx.annotationSources().includes("sample"), "explicit annotation role beats the batch-name heuristic");
+});
+
+test("a store with no partition at all still opens (falls back, no throw)", async () => {
+  const noPartition = ANNOTATED_STORE.filter((f) => f.name !== "integrated_clusters");
+  const view = makeStoreView(noPartition);
+  const ctx = new Ctx(view, {} as any);
+  await ctx.init();
+  assert.equal(ctx.partitionGroupings().length, 0);
+  assert.ok(typeof ctx.baseClustering() === "string" && ctx.baseClustering().length > 0, "resolves to some existing field");
+});
+
+test("a genuine measure is NOT promoted (mito %, scores stay numeric)", async () => {
+  const withScore: FieldDef[] = [
+    { name: "umap", role: "embedding", span: ["cells", "d2"] },
+    { name: "cluster_score", role: "measure", encoding: "dense", span: ["cells"] },   // cluster-NAMED but continuous
+    { name: "cell_type", role: "label", encoding: "categorical", span: ["cells"] },
+  ];
+  const view = makeStoreView(withScore, { cluster_score: [0.1, 2.5, 3.7, 0.9, 1.1, 4.2] });
+  const ctx = new Ctx(view, {} as any);
+  await ctx.init();
+  assert.deepEqual(ctx.partitionGroupings(), [], "non-integral values are a measure, not cluster ids");
+});

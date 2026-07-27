@@ -3,7 +3,7 @@
 // cacoa caveats that TRAVEL WITH THE HANDLE — plan1.md I.7).
 import type { LstarView, Metadata } from "./view.ts";
 import type { Coord, EntityRef } from "./coord.ts";
-import type { Role } from "../anno/roles.ts";
+import { looksLikeBatch, looksLikeClusterField, partitionFromNumeric, type Role } from "../anno/roles.ts";
 import type { Need } from "../ui/panel-registry.ts";   // type-only (no runtime cycle: panel-registry is pure)
 
 export interface HandleMeta { prov?: string; caveat?: string; }
@@ -48,6 +48,7 @@ export class Ctx {
   private markerCache = new Map<string, Map<string, { gene: number; symbol: string; lfc: number; padj: number }[]>>();
   private annoNames = new Set<string>();   // app-side annotation layers (overlays), surfaced as categoricals
   private fieldRoles = new Map<string, Role>();   // app-side field classification (agent-inferred, user-overridable)
+  private partitionNames = new Set<string>();   // numeric cluster-id columns promoted to categorical partitions (see init)
 
   constructor(view: LstarView, coord: Coord) { this.view = view; this.coord = coord; }
 
@@ -79,11 +80,34 @@ export class Ctx {
     // from the CATALOG (defaultGrouping = groupings()[prefs]), not a hardcoded field — every OTHER label stays lazy
     // (the panels that render them pull them). This is the "universal minimum": the spatial frame + its colouring.
     const dg = this.defaultGrouping();
+    // A clustering stored as INTEGER IDS lands as role=measure/dense (L* writes a numeric obs column
+    // faithfully), so it's invisible to categorical enumeration — which left the real partition
+    // (`integrated_clusters`) unusable and let an ANNOTATION get elected as the reconcile base. Promote
+    // name-matched numeric cluster columns to categorical partitions. This is a bounded exception to
+    // init's laziness: the set is name-filtered (usually 0-1 fields) and tiny (nCells int32), it rides
+    // ALONG the embedding read so it adds no round-trip, and we cannot know what the base partition IS
+    // without it. Failures are ignored — the field simply stays numeric.
+    const partCands = names.filter((nm) => {
+      const f: any = ds.field(nm);
+      if (!f || f.role === "embedding" || f.role === "label" || f.encoding === "categorical" || f.encoding === "utf8") return false;
+      if (/^(counts|stats_|markers_|de_|hvg_)/.test(nm)) return false;
+      const span: string[] = f.span || [];
+      if (!(span.length === 1 && span[0] === "cells")) return false;
+      return looksLikeClusterField(nm);
+    });
     const [embReads] = await Promise.all([
       Promise.all(embFields.map(async (nm) => {
         try { const e = await this.view.embedding(nm); return e.dim === 2 ? { nm, data: e.data, n: e.n } : null; } catch { return null; }
       })),
       (this.view.ds.hasField(dg) ? this.metaOf(dg).catch(() => { /* not categorical — the panels will pull what they need */ }) : Promise.resolve(undefined)),
+      Promise.all(partCands.map(async (nm) => {
+        try {
+          const m: any = await this.view.metadata(nm);
+          if (m?.kind !== "numeric") return;                       // already categorical — nothing to promote
+          const p = partitionFromNumeric(m.values);
+          if (p) this.setPartitionGrouping(nm, p.codes, p.categories);
+        } catch { /* unreadable → leave it numeric */ }
+      })),
     ]);
     for (const r of embReads) if (r) this.embeddings.set(r.nm, { data: r.data, n: r.n });   // insert in field order → deterministic default-embedding fallback below
     this.embedding = this.embeddings.get("umap") || [...this.embeddings.values()][0] || await this.view.embedding("umap");
@@ -125,7 +149,7 @@ export class Ctx {
   // field classified "annotation" — minus the working draft itself (that's the target, not a source).
   annotationSources(): string[] {
     const set = new Set<string>(this.annoNames);
-    for (const f of this.catalogCategoricals()) if (this.fieldRoles.get(f) === "annotation") set.add(f);
+    for (const f of this.annotationCandidates()) set.add(f);   // auto-detected (+ explicit "annotation" overrides)
     set.delete("annotation");
     return [...set];
   }
@@ -350,7 +374,7 @@ export class Ctx {
       .filter((a) => a.startsWith("groups_"))
       .map((a) => a.slice("groups_".length))
       .filter((g) => this.view.ds.hasField(g));
-    return [...this.annoNames, ...this.derivedNames].filter((a) => !stored.includes(a)).concat(stored);
+    return [...this.annoNames, ...this.derivedNames, ...this.partitionNames].filter((a) => !stored.includes(a)).concat(stored);
   }
 
   // Every PER-CELL metadata field (obs column) the Metadata facet panel can browse — categorical (design,
@@ -368,7 +392,8 @@ export class Ctx {
       const perCell = span.length ? (span.length === 1 && span[0] === "cells")
                                   : (Array.isArray(f.shape) && f.shape.length === 1 && f.shape[0] === this.n);
       if (!perCell) continue;
-      const kind: "categorical" | "numeric" = (f.encoding === "utf8" || f.encoding === "categorical" || f.role === "label") ? "categorical" : "numeric";
+      // a promoted numeric cluster column reads as a categorical partition (init installed its overlay)
+      const kind: "categorical" | "numeric" = (f.encoding === "utf8" || f.encoding === "categorical" || f.role === "label" || this.partitionNames.has(name)) ? "categorical" : "numeric";
       const group: "design" | "covariate" | "annotation" = kind === "numeric" ? "covariate"
         : (groupingSet.has(name) || this.fieldRoles.get(name) === "annotation") ? "annotation" : "design";
       out.push({ name, kind, group }); seen.add(name);
@@ -404,6 +429,18 @@ export class Ctx {
     this.view.setOverlay(name, m); this.meta.set(name, m); this.derivedNames.add(name);
     this.gsCache.delete(name); this.markerCache.delete(name); this.xlateCache.clear();
   }
+  // PARTITION groupings promoted from a numeric cluster-id column (see init). Installed as a view overlay so
+  // EVERY consumer — including direct view.metadata() calls in the panels — sees a categorical, and registered
+  // as a grouping so it can be coloured by / used as the reconcile base. Not an annotation source: cluster ids
+  // carry no cell-type opinion.
+  setPartitionGrouping(name: string, codes: Int32Array, categories: string[]): void {
+    const m: Metadata = { kind: "categorical", codes, categories, colors: categories.map((c) => this.labelColorIndex(c)) };
+    this.view.setOverlay(name, m); this.meta.set(name, m); this.partitionNames.add(name);
+    this.gsCache.delete(name); this.markerCache.delete(name); this.xlateCache.clear();
+  }
+  partitionGroupings(): string[] { return [...this.partitionNames]; }
+  isPartition(name: string): boolean { return this.partitionNames.has(name) || looksLikeClusterField(name); }
+
   clearDerivedGroupings(): void { for (const n of this.derivedNames) { this.view.removeOverlay(n); this.meta.delete(n); } this.derivedNames.clear(); }
   removeDerivedGrouping(name: string): void { if (this.derivedNames.has(name)) { this.view.removeOverlay(name); this.meta.delete(name); this.derivedNames.delete(name); } }
   derivedGroupings(): string[] { return [...this.derivedNames]; }
@@ -432,7 +469,38 @@ export class Ctx {
   baseClustering(): string {
     const clusters = this.groupings().filter((g) => !this.annoNames.has(g) && !this.derivedNames.has(g));
     if (clusters.includes("leiden")) return "leiden";
-    return clusters[0] || this.catalogCategoricals().find((f) => /leiden|louvain|cluster/i.test(f)) || this.defaultGrouping();
+    // Prefer a REAL partition. Previously this took clusters[0] — the store's first precomputed grouping —
+    // which on an annotated store is a cell-type track (`predicted.celltype.l1`), so the panel reconciled
+    // annotations against an annotation: circular, and it silently consumed one of the opinions. Rank
+    // partition-like first, then anything that isn't an annotation candidate, and only then fall back.
+    const partition = clusters.find((g) => this.partitionNames.has(g)) || clusters.find((g) => looksLikeClusterField(g));
+    if (partition) return partition;
+    const catalogPartition = this.catalogCategoricals().find((f) => looksLikeClusterField(f));
+    if (catalogPartition) return catalogPartition;
+    const annos = new Set(this.annotationSources());
+    return clusters.find((g) => !annos.has(g)) || clusters[0] || this.defaultGrouping();
+  }
+
+  /** The sample/batch ids, when a sample-ish column has been warmed — lets looksLikeBatch reject a
+   *  differently-named copy of the sample column by VALUE, not just by name. */
+  private sampleIds(): string[] {
+    for (const nm of ["sample", "orig.ident", "batch", "donor"]) { const v = this.categoricalValues(nm); if (v.length) return v; }
+    return [];
+  }
+
+  // Catalog-level cell-type ANNOTATION candidates: categorical tracks that aren't a partition, a batch/design
+  // column, a derived rollup, or the working draft. Name-based and synchronous — the value-level checks
+  // (cluster placeholders) are applied by the reader that materializes them. This is what makes the Reconcile
+  // panel populate on OPEN: previously only a field literally named `cell_type` was auto-classified, so a store
+  // whose tracks are `predicted.celltype.l2` / `celltypist` showed "no sources" until the agent reclassified.
+  annotationCandidates(): string[] {
+    const ids = this.sampleIds();
+    return this.catalogCategoricals().filter((f) => {
+      if (f === "annotation" || this.partitionNames.has(f) || this.derivedNames.has(f)) return false;
+      const explicit = this.fieldRoles.get(f);
+      if (explicit) return explicit === "annotation";                 // user/agent classification always wins
+      return !looksLikeClusterField(f) && !looksLikeBatch(f, this.categoricalValues(f), ids);
+    });
   }
 
   // Best-guess ORGANISM from gene-symbol CASING — there's no species field in the store yet, and we stay symbol-keyed.
