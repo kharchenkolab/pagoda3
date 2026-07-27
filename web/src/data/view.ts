@@ -161,6 +161,27 @@ export class LstarView {
     return { kind: "numeric", values, min: mn, max: mx };
   }
 
+  // The GENE-MAJOR (CSC) counts field, or null when the store has none.
+  //
+  // `cscColumn`/`cscColumns` index a field's `indptr` by COLUMN. On a CELL-major (CSR) counts that indptr is
+  // indexed by cell, so they return cell ROWS silently mislabelled as gene columns — no error, plausible-looking
+  // numbers. Measured on a real store (13,533 cells x 19,231 genes, `counts` encoding=csr):
+  //   cscColumn("counts",100) === csrRow("counts",100) byte-for-byte — cell 100's profile served as gene "DNAJC11"
+  //   truth (from the store's own stats_*_nexpr): gene 100 is expressed in 930 cells; the read reported 1454,
+  //   with "cell" indices up to 18325 against only 13,533 cells. Above gene index nCells it 416s or aborts instead.
+  // The viewer prep is meant to leave `counts` gene-major and add the cell-major `counts_cellmajor` twin, but
+  // nothing enforces that, so CHECK the encoding rather than assume it.
+  private geneMajorCounts(): string | null {
+    const f = this.ds.field("counts") as any;
+    return f && f.encoding === "csc" ? "counts" : null;
+  }
+
+  private noGeneMajor(op: string): Error {
+    const enc = (this.ds.field("counts") as any)?.encoding ?? "missing";
+    return new Error(`${op} needs a gene-major (CSC) counts field; this store's \`counts\` is ${enc}. ` +
+      "Re-run the viewer prep — it must write `counts` gene-major alongside the cell-major `counts_cellmajor`.");
+  }
+
   // Per-cell scalar for one gene (lognorm), via a single CSC column read.
   private geneExprCache = new Map<string, { values: Float32Array; max: number; col: number }>();
   async geneExpression(symbol: string, lognorm = true): Promise<{ values: Float32Array; max: number; col: number }> {
@@ -170,7 +191,9 @@ export class LstarView {
     const hit = this.geneExprCache.get(key); if (hit) return hit;
     const col = await this.geneCol(symbol);
     if (col === undefined) throw new Error("no gene " + symbol);
-    const { rows, vals } = await this.ds.cscColumn("counts", col);
+    const cf = this.geneMajorCounts();
+    if (!cf) throw this.noGeneMajor("colouring by gene");   // a wrong colour map is worse than no colour map
+    const { rows, vals } = await this.ds.cscColumn(cf, col);
     const out = new Float32Array(this.nCells);
     let max = 0;
     for (let k = 0; k < rows.length; k++) {
@@ -355,9 +378,11 @@ export class LstarView {
     // ONE coalesced batched read for all displayed marker columns (a few merged range requests) instead of
     // ~one round-trip per column — the per-column reads all hit the SAME counts chunk and a browser serializes
     // them on its per-URL cache lock. Fall back to the per-column path on an older reader without cscColumns.
+    const cf = this.geneMajorCounts();
+    if (!cf) throw this.noGeneMajor("the dotplot's subset recompute");
     const columns = typeof ds.cscColumns === "function"
-      ? (await ds.cscColumns("counts", uniq)).cols
-      : await Promise.all(uniq.map((g) => ds.cscColumn("counts", g)));
+      ? (await ds.cscColumns(cf, uniq)).cols
+      : await Promise.all(uniq.map((g) => ds.cscColumn(cf, g)));
     for (let u = 0; u < uniq.length; u++) {
       const gcol = uniq[u], { rows, vals } = columns[u];
       for (let k = 0; k < rows.length; k++) { const c = rows[k]; if (!inSub[c]) continue; const gr = codes[c]; sum[gr * ng + gcol] += Math.log1p(vals[k]); nz[gr * ng + gcol]++; }
@@ -372,9 +397,11 @@ export class LstarView {
   // every subset, so once cached every later recompute is a cache hit. No-op when the store can't range-read.
   warmColumns(geneCols: number[]): void {
     const ds: any = this.ds;
+    const cf = this.geneMajorCounts();
+    if (!cf) return;   // nothing to warm: without a gene-major counts the subset recompute can't run either
     const cols = [...new Set(geneCols)];
-    if (typeof ds.cscColumns === "function") { ds.cscColumns("counts", cols).catch(() => { /* best-effort */ }); return; }   // one coalesced read warms the cache the subset-recompute reuses
-    if (typeof ds.cscColumn === "function") for (const g of cols) ds.cscColumn("counts", g).catch(() => { /* best-effort */ });   // fallback: older reader
+    if (typeof ds.cscColumns === "function") { ds.cscColumns(cf, cols).catch(() => { /* best-effort */ }); return; }   // one coalesced read warms the cache the subset-recompute reuses
+    if (typeof ds.cscColumn === "function") for (const g of cols) ds.cscColumn(cf, g).catch(() => { /* best-effort */ });   // fallback: older reader
   }
 
   // Ranked marker genes per group. Reads the precomputed table when present, else derives markers
