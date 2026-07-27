@@ -194,9 +194,44 @@ export class LstarView {
 
   private noGeneMajor(op: string): Error {
     const b = this.countsBasis();
-    return new Error(`${op} needs a gene-major (CSC) count basis; this store's \`${b?.name ?? "counts"}\` is ` +
-      `${b?.encoding ?? "missing"}. Re-run the viewer prep (lstar extend_for_viewer) — it writes the basis ` +
-      "gene-major alongside the cell-major `counts_cellmajor`.");
+    return new Error(`${op} needs the counts in some readable form; this store's \`${b?.name ?? "counts"}\` is ` +
+      `${b?.encoding ?? "missing"} and there is no cell-major copy to fall back to. Re-run the viewer prep ` +
+      "(lstar extend_for_viewer) — it writes the basis gene-major alongside the cell-major `counts_cellmajor`.");
+  }
+
+  /** Gene COLUMNS (cell indices + values per gene), whichever way the store can supply them.
+   *
+   *  Fast path: one byte-range per column off the gene-major basis — what a properly prepped store is for.
+   *  Degraded path: derive them from the CELL-major copy instead of refusing. One O(nnz) scan of the panel
+   *  the app already loads for DE, so the first gene pays the panel load and the rest are ~free. That is the
+   *  same trade the viewer already makes in the OTHER direction — a bare store with no `counts_cellmajor`
+   *  builds the cell-major side in-browser by transposing (see dePanel) rather than giving up. A degraded
+   *  store gets the banner telling the user to re-prep; it does NOT get a broken viewer.
+   *  `lognorm` reports whether the returned values are already log-normalized, so a caller doesn't log twice. */
+  private async geneColumns(cols: number[]): Promise<{ cols: { rows: ArrayLike<number>; vals: ArrayLike<number> }[]; lognorm: boolean }> {
+    const ds: any = this.ds;
+    const gm = this.geneMajorCounts();
+    if (gm) {
+      const out = typeof ds.cscColumns === "function"
+        ? (await ds.cscColumns(gm, cols)).cols
+        : await Promise.all(cols.map((c) => ds.cscColumn(gm, c)));
+      return { cols: out, lognorm: (ds.field(gm) as any)?.state === "lognorm" };
+    }
+    const dp = await this.dePanel();
+    if (!dp) throw this.noGeneMajor("reading a gene column");
+    // panel column -> output slot, resolved once. A SUBSET panel (legacy `de_panel`) carries its own global
+    // gene ids in geneCol; the whole-genome panel's column IS the global gene index.
+    const slotOf = new Int32Array(dp.nGenes).fill(-1);
+    const want = new Map<number, number>(); cols.forEach((g, i) => want.set(g, i));
+    for (let j = 0; j < dp.nGenes; j++) { const s = want.get(dp.geneCol ? dp.geneCol[j] : j); if (s !== undefined) slotOf[j] = s; }
+    const rows: number[][] = cols.map(() => []), vals: number[][] = cols.map(() => []);
+    const { data, indices, indptr } = dp;
+    for (let c = 0, nc = this.nCells; c < nc; c++)
+      for (let k = indptr[c]; k < indptr[c + 1]; k++) {
+        const s = slotOf[indices[k]];
+        if (s >= 0) { rows[s].push(c); vals[s].push(data[k]); }
+      }
+    return { cols: cols.map((_, i) => ({ rows: Int32Array.from(rows[i]), vals: Float64Array.from(vals[i]) })), lognorm: dp.lognorm };
   }
 
   // Per-cell scalar for one gene (lognorm), via a single CSC column read.
@@ -208,13 +243,13 @@ export class LstarView {
     const hit = this.geneExprCache.get(key); if (hit) return hit;
     const col = await this.geneCol(symbol);
     if (col === undefined) throw new Error("no gene " + symbol);
-    const cf = this.geneMajorCounts();
-    if (!cf) throw this.noGeneMajor("colouring by gene");   // a wrong colour map is worse than no colour map
-    const { rows, vals } = await this.ds.cscColumn(cf, col);
+    const got = await this.geneColumns([col]);
+    const { rows, vals } = got.cols[0];
+    const applyLog = lognorm && !got.lognorm;               // don't log a source that is already log-normalized
     const out = new Float32Array(this.nCells);
     let max = 0;
     for (let k = 0; k < rows.length; k++) {
-      const v = lognorm ? Math.log1p(vals[k]) : vals[k];
+      const v = applyLog ? Math.log1p(vals[k]) : vals[k];
       out[rows[k]] = v;
       if (v > max) max = v;
     }
@@ -391,18 +426,14 @@ export class LstarView {
     for (let i = 0; i < cellIds.length; i++) { const c = (cellIds as any)[i]; inSub[c] = 1; nPer[codes[c]]++; }
     const sum = new Float32Array(G * ng), nz = new Float32Array(G * ng);
     const uniq = [...new Set(geneCols)];
-    const ds: any = this.ds;
     // ONE coalesced batched read for all displayed marker columns (a few merged range requests) instead of
     // ~one round-trip per column — the per-column reads all hit the SAME counts chunk and a browser serializes
-    // them on its per-URL cache lock. Fall back to the per-column path on an older reader without cscColumns.
-    const cf = this.geneMajorCounts();
-    if (!cf) throw this.noGeneMajor("the dotplot's subset recompute");
-    const columns = typeof ds.cscColumns === "function"
-      ? (await ds.cscColumns(cf, uniq)).cols
-      : await Promise.all(uniq.map((g) => ds.cscColumn(cf, g)));
+    // them on its per-URL cache lock. On a degraded store geneColumns derives them from the cell-major copy.
+    const got = await this.geneColumns(uniq);
+    const applyLog = !got.lognorm;
     for (let u = 0; u < uniq.length; u++) {
-      const gcol = uniq[u], { rows, vals } = columns[u];
-      for (let k = 0; k < rows.length; k++) { const c = rows[k]; if (!inSub[c]) continue; const gr = codes[c]; sum[gr * ng + gcol] += Math.log1p(vals[k]); nz[gr * ng + gcol]++; }
+      const gcol = uniq[u], { rows, vals } = got.cols[u];
+      for (let k = 0; k < rows.length; k++) { const c = rows[k]; if (!inSub[c]) continue; const gr = codes[c]; sum[gr * ng + gcol] += applyLog ? Math.log1p(vals[k]) : vals[k]; nz[gr * ng + gcol]++; }
     }
     const mean = new Float32Array(G * ng), frac = new Float32Array(G * ng);
     for (const gcol of uniq) for (let gr = 0; gr < G; gr++) { const denom = nPer[gr] || 1; mean[gr * ng + gcol] = sum[gr * ng + gcol] / denom; frac[gr * ng + gcol] = nz[gr * ng + gcol] / denom; }
@@ -415,7 +446,7 @@ export class LstarView {
   warmColumns(geneCols: number[]): void {
     const ds: any = this.ds;
     const cf = this.geneMajorCounts();
-    if (!cf) return;   // nothing to warm: without a gene-major counts the subset recompute can't run either
+    if (!cf) { this.dePanel().catch(() => { /* best-effort */ }); return; }   // degraded store: warm the cell-major panel geneColumns falls back to
     const cols = [...new Set(geneCols)];
     if (typeof ds.cscColumns === "function") { ds.cscColumns(cf, cols).catch(() => { /* best-effort */ }); return; }   // one coalesced read warms the cache the subset-recompute reuses
     if (typeof ds.cscColumn === "function") for (const g of cols) ds.cscColumn(cf, g).catch(() => { /* best-effort */ });   // fallback: older reader

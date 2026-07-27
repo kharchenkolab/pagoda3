@@ -37,21 +37,42 @@ test("toF32: ordinary numeric arrays still convert", () => {
 // i.e. cell 100's profile served as gene "DNAJC11" (1454 entries, "cell" indices up to 18325 with only
 // 13533 cells; the truth from that store's own stats_*_nexpr is 930 expressing cells). These tests pin the
 // encoding check so the viewer refuses instead of colouring the embedding with the wrong vector.
-const stubDs = (encoding: string, onColumn?: (name: string, col: number) => void, basisName = "counts"): any => ({
+// 4 cells x 3 genes (A,B,C). Gene B is expressed in cells 1 and 3, so a CORRECT gene-B column is
+// rows [1,3] — the number both paths below must produce.
+const CELLMAJOR = {                                   // CSR over (cells, genes)
+  data: Float32Array.from([5, 7, 2, 9, 4]),
+  indices: Int32Array.from([0, 1, 2, 1, 0]),          // c0:{A=5,B=7} c1:{C=2} c2:{B=9} c3:{A=4}
+  indptr: Int32Array.from([0, 2, 3, 4, 5]),
+};
+const stubDs = (encoding: string, onColumn?: (name: string, col: number) => void, basisName = "counts", cellmajor = false): any => ({
   fieldNames: () => [basisName],
   field: (n: string) => (n === basisName
     ? { encoding, span: ["cells", "genes"], shape: [4, 3], provenance: basisName === "counts" ? undefined : { viewer: "basis" } }
-    : undefined),
+    : n === "counts_cellmajor" ? { encoding: "csr", span: ["cells", "genes"], shape: [4, 3], state: "raw" } : undefined),
   axisLength: (a: string) => (a === "cells" ? 4 : 3),
   axisLabels: async (a: string) => (a === "genes" ? ["A", "B", "C"] : ["c0", "c1", "c2", "c3"]),
-  hasField: () => false,
+  hasField: (n: string) => cellmajor && n === "counts_cellmajor",
+  fieldSparse: async () => ({ ...CELLMAJOR, shape: [4, 3], fmt: "csr" }),
   cscColumn: async (name: string, col: number) => { onColumn?.(name, col); return { rows: new Int32Array([0]), vals: new Float64Array([1]) }; },
 });
 
-test("geneExpression: refuses a cell-major (CSR) counts instead of reading it as gene-major", async () => {
+// A degraded store must keep WORKING, not just stop being wrong: the gene column is derivable from the
+// cell-major copy, so derive it. (The banner tells the user to re-prep; the viewer doesn't go dark.)
+test("geneExpression: derives the gene column from the cell-major copy when the basis is cell-major", async () => {
   let called = false;
-  const v = new LstarView(stubDs("csr", () => { called = true; }));
-  await assert.rejects(() => v.geneExpression("B"), /gene-major \(CSC\) count basis/, "must name the defect, not read garbage");
+  const v = new LstarView(stubDs("csr", () => { called = true; }, "counts", true));
+  const out = await v.geneExpression("B");
+  assert.equal(called, false, "must not read the cell-major basis as if it were gene-major");
+  // gene B: cell1 -> 7, cell3 -> 9 (log1p), everything else 0
+  assert.deepEqual([...out.values].map((x) => +x.toFixed(4)),
+    [Math.log1p(7), 0, Math.log1p(9), 0].map((x) => +x.toFixed(4)));
+  assert.equal(out.col, 1);
+});
+
+test("geneExpression: refuses only when there is NO readable counts at all", async () => {
+  let called = false;
+  const v = new LstarView(stubDs("csr", () => { called = true; }));   // cell-major basis AND no cell-major copy
+  await assert.rejects(() => v.geneExpression("B"), /no cell-major copy to fall back to/, "must name the defect, not read garbage");
   assert.equal(called, false, "and must not issue the column read at all");
 });
 
@@ -64,10 +85,19 @@ test("geneExpression: a gene-major (CSC) counts reads normally", async () => {
   assert.equal(out.values.length, 4);
 });
 
-test("groupStatsForGenesInSubset: refuses a cell-major counts", async () => {
+test("groupStatsForGenesInSubset: falls back to the cell-major copy too", async () => {
+  const v = new LstarView(stubDs("csr", undefined, "counts", true));
+  const gs = await v.groupStatsForGenesInSubset(Int32Array.from([0, 0, 1, 1]), 2, [1], [0, 1, 2, 3]);
+  // gene B (col 1) in group 0 = cells {0,1}: only cell1 expresses it (7); group 1 = cells {2,3}: cell2 (9)
+  assert.equal(+gs.mean[0 * 3 + 1].toFixed(4), +(Math.log1p(7) / 2).toFixed(4));
+  assert.equal(+gs.mean[1 * 3 + 1].toFixed(4), +(Math.log1p(9) / 2).toFixed(4));
+  assert.deepEqual([...gs.frac.slice(1, 2)], [0.5]);
+});
+
+test("groupStatsForGenesInSubset: refuses only when there is no readable counts at all", async () => {
   const v = new LstarView(stubDs("csr"));
   await assert.rejects(() => v.groupStatsForGenesInSubset(Int32Array.from([0, 0, 1, 1]), 2, [0, 1], [0, 1, 2, 3]),
-    /gene-major \(CSC\) count basis/);
+    /no cell-major copy to fall back to/);
 });
 
 // The basis is not always named `counts`: a store with no raw measure is prepped from e.g. `logcounts`, and

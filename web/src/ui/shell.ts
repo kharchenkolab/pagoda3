@@ -169,8 +169,8 @@ export class App {
     const cellmajor = has("counts_cellmajor"), ordered = has("counts_cellmajor_order");
     // A STALE prep outranks the optimization level: a store can look fully extended and still be missing the
     // gene-major half of the counts, because preps before lstar's basis write-back left a CSR-sourced measure
-    // cell-major. Gene colouring and the dotplot's subset recompute read a gene COLUMN and have nothing to read
-    // from — say so at open rather than on the first click, since the repair means rewriting the basis array.
+    // cell-major. Gene colouring and the dotplot still WORK — view.geneColumns derives them from the cell-major
+    // copy — but each costs the whole panel instead of one byte range, so name the repair at open.
     const basis = this.ctx.view.countsBasis();
     const stale = !!basis && !basis.geneMajor;
     if (cellmajor && ordered && !stale) { el.style.display = "none"; return; }   // fully viewer-optimized → nothing to say
@@ -179,7 +179,7 @@ export class App {
     try { if (localStorage.getItem("p2-optdismiss::" + storeKey) === level) { el.style.display = "none"; return; } } catch { /* */ }
     const fix = "lstar convert IN.h5ad OUT.lstar.zarr --viewer";
     const msg = stale
-      ? `<b>Prepped by an older lstar — no gene-major counts.</b> <code>${basis!.name}</code> is <code>${basis!.encoding}</code>, so colouring by a gene and the dotplot's subset recompute have no column to read. Re-run the prep (<code>${fix}</code>) — it rewrites the counts in both orientations.`
+      ? `<b>Prepped by an older lstar — no gene-major counts.</b> <code>${basis!.name}</code> is <code>${basis!.encoding}</code>, so colouring by a gene and the dotplot's subset recompute are derived from the cell-major copy — correct, but they load the whole matrix instead of reading one byte range. Re-run the prep (<code>${fix}</code>) to store the counts in both orientations.`
       : cellmajor
       ? `<b>Extended, but not locality-ordered.</b> Compute is fast, but on a high-latency host the per-selection reads aren't coalesced into one. Add the order — re-run <code>${fix}</code>.`
       : `<b>Not viewer-optimized.</b> Differential expression & variable genes recompute from the whole matrix each session (slow on large or remote data). Optimize once — <code>${fix}</code>.`;
