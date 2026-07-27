@@ -345,3 +345,35 @@ test("a compound patch yields ops in order with no rejections", () => {
   assert.equal(r.rejected.length, 0);
   assert.deepEqual(r.ops.map((o) => o.kind), ["color", "display", "addPanel", "configPanel"]);
 });
+
+// ---- Reconcile sources ---------------------------------------------------------------------------
+// The panel's own picker and the agent write the SAME field, so a track selection is reproducible from
+// the spec (and survives a reload) whichever drove it.
+
+test("panels[].sources: valid tracks accepted, unknown ones rejected", () => {
+  const w = makeWorld();
+  const r = normalizeViewPatch({ panels: [{ id: 5, sources: ["cell_type", "sample"] }] }, w);
+  const cfg = find(r.ops, "configPanel") as any[];
+  assert.equal(cfg.length, 1);
+  assert.deepEqual(cfg[0].patch.sources, ["cell_type", "sample"]);
+  assert.equal(r.rejected.length, 0);
+
+  const bad = normalizeViewPatch({ panels: [{ id: 5, sources: ["cell_type", "nope"] }] }, w);
+  const bcfg = find(bad.ops, "configPanel") as any[];
+  assert.deepEqual(bcfg[0].patch.sources, ["cell_type"], "the unknown track is dropped, the valid one kept");
+  assert.match(bad.rejected.join(" "), /nope/);
+});
+
+test("panels[].sources: [] compares none; null returns to the auto choice", () => {
+  const w = makeWorld();
+  const none = find(normalizeViewPatch({ panels: [{ id: 5, sources: [] }] }, w).ops, "configPanel") as any[];
+  assert.deepEqual(none[0].patch.sources, [], "an explicit empty selection is preserved (not treated as unset)");
+  const auto = find(normalizeViewPatch({ panels: [{ id: 5, sources: null }] }, w).ops, "configPanel") as any[];
+  assert.equal(auto[0].patch.sources, null, "null is the reset-to-auto sentinel");
+});
+
+test("panels[].sources: a non-array is rejected, not silently coerced", () => {
+  const w = makeWorld();
+  const r = normalizeViewPatch({ panels: [{ id: 5, sources: "cell_type" as any }] }, w);
+  assert.match(r.rejected.join(" "), /sources must be an array/);
+});

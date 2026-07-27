@@ -29,6 +29,7 @@ export interface RawPanelOp {
   clearScope?: boolean;
   embedding?: string;
   colormap?: string;       // palette for numeric colourings (amber/viridis/rdbu/…); aliases like "red-to-blue" ok
+  sources?: string[] | null;   // Reconcile: annotation tracks to compare ([] = none, null = back to auto-picked)
   group?: string;          // Heatmap grouping
   style?: Record<string, any>;   // per-panel STYLE overrides (point/label/selection/… — see render/style.ts)
   control?: string;              // TRIGGER a widget panel's declared header control (discover ids with describe_panel)
@@ -60,7 +61,7 @@ export interface RawViewPatch {
 
 export interface Scope { grouping: string; value: string; }
 export interface PanelSpec { type: string; title?: string; col?: number; full?: boolean; colorBy?: string; scope?: Scope; embedding?: string; colormap?: string; group?: string; heatMode?: HeatMode; genes?: string[]; }
-export interface PanelPatch { title?: string; col?: number; full?: boolean; colorBy?: string; scope?: Scope | null; embedding?: string; colormap?: string; heatMode?: HeatMode; genes?: string[]; group?: string; style?: Record<string, any>; }
+export interface PanelPatch { title?: string; col?: number; full?: boolean; colorBy?: string; scope?: Scope | null; embedding?: string; colormap?: string; heatMode?: HeatMode; genes?: string[]; group?: string; sources?: string[] | null; style?: Record<string, any>; }
 
 export type NormOp =
   | { kind: "color"; handle: string }
@@ -262,6 +263,16 @@ export function normalizeViewPatch(patch: RawViewPatch, w: World): NormResult {
     if (typeof op.colormap === "string" && op.colormap) { const cm = w.normalizeColormap(op.colormap); if (cm) pp.colormap = cm; else rejected.push(`${where}: unknown colormap "${op.colormap}" (have: ${w.colormaps.join(", ")})`); }
     if (groupable && op.group) { if (w.groupings.includes(op.group)) pp.group = op.group; else rejected.push(groupingReject(where, op.group, w)); }   // Heatmap stacking / Reconcile base partition
     if (op.style && typeof op.style === "object" && !Array.isArray(op.style)) pp.style = op.style;   // per-panel style override (the natural per-panel path, alongside the top-level style/stylePanel)
+    // Reconcile: which annotation tracks are compared. Same field the panel's own picker writes, so the agent
+    // and direct manipulation drive one surface. [] = compare nothing; null = back to the auto-picked defaults.
+    if (op.sources !== undefined) {
+      if (op.sources === null) pp.sources = null;
+      else if (Array.isArray(op.sources)) {
+        const known = op.sources.filter((s): s is string => typeof s === "string" && w.categoricals.includes(s));
+        for (const s of op.sources) if (typeof s !== "string" || !w.categoricals.includes(s)) rejected.push(`${where} sources: unknown track "${s}"`);
+        pp.sources = known;
+      } else rejected.push(`${where}: sources must be an array of field names (or null to reset)`);
+    }
     const triggeredControl = typeof op.control === "string" && !!op.control.trim() && op.id != null;
     if (triggeredControl) ops.push({ kind: "triggerControl", id: op.id!, control: op.control!.trim() });   // trigger a widget's declared control (an action, not a config patch)
     const setP = !!(op.param && typeof op.param === "object" && typeof op.param.id === "string" && op.param.id.trim() && op.id != null);

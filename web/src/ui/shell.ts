@@ -961,17 +961,17 @@ export class App {
   // Deep per-panel view control — the agent's configure_panel verb (and the path the per-panel UI will use).
   // Merges a view patch into ONE panel's spec and repaints in place; other panels untouched. A per-panel
   // override wins over the global coord default AND over the agent's set_color (explicit/user authority).
-  configurePanel(panelId: number, patch: Partial<PanelView> & { heatMode?: "heat" | "dot"; genes?: string[]; group?: string }) {
+  configurePanel(panelId: number, patch: Partial<PanelView> & { heatMode?: "heat" | "dot"; genes?: string[]; group?: string; sources?: string[] | null }) {
     const p = this.canvas.find((z) => z.id === panelId) || this.rail.find((z) => z.id === panelId);
     if (!p) return;
-    const rebuild = this.applyPanelModel(p, { colorBy: patch.colorBy, scope: patch.scope, embedding: patch.embedding, colormap: patch.colormap, heatMode: patch.heatMode, genes: patch.genes, group: patch.group });
+    const rebuild = this.applyPanelModel(p, { colorBy: patch.colorBy, scope: patch.scope, embedding: patch.embedding, colormap: patch.colormap, heatMode: patch.heatMode, genes: patch.genes, group: patch.group, sources: patch.sources });
     if (rebuild) this.fullRender(); else { this.repaint(); this.syncColorSelects(); this.syncToggles(); }   // keep every control in step
   }
 
   // Mutate ONE panel's model from a patch (no render). colorBy/scope/embedding live on .view; heatMode/genes/title
   // are top-level. Returns whether the change needs a body REBUILD (vs a cheap repaint). Shared by the per-panel
   // dropdown and the declarative patcher, so both treat a panel identically.
-  applyPanelModel(p: Panel, patch: { title?: string; col?: number; full?: boolean; colorBy?: string; scope?: EntityRef | null; embedding?: string; colormap?: string; heatMode?: "heat" | "dot"; genes?: string[]; group?: string; style?: Record<string, any> }): boolean {
+  applyPanelModel(p: Panel, patch: { title?: string; col?: number; full?: boolean; colorBy?: string; scope?: EntityRef | null; embedding?: string; colormap?: string; heatMode?: "heat" | "dot"; genes?: string[]; group?: string; sources?: string[] | null; style?: Record<string, any> }): boolean {
     let rebuild = false;
     if (patch.title != null && patch.title !== p.title) { p.title = patch.title; rebuild = true; }   // title shows in the header (panelEl) → rebuild
     if (typeof patch.col === "number" && patch.col >= 0) { if (patch.col !== p.col) rebuild = true; p.col = patch.col;
@@ -982,6 +982,7 @@ export class App {
     if (patch.heatMode != null && patch.heatMode !== p.heatMode) { p.heatMode = patch.heatMode; rebuild = true; }
     if (patch.group != null && patch.group !== p.group) { p.group = patch.group; if (p.type === "Heatmap") p.bind = "markers:" + patch.group; rebuild = true; }   // re-group a Heatmap (markers/columns) or a Reconcile base
     if (patch.genes != null) { p.genes = patch.genes; rebuild = true; }
+    if (patch.sources !== undefined) { p.sources = patch.sources === null ? undefined : patch.sources; rebuild = true; }   // Reconcile: which annotation tracks are compared (null = back to auto-picked)
     if (patch.scope !== undefined) rebuild = true;   // scope reframes the embedding AND drives its header caption → rebuild so both update
     const v: PanelView = { ...p.view };
     if (patch.colorBy != null) v.colorBy = patch.colorBy;
@@ -1914,7 +1915,7 @@ export class App {
   }
 
   newPanel(p: Partial<Panel>): Panel {
-    const np: Panel = { id: ++this.uid, type: p.type!, title: p.title || p.type!, cap: p.cap, full: p.full, tall: p.tall, col: p.col, bind: p.bind, text: p.text, q: p.q, group: p.group, gene: p.gene, aLabel: p.aLabel, bLabel: p.bLabel, heatMode: p.heatMode, genes: p.genes, view: p.view, split: p.split, rows: p.rows, source: p.source, controls: p.controls, params: p.params, version: p.version, description: p.description, permissions: p.permissions };   // widget module fields (P2 params, P4 version/description/permissions) MUST ride through restore — captureLayout serializes them, so newPanel (the reconstruct path for session/workspace restore) has to carry them or a reload silently drops a widget's knobs + its declared-permissions consent gate
+    const np: Panel = { id: ++this.uid, type: p.type!, title: p.title || p.type!, cap: p.cap, full: p.full, tall: p.tall, col: p.col, bind: p.bind, text: p.text, q: p.q, group: p.group, sources: p.sources, gene: p.gene, aLabel: p.aLabel, bLabel: p.bLabel, heatMode: p.heatMode, genes: p.genes, view: p.view, split: p.split, rows: p.rows, source: p.source, controls: p.controls, params: p.params, version: p.version, description: p.description, permissions: p.permissions };   // widget module fields (P2 params, P4 version/description/permissions) MUST ride through restore — captureLayout serializes them, so newPanel (the reconstruct path for session/workspace restore) has to carry them or a reload silently drops a widget's knobs + its declared-permissions consent gate
     // panel-LOCAL persisted UI state (facet expand-set/sort/brush, record collapse) must ride through the same
     // reconstruct — else a workspace switch (which JSON-clones the canvas, then rebuilds via newPanel) silently
     // resets it. Carried as ad-hoc (p as any) fields so they don't need to bloat the Panel type.
@@ -2023,7 +2024,7 @@ export class App {
     if (user) { this.toast("Switched to " + name, "A workspace is a named, reversible layout — your previous one is a step back in History."); this.checkpoint("workspace → " + name, "Deliberate workspace switch."); }
   }
 
-  captureLayout(): Partial<Panel>[] { return this.canvas.map((p) => { const o: Partial<Panel> = { type: p.type, title: p.title, cap: p.cap, full: p.full, tall: p.tall, col: p.col, bind: p.bind, group: p.group, gene: p.gene, heatMode: p.heatMode, genes: p.genes, view: p.view ? JSON.parse(JSON.stringify(p.view)) : undefined, rows: this.capRows(p), source: p.source, controls: p.controls ? JSON.parse(JSON.stringify(p.controls)) : undefined, params: p.params ? JSON.parse(JSON.stringify(p.params)) : undefined, version: p.version, description: p.description, permissions: p.permissions ? JSON.parse(JSON.stringify(p.permissions)) : undefined, aLabel: p.aLabel, bLabel: p.bLabel, split: p.split ? JSON.parse(JSON.stringify(p.split)) : undefined };
+  captureLayout(): Partial<Panel>[] { return this.canvas.map((p) => { const o: Partial<Panel> = { type: p.type, title: p.title, cap: p.cap, full: p.full, tall: p.tall, col: p.col, bind: p.bind, group: p.group, sources: p.sources ? p.sources.slice() : undefined, gene: p.gene, heatMode: p.heatMode, genes: p.genes, view: p.view ? JSON.parse(JSON.stringify(p.view)) : undefined, rows: this.capRows(p), source: p.source, controls: p.controls ? JSON.parse(JSON.stringify(p.controls)) : undefined, params: p.params ? JSON.parse(JSON.stringify(p.params)) : undefined, version: p.version, description: p.description, permissions: p.permissions ? JSON.parse(JSON.stringify(p.permissions)) : undefined, aLabel: p.aLabel, bLabel: p.bLabel, split: p.split ? JSON.parse(JSON.stringify(p.split)) : undefined };
     // same panel-local UI state newPanel carries — serialize it so a RELOAD (not just a workspace switch) restores
     // the facet expand-set/sort/brush + record collapse, instead of resetting to the default open category.
     for (const k of ["facetOpen", "facetSort", "facetBrush"] as const) if ((p as any)[k] !== undefined) (o as any)[k] = (p as any)[k];

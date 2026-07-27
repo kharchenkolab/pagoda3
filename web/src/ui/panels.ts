@@ -1,5 +1,6 @@
 import { mk, S } from "./dom.ts";
 import { Ctx, looksLikeClusterPlaceholder } from "../data/ctx.ts";
+import { pickDefaultSources } from "../anno/roles.ts";
 import { EmbeddingView } from "../render/embedding.ts";
 import { colorsFor, focusMaskFor, categoryColorOf, setCodeValues } from "../render/colors.ts";
 import { loadCollection, listCollections, parseGmt, registerCustomCollection, GeneSetDB, Collection } from "../compute/genesets.ts";
@@ -38,6 +39,7 @@ export interface PanelView {
 export interface Panel {
   id: number; type: string; title: string; cap?: string; full?: boolean; tall?: boolean; col?: number;   // full = span columns; tall = own the column (full height); col pins a panel to a workbench column (0-based; else row-major)
   bind?: string; text?: string; q?: string; group?: string; gene?: string;
+  sources?: string[];                 // Reconcile: the annotation tracks to compare (unset = auto-picked defaults)
   aLabel?: string; bLabel?: string;   // DE mean-column headers (the two groups being contrasted)
   heatMode?: "heat" | "dot";          // Heatmap panel: colour grid vs dotplot (size = % expressing)
   genes?: string[];                   // Heatmap: extra genes pinned in beyond the precomputed markers (highlighted)
@@ -1016,10 +1018,18 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
   }
   if (baseMeta.kind !== "categorical") { const m = mk("div", "panelerr"); m.textContent = `base "${base}" is not a categorical partition`; return { el: m }; }
   const srcNames = ctx.annotationSources();
-  const sources: { name: string; codes: ArrayLike<number>; categories: string[] }[] = [];
+  const available: { name: string; codes: ArrayLike<number>; categories: string[] }[] = [];
   // A source whose values are just cluster ids ("cluster 0"…) carries no cell-type signal — don't reconcile
   // against it (a common placeholder in converted/demo stores that a name-based role default mislabels "annotation").
-  for (const n of srcNames) { const m: any = await ctx.view.metadata(n); if (m.kind === "categorical" && !looksLikeClusterPlaceholder(m.categories)) sources.push({ name: n, codes: m.codes, categories: m.categories }); }
+  for (const n of srcNames) { const m: any = await ctx.view.metadata(n); if (m.kind === "categorical" && !looksLikeClusterPlaceholder(m.categories)) available.push({ name: n, codes: m.codes, categories: m.categories }); }
+  // DEFAULT to one track per METHOD, at the granularity closest to the base — a store carrying an Azimuth
+  // hierarchy (l1/l2/l3) plus a CellTypist pair is 2 opinions, not 5 columns, and comparing across granularity
+  // manufactures disagreement (the same pair scores 72.9% at l1 vs 88.5% at l2). An explicit selection — the
+  // picker below, or update_view {sources} from the agent — always wins, including an empty one.
+  const chosen = p.sources
+    ? p.sources.filter((n) => available.some((a) => a.name === n))
+    : pickDefaultSources(available.map((a) => ({ name: a.name, cardinality: a.categories.length })), baseMeta.categories.length);
+  const sources = available.filter((a) => chosen.includes(a.name));
   // FOCUS restricts the table to the focused subpopulation (a cross-panel restriction): only clusters with
   // focus cells appear, counts/fractions are within-focus. (The embedding greys non-focus cells in parallel.)
   const focus = ctx.coord.state.focus;
@@ -1038,8 +1048,29 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
   const w = mk("div"); w.style.cssText = "position:absolute;inset:0;display:flex;flex-direction:column;overflow:hidden;font-size:12px";
   const hdr = mk("div"); hdr.style.cssText = "flex:0 0 auto;display:flex;align-items:center;gap:7px;padding:6px 10px;border-bottom:1px solid var(--line2);flex-wrap:wrap";
   const nResolved = workRows ? workRows.filter((r) => r.sources[0].label != null).length : 0;
-  hdr.innerHTML = `<span style="color:var(--faint)">base</span> <b>${esc(base)}</b> · <span style="color:var(--faint)">${rows.length} clusters, ${nResolved} labeled</span> <span style="color:var(--faint)">·</span> ${sources.length ? sources.map((s) => `<span style="border:1px solid var(--line2);border-radius:5px;padding:1px 6px;color:var(--dim)">${esc(s.name)} <span class="rcadopt" data-adopt="${esc(s.name)}" title="adopt this source as the working draft" style="cursor:pointer;color:var(--cyan)">⤵</span></span>`).join(" ") + ' <span style="color:var(--faint);font-size:11px">— click a cell to accept one label, ⤵ to adopt a whole source</span>' : '<span style="color:var(--amber,#e0a458)">no sources — run scType or add one</span>'}`;
+  hdr.innerHTML = `<span style="color:var(--faint)">base</span> <span class="rcbase"></span> <span style="color:var(--faint)">${rows.length} clusters, ${nResolved} labeled</span> <span style="color:var(--faint)">·</span> ${sources.length ? sources.map((s) => `<span style="border:1px solid var(--line2);border-radius:5px;padding:1px 6px;color:var(--dim)">${esc(s.name)} <span class="rcadopt" data-adopt="${esc(s.name)}" title="adopt this source as the working draft" style="cursor:pointer;color:var(--cyan)">⤵</span></span>`).join(" ") + ' <span style="color:var(--faint);font-size:11px">— click a cell to accept one label, ⤵ to adopt a whole source</span>' : (available.length ? '<span style="color:var(--faint)">no sources shown — pick some in ⚙ sources</span>' : '<span style="color:var(--amber,#e0a458)">no sources — run scType or add one</span>')}`;
   hdr.querySelectorAll<HTMLElement>(".rcadopt").forEach((el) => el.addEventListener("click", (e) => { e.stopPropagation(); hooks.annotation.adoptSource(el.dataset.adopt!); }));
+  // BASE selector — which partition the rows are. Explicit because electing it automatically is exactly what
+  // went wrong: with the real clustering stored as integer ids, an annotation was silently promoted to base.
+  // Partitions are offered first; annotations are still selectable (labelled) for a deliberate cross-check.
+  const partitions = ctx.catalogCategoricals().filter((f) => ctx.isPartition(f));
+  const others = ctx.catalogCategoricals().filter((f) => !ctx.isPartition(f) && f !== "annotation");
+  const bsel = mk("select", "mini") as HTMLSelectElement;
+  bsel.title = "The partition whose groups are the rows — normally the unsupervised clustering, not a cell-type track.";
+  const addOpt = (v: string, label: string) => { const o = document.createElement("option"); o.value = v; o.textContent = label; bsel.appendChild(o); };
+  for (const f of partitions) addOpt(f, f);
+  const isAnno = new Set(available.map((a) => a.name));   // a batch/design column is neither a partition nor an annotation
+  for (const f of others) addOpt(f, f + (isAnno.has(f) ? " (annotation)" : " (metadata)"));
+  if (!partitions.includes(base) && !others.includes(base)) addOpt(base, base);
+  bsel.value = base;
+  bsel.onchange = () => hooks.onConfigurePanel(p.id, { group: bsel.value });
+  hdr.querySelector(".rcbase")?.appendChild(bsel);
+  // SOURCES picker — a flat list of the candidate tracks (they are few, and their names group them: an
+  // Azimuth hierarchy sorts adjacently). Toggling writes p.sources, so the choice persists with the layout
+  // and the agent can set the same field through update_view.
+  const srcBtn = mk("button", "mini", `⚙ sources ${sources.length}/${available.length}`) as HTMLButtonElement;
+  srcBtn.title = "Choose which annotation tracks to compare";
+  hdr.appendChild(srcBtn);
   // view toggle: table (reconcile) · matrix (confusion, vocab-agnostic) · labels (review the working draft)
   const layers = [...(workMeta ? [{ name: "working", codes: workMeta.codes, categories: workMeta.categories }] : []), ...sources];
   const seg = mk("div", "segtog"); seg.style.marginLeft = "auto";
@@ -1053,6 +1084,28 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
   for (const [m, lbl] of segItems) { const b = mk("button", "mini" + (m === mode ? " on" : ""), lbl) as HTMLButtonElement; b.dataset.m = m; b.title = reconTip[m] || lbl; seg.appendChild(b); }
   if (segItems.length >= 2) hdr.appendChild(seg);
   w.appendChild(hdr);
+  // the picker body: a FLAT checkbox list of every candidate track, expanded on demand. Includes tracks the
+  // heuristics rejected (batch/design columns), so a mislabelled one can be pulled in without an agent turn.
+  const pick = mk("div"); pick.style.cssText = "flex:0 0 auto;display:none;gap:10px 14px;flex-wrap:wrap;padding:7px 10px;border-bottom:1px solid var(--line2);background:var(--card)";
+  const rejected = ctx.catalogCategoricals().filter((f) => f !== "annotation" && !ctx.isPartition(f) && !available.some((a) => a.name === f));
+  const rowFor = (name: string, on: boolean, note: string) => {
+    const lab = mk("label"); lab.style.cssText = "display:flex;align-items:center;gap:5px;font-size:11.5px;cursor:pointer;color:var(--dim)";
+    const cb = mk("input") as HTMLInputElement; cb.type = "checkbox"; cb.checked = on;
+    cb.onchange = () => {
+      const next = new Set(chosen);
+      if (cb.checked) next.add(name); else next.delete(name);
+      // writing the resolved list (not a diff) makes the current view explicit + reproducible from the spec
+      hooks.onConfigurePanel(p.id, { sources: [...available.map((a) => a.name), ...rejected].filter((n) => next.has(n)) });
+    };
+    lab.append(cb, document.createTextNode(name));
+    if (note) { const s = mk("span", "", note); s.style.cssText = "color:var(--faint);font-size:10.5px"; lab.appendChild(s); }
+    return lab;
+  };
+  for (const a of available) pick.appendChild(rowFor(a.name, chosen.includes(a.name), `${a.categories.length}`));
+  for (const f of rejected) pick.appendChild(rowFor(f, chosen.includes(f), "not a cell-type track"));
+  if (p.sources) { const rst = mk("button", "mini", "reset to auto") as HTMLButtonElement; rst.title = "go back to the automatically chosen tracks"; rst.onclick = () => hooks.onConfigurePanel(p.id, { sources: null }); pick.appendChild(rst); }
+  w.appendChild(pick);
+  srcBtn.onclick = () => { pick.style.display = pick.style.display === "none" ? "flex" : "none"; };
   if (!workMeta) {
     // No working annotation yet — INVITE the user to start one; never manufacture tracks on tab-open. Offer to adopt
     // an existing source (a real cell_type is already a candidate), run scType for a marker-based candidate, or ask
