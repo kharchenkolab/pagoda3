@@ -169,17 +169,34 @@ export class LstarView {
   //   cscColumn("counts",100) === csrRow("counts",100) byte-for-byte — cell 100's profile served as gene "DNAJC11"
   //   truth (from the store's own stats_*_nexpr): gene 100 is expressed in 930 cells; the read reported 1454,
   //   with "cell" indices up to 18325 against only 13,533 cells. Above gene index nCells it 416s or aborts instead.
-  // The viewer prep is meant to leave `counts` gene-major and add the cell-major `counts_cellmajor` twin, but
-  // nothing enforces that, so CHECK the encoding rather than assume it.
+  // A viewer store carries the counts in BOTH orientations because the two hot paths are not a range read
+  // apart: gene-major so colouring by a gene is one column, cell-major (`counts_cellmajor`) so a cluster/lasso
+  // selection is rows. `extend_for_viewer` now normalizes the basis to CSC and stamps it
+  // `provenance.viewer="basis"`; stores prepped before that stamp fall back to the field named `counts`.
+  //
+  /** The count basis — the field a gene column is read from. The name is NOT always `counts`: a store with
+   *  no raw measure is prepped from e.g. `logcounts`, and the stamp is what identifies it. `geneMajor` is
+   *  false on a store whose prep predates the basis write-back — those need re-prepping, not patching. */
+  countsBasis(): { name: string; encoding: string; geneMajor: boolean } | null {
+    const ds: any = this.ds;
+    const names: string[] = typeof ds.fieldNames === "function" ? ds.fieldNames() : [];
+    const name = names.find((n) => (ds.field(n) as any)?.provenance?.viewer === "basis")
+      ?? (ds.field("counts") ? "counts" : undefined);
+    if (!name) return null;
+    const enc = String((ds.field(name) as any)?.encoding ?? "missing");
+    return { name, encoding: enc, geneMajor: enc === "csc" };
+  }
+
   private geneMajorCounts(): string | null {
-    const f = this.ds.field("counts") as any;
-    return f && f.encoding === "csc" ? "counts" : null;
+    const b = this.countsBasis();
+    return b?.geneMajor ? b.name : null;
   }
 
   private noGeneMajor(op: string): Error {
-    const enc = (this.ds.field("counts") as any)?.encoding ?? "missing";
-    return new Error(`${op} needs a gene-major (CSC) counts field; this store's \`counts\` is ${enc}. ` +
-      "Re-run the viewer prep — it must write `counts` gene-major alongside the cell-major `counts_cellmajor`.");
+    const b = this.countsBasis();
+    return new Error(`${op} needs a gene-major (CSC) count basis; this store's \`${b?.name ?? "counts"}\` is ` +
+      `${b?.encoding ?? "missing"}. Re-run the viewer prep (lstar extend_for_viewer) — it writes the basis ` +
+      "gene-major alongside the cell-major `counts_cellmajor`.");
   }
 
   // Per-cell scalar for one gene (lognorm), via a single CSC column read.

@@ -37,8 +37,11 @@ test("toF32: ordinary numeric arrays still convert", () => {
 // i.e. cell 100's profile served as gene "DNAJC11" (1454 entries, "cell" indices up to 18325 with only
 // 13533 cells; the truth from that store's own stats_*_nexpr is 930 expressing cells). These tests pin the
 // encoding check so the viewer refuses instead of colouring the embedding with the wrong vector.
-const stubDs = (encoding: string, onColumn?: (name: string, col: number) => void): any => ({
-  field: (n: string) => (n === "counts" ? { encoding, span: ["cells", "genes"], shape: [4, 3] } : undefined),
+const stubDs = (encoding: string, onColumn?: (name: string, col: number) => void, basisName = "counts"): any => ({
+  fieldNames: () => [basisName],
+  field: (n: string) => (n === basisName
+    ? { encoding, span: ["cells", "genes"], shape: [4, 3], provenance: basisName === "counts" ? undefined : { viewer: "basis" } }
+    : undefined),
   axisLength: (a: string) => (a === "cells" ? 4 : 3),
   axisLabels: async (a: string) => (a === "genes" ? ["A", "B", "C"] : ["c0", "c1", "c2", "c3"]),
   hasField: () => false,
@@ -48,7 +51,7 @@ const stubDs = (encoding: string, onColumn?: (name: string, col: number) => void
 test("geneExpression: refuses a cell-major (CSR) counts instead of reading it as gene-major", async () => {
   let called = false;
   const v = new LstarView(stubDs("csr", () => { called = true; }));
-  await assert.rejects(() => v.geneExpression("B"), /gene-major \(CSC\) counts/, "must name the defect, not read garbage");
+  await assert.rejects(() => v.geneExpression("B"), /gene-major \(CSC\) count basis/, "must name the defect, not read garbage");
   assert.equal(called, false, "and must not issue the column read at all");
 });
 
@@ -64,7 +67,24 @@ test("geneExpression: a gene-major (CSC) counts reads normally", async () => {
 test("groupStatsForGenesInSubset: refuses a cell-major counts", async () => {
   const v = new LstarView(stubDs("csr"));
   await assert.rejects(() => v.groupStatsForGenesInSubset(Int32Array.from([0, 0, 1, 1]), 2, [0, 1], [0, 1, 2, 3]),
-    /gene-major \(CSC\) counts/);
+    /gene-major \(CSC\) count basis/);
+});
+
+// The basis is not always named `counts`: a store with no raw measure is prepped from e.g. `logcounts`, and
+// `extend_for_viewer` marks the chosen field with provenance.viewer="basis". Resolving by name alone would
+// report "no gene-major counts" on a perfectly good store.
+test("countsBasis: finds a stamped basis that is NOT named counts", async () => {
+  const seen: [string, number][] = [];
+  const v = new LstarView(stubDs("csc", (n, c) => seen.push([n, c]), "logcounts"));
+  assert.deepEqual(v.countsBasis(), { name: "logcounts", encoding: "csc", geneMajor: true });
+  await v.geneExpression("B");
+  assert.deepEqual(seen, [["logcounts", 1]], "reads the stamped basis, not a field named counts");
+});
+
+test("countsBasis: reports the encoding of a stale (cell-major) basis, and names it in the error", async () => {
+  const v = new LstarView(stubDs("csr", undefined, "logcounts"));
+  assert.deepEqual(v.countsBasis(), { name: "logcounts", encoding: "csr", geneMajor: false });
+  await assert.rejects(() => v.geneExpression("B"), /`logcounts` is csr/);
 });
 
 test("warmColumns: a prefetch stays silent on a cell-major counts (no wrong-bytes warm, no throw)", () => {
