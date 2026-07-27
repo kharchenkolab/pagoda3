@@ -1,6 +1,6 @@
 import { mk, S } from "./dom.ts";
 import { Ctx, looksLikeClusterPlaceholder } from "../data/ctx.ts";
-import { pickDefaultSources } from "../anno/roles.ts";
+import { pickDefaultSources, confidenceFieldFor } from "../anno/roles.ts";
 import { EmbeddingView } from "../render/embedding.ts";
 import { colorsFor, focusMaskFor, categoryColorOf, setCodeValues } from "../render/colors.ts";
 import { loadCollection, listCollections, parseGmt, registerCustomCollection, GeneSetDB, Collection } from "../compute/genesets.ts";
@@ -16,7 +16,7 @@ import "./volcano.style.ts";    // side-effect: the Volcano panel's style descri
 import "./box.style.ts";        // side-effect: the BoxBySample panel's style descriptor self-registers
 import { catColor } from "../data/view.ts";
 import type { EntityRef } from "../data/coord.ts";
-import { reconcile, crosstab, ReconRow, AnnotationLayer, CapRecord, labelChain } from "../anno/model.ts";
+import { reconcile, crosstab, adjustedRandIndex, ReconRow, AnnotationLayer, CapRecord, labelChain } from "../anno/model.ts";
 import { olsLookup } from "../anno/ols.ts";
 import { mountWidget, WidgetHost, WidgetHandle } from "../widget/runtime.ts";
 import type { SessionEntity } from "./results.ts";
@@ -1027,9 +1027,17 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
   // manufactures disagreement (the same pair scores 72.9% at l1 vs 88.5% at l2). An explicit selection — the
   // picker below, or update_view {sources} from the agent — always wins, including an empty one.
   const chosen = p.sources
-    ? p.sources.filter((n) => available.some((a) => a.name === n))
+    ? p.sources.slice()
     : pickDefaultSources(available.map((a) => ({ name: a.name, cardinality: a.categories.length })), baseMeta.categories.length);
-  const sources = available.filter((a) => chosen.includes(a.name));
+  // An explicit pick may name a track the heuristics did NOT auto-detect — the picker deliberately lists the
+  // rejected ones, so a mislabelled column (or a batch column you want to check against the clustering) can be
+  // pulled in. Materialize those too, or the choice would silently vanish on the very next render.
+  const pool = available.slice();
+  for (const n of chosen) {
+    if (pool.some((a) => a.name === n)) continue;
+    try { const m: any = await ctx.view.metadata(n); if (m.kind === "categorical") pool.push({ name: n, codes: m.codes, categories: m.categories }); } catch { /* no longer in the store — drop it */ }
+  }
+  const sources = chosen.map((n) => pool.find((a) => a.name === n)).filter(Boolean) as typeof pool;
   // FOCUS restricts the table to the focused subpopulation (a cross-panel restriction): only clusters with
   // focus cells appear, counts/fractions are within-focus. (The embedding greys non-focus cells in parallel.)
   const focus = ctx.coord.state.focus;
@@ -1048,7 +1056,27 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
   const w = mk("div"); w.style.cssText = "position:absolute;inset:0;display:flex;flex-direction:column;overflow:hidden;font-size:12px";
   const hdr = mk("div"); hdr.style.cssText = "flex:0 0 auto;display:flex;align-items:center;gap:7px;padding:6px 10px;border-bottom:1px solid var(--line2);flex-wrap:wrap";
   const nResolved = workRows ? workRows.filter((r) => r.sources[0].label != null).length : 0;
-  hdr.innerHTML = `<span style="color:var(--faint)">base</span> <span class="rcbase"></span> <span style="color:var(--faint)">${rows.length} clusters, ${nResolved} labeled</span> <span style="color:var(--faint)">·</span> ${sources.length ? sources.map((s) => `<span style="border:1px solid var(--line2);border-radius:5px;padding:1px 6px;color:var(--dim)">${esc(s.name)} <span class="rcadopt" data-adopt="${esc(s.name)}" title="adopt this source as the working draft" style="cursor:pointer;color:var(--cyan)">⤵</span></span>`).join(" ") + ' <span style="color:var(--faint);font-size:11px">— click a cell to accept one label, ⤵ to adopt a whole source</span>' : (available.length ? '<span style="color:var(--faint)">no sources shown — pick some in ⚙ sources</span>' : '<span style="color:var(--amber,#e0a458)">no sources — run scType or add one</span>')}`;
+  // CHANCE-CORRECTED agreement with the base, per source. The table's own "dominant label covers X% of the
+  // cluster" is inflated by class imbalance: on this store a pure batch column reads 64% against the
+  // clustering, only 25 points below two cell-type methods that genuinely concur (88%) — indistinguishable.
+  // Adjusted Rand separates them by an order of magnitude (0.01 vs 0.74), so it is what we show as trust.
+  const ariOf = (s: { codes: ArrayLike<number> }) => adjustedRandIndex(baseMeta.codes, s.codes, restrict);
+  // Reference mappers ship a per-cell CONFIDENCE next to every call (predicted.celltype.l2.score,
+  // celltypist_conf) and nothing read them, so a shaky track looked as authoritative as a solid one.
+  // Mean confidence over the cells in view, alongside the agreement number.
+  const fieldNames = ctx.view.ds.fieldNames();
+  const conf = new Map<string, number>();
+  await Promise.all(sources.map(async (s) => {
+    const cf = confidenceFieldFor(s.name, fieldNames); if (!cf) return;
+    try {
+      const m: any = await ctx.view.metadata(cf); if (m?.kind !== "numeric") return;
+      let sum = 0, n = 0;
+      for (let i = 0; i < m.values.length; i++) { if (restrict && !restrict[i]) continue; const v = m.values[i]; if (Number.isFinite(v)) { sum += v; n++; } }
+      if (n) conf.set(s.name, sum / n);
+    } catch { /* companion unreadable — just omit the number */ }
+  }));
+  const ariTip = "adjusted Rand vs the base partition: 1 = identical, ~0 = no better than chance. It corrects for class imbalance (a batch column scores ~0 here where raw overlap reads ~64%), but not for resolution — comparing levels of one hierarchy scores low because they aren't the same partition.";
+  hdr.innerHTML = `<span style="color:var(--faint)">base</span> <span class="rcbase"></span> <span style="color:var(--faint)">${rows.length} clusters, ${nResolved} labeled</span> <span style="color:var(--faint)">·</span> ${sources.length ? sources.map((s) => `<span style="border:1px solid var(--line2);border-radius:5px;padding:1px 6px;color:var(--dim)">${esc(s.name)} <span title="${esc(ariTip)}" style="color:var(--faint);font-size:10.5px">${ariOf(s).toFixed(2)}</span>${conf.has(s.name) ? `<span title="mean per-cell confidence the annotation method itself reported (${esc(confidenceFieldFor(s.name, fieldNames) || "")}), over the cells in view" style="color:var(--faint);font-size:10.5px"> · conf ${conf.get(s.name)!.toFixed(2)}</span>` : ""} <span class="rcadopt" data-adopt="${esc(s.name)}" title="adopt this source as the working draft" style="cursor:pointer;color:var(--cyan)">⤵</span></span>`).join(" ") + ' <span style="color:var(--faint);font-size:11px">— click a cell to accept one label, ⤵ to adopt a whole source</span>' : (available.length ? '<span style="color:var(--faint)">no sources shown — pick some in ⚙ sources</span>' : '<span style="color:var(--amber,#e0a458)">no sources — run scType or add one</span>')}`;
   hdr.querySelectorAll<HTMLElement>(".rcadopt").forEach((el) => el.addEventListener("click", (e) => { e.stopPropagation(); hooks.annotation.adoptSource(el.dataset.adopt!); }));
   // BASE selector — which partition the rows are. Explicit because electing it automatically is exactly what
   // went wrong: with the real clustering stored as integer ids, an annotation was silently promoted to base.
@@ -1068,7 +1096,7 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
   // SOURCES picker — a flat list of the candidate tracks (they are few, and their names group them: an
   // Azimuth hierarchy sorts adjacently). Toggling writes p.sources, so the choice persists with the layout
   // and the agent can set the same field through update_view.
-  const srcBtn = mk("button", "mini", `⚙ sources ${sources.length}/${available.length}`) as HTMLButtonElement;
+  const srcBtn = mk("button", "mini", `⚙ sources ${sources.length}/${available.length}`) as HTMLButtonElement;   // n shown / n auto-detected
   srcBtn.title = "Choose which annotation tracks to compare";
   hdr.appendChild(srcBtn);
   // view toggle: table (reconcile) · matrix (confusion, vocab-agnostic) · labels (review the working draft)
@@ -1087,7 +1115,7 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
   // the picker body: a FLAT checkbox list of every candidate track, expanded on demand. Includes tracks the
   // heuristics rejected (batch/design columns), so a mislabelled one can be pulled in without an agent turn.
   const pick = mk("div"); pick.style.cssText = "flex:0 0 auto;display:none;gap:10px 14px;flex-wrap:wrap;padding:7px 10px;border-bottom:1px solid var(--line2);background:var(--card)";
-  const rejected = ctx.catalogCategoricals().filter((f) => f !== "annotation" && !ctx.isPartition(f) && !available.some((a) => a.name === f));
+  const rejected = ctx.catalogCategoricals().filter((f) => f !== "annotation" && !ctx.isPartition(f) && !pool.some((a) => a.name === f));
   const rowFor = (name: string, on: boolean, note: string) => {
     const lab = mk("label"); lab.style.cssText = "display:flex;align-items:center;gap:5px;font-size:11.5px;cursor:pointer;color:var(--dim)";
     const cb = mk("input") as HTMLInputElement; cb.type = "checkbox"; cb.checked = on;
@@ -1095,13 +1123,13 @@ async function reconcileBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<Bui
       const next = new Set(chosen);
       if (cb.checked) next.add(name); else next.delete(name);
       // writing the resolved list (not a diff) makes the current view explicit + reproducible from the spec
-      hooks.onConfigurePanel(p.id, { sources: [...available.map((a) => a.name), ...rejected].filter((n) => next.has(n)) });
+      hooks.onConfigurePanel(p.id, { sources: [...pool.map((a) => a.name), ...rejected].filter((n) => next.has(n)) });
     };
     lab.append(cb, document.createTextNode(name));
     if (note) { const s = mk("span", "", note); s.style.cssText = "color:var(--faint);font-size:10.5px"; lab.appendChild(s); }
     return lab;
   };
-  for (const a of available) pick.appendChild(rowFor(a.name, chosen.includes(a.name), `${a.categories.length}`));
+  for (const a of pool) pick.appendChild(rowFor(a.name, chosen.includes(a.name), `${a.categories.length}`));
   for (const f of rejected) pick.appendChild(rowFor(f, chosen.includes(f), "not a cell-type track"));
   if (p.sources) { const rst = mk("button", "mini", "reset to auto") as HTMLButtonElement; rst.title = "go back to the automatically chosen tracks"; rst.onclick = () => hooks.onConfigurePanel(p.id, { sources: null }); pick.appendChild(rst); }
   w.appendChild(pick);
@@ -1504,7 +1532,7 @@ function reindexGroupStats(raw: { groups: string[]; nGenes: number; mean: Float3
 }
 
 async function heatmapBody(p: Panel, ctx: Ctx, hooks: PanelHooks): Promise<BuiltBody> {
-  const grouping = p.group || ctx.defaultGrouping();
+  const grouping = p.group || ctx.defaultMarkerGrouping();   // prefer a grouping whose markers the store already carries
   // Warm the marker table AND the group stats CONCURRENTLY — they're the dotplot's two blocking reads and
   // are independent, so on a hosted store they land in ~one wave instead of two serial ones. loadData()'s
   // groupStatsCached() below then hits the warmed cache. (The stats warm is best-effort — loadData re-reads.)
@@ -1829,7 +1857,7 @@ registerPanelType({ type: "BoxBySample", body: (p, ctx) => boxBody(p, ctx), agen
 registerPanelType({ type: "Heatmap", body: heatmapBody, agent: true,
   // the dotplot's two blocking reads are the grouping's markers (rows) + its group stats (dots) — warm both
   // (+ the grouping itself) so the "loading markers" spinner clears fast instead of after two serial waves.
-  needs: (p, ctx) => { const g = p.group || ctx.defaultGrouping(); return [{ kind: "grouping", name: g }, { kind: "markers", group: g }, { kind: "groupStats", group: g }]; } });
+  needs: (p, ctx) => { const g = p.group || ctx.defaultMarkerGrouping(); return [{ kind: "grouping", name: g }, { kind: "markers", group: g }, { kind: "groupStats", group: g }]; } });
 registerPanelType({ type: "Reconcile", body: reconcileBody, agent: true });
 registerPanelType({ type: "SessionLedger", body: sessionLedgerBody, agent: true, title: "Session" });
 registerPanelType({ type: "AnnoRecord", body: annoRecordBody, agent: true });

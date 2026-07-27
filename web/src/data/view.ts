@@ -216,6 +216,35 @@ export class LstarView {
   // computed in-browser from counts via the libstar WASM kernel (so a *bare* L* store, with no
   // precomputed navigators, is fully viewable; precompute is an optimization, not a requirement).
   private gssCache = new Map<string, { groups: string[]; n: Int32Array; S: Float64Array; SS: Float64Array; NE: Float64Array }>();
+  // Per-(group, gene) sum / sumsq / n_expr accumulated by STREAMING the cell-major counts in row blocks
+  // (byte-range reads via the package reader's csrRows) — identical arithmetic to the gene-major pass, but
+  // bounded memory: only the accumulators + one block are ever resident. Returns null when the store has no
+  // all-genes cell-major copy to stream (the caller then falls back to the whole-matrix reduction).
+  private async groupStatsStreamed(code: ArrayLike<number>, G: number, ng: number, block = 2048):
+      Promise<{ S: Float64Array; SS: Float64Array; NE: Float64Array } | null> {
+    const name = this.ds.hasField("counts_cellmajor") ? "counts_cellmajor" : null;
+    if (!name || typeof (this.ds as any).csrRows !== "function") return null;
+    const fm = this.ds.field(name)!;
+    if ((fm.span?.[1] ?? "genes") !== "genes") return null;   // indices must be GLOBAL gene ids
+    const lognorm = fm.state === "lognorm";                   // already log-scaled → don't log1p twice
+    const S = new Float64Array(G * ng), SS = new Float64Array(G * ng), NE = new Float64Array(G * ng);
+    for (let start = 0; start < this.nCells; start += block) {
+      const cells: number[] = [];
+      for (let i = start, end = Math.min(start + block, this.nCells); i < end; i++) cells.push(i);
+      const sub = await (this.ds as any).csrRows(name, cells, 4096, (d: number, t: number) => this.emitFetch(d, t));
+      const { data, indices, indptr } = sub; const rows: number[] = sub.rows;
+      for (let r = 0; r < rows.length; r++) {
+        const grp = code[rows[r]]; if (grp < 0 || grp >= G) continue;
+        const base = grp * ng;
+        for (let k = indptr[r]; k < indptr[r + 1]; k++) {
+          const v = lognorm ? data[k] : Math.log1p(data[k]);
+          const o = base + indices[k]; S[o] += v; SS[o] += v * v; NE[o]++;
+        }
+      }
+    }
+    return { S, SS, NE };
+  }
+
   private async groupSufficientStats(grouping: string) {
     const cached = this.gssCache.get(grouping);
     if (cached) return cached;
@@ -237,6 +266,15 @@ export class LstarView {
     } else {
       groups = md.categories.slice();
       const G = groups.length, code = md.codes;          // 0-based into categories (== groups order)
+      // Sufficient stats are ADDITIVE over cells, so stream the reduction in cell blocks rather than
+      // materializing the matrix: we hold only the G×ngenes accumulators (27×19k×8×3 ≈ 12 MB) plus one
+      // block. Reading the whole thing was a shortcut that put a hard ceiling on the feature — a real
+      // 13,533 × 19,231 float64 store aborts the WASM heap on fieldAsCsc, so markers for any grouping the
+      // store had not precomputed were simply impossible. Falls through to the whole-matrix path when
+      // there's no all-genes cell-major copy to stream from.
+      const streamed = await this.groupStatsStreamed(code, G, ng);
+      if (streamed) { S = streamed.S; SS = streamed.SS; NE = streamed.NE; }
+      else {
       const cc = await this.countsCSC();
       const M = await kernels();
       if (M) {
@@ -250,6 +288,7 @@ export class LstarView {
           const grp = code[indices[k]]; if (grp < 0) continue;
           const v = Math.log1p(data[k]), o = grp * ng + gene; S[o] += v; SS[o] += v * v; NE[o]++;
         }
+      }
       }
     }
     // unify column order with metadata (numeric for leiden-like groupings) so faceted/scoped panels align

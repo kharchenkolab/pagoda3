@@ -292,3 +292,28 @@ test("a genuine measure is NOT promoted (mito %, scores stay numeric)", async ()
   await ctx.init();
   assert.deepEqual(ctx.partitionGroupings(), [], "non-integral values are a measure, not cluster ids");
 });
+
+test("a MARKER view defaults to a grouping whose markers the store actually carries", async () => {
+  // Promoting the numeric clustering makes it the shared default (right for colour + the reconcile base),
+  // but this store precomputed markers only for the cell-type tracks. Deriving them instead needs a
+  // WHOLE-matrix read, which aborts the WASM heap on a store this size — so a marker view must not land
+  // on the partition by default. The user can still select it explicitly.
+  const withMarkers: FieldDef[] = [...ANNOTATED_STORE,
+    { name: "markers_predicted.celltype.l1_lfc", role: "measure", encoding: "dense", span: ["genes", "groups_predicted.celltype.l1"] }];
+  const view = makeStoreView(withMarkers, { integrated_clusters: [0, 1, 2, 1, 0, 2] });
+  const ctx = new Ctx(view, {} as any);
+  await ctx.init();
+  assert.equal(ctx.baseClustering(), "integrated_clusters", "the partition is still the base/colour default");
+  assert.equal(ctx.hasPrecomputedMarkers("integrated_clusters"), false);
+  assert.equal(ctx.hasPrecomputedMarkers("predicted.celltype.l1"), true);
+  assert.equal(ctx.defaultMarkerGrouping(), "predicted.celltype.l1", "marker view falls back to a grouping that has them");
+});
+
+test("defaultMarkerGrouping keeps the shared default when it DOES have markers (no needless divergence)", async () => {
+  const withMarkers: FieldDef[] = [...ANNOTATED_STORE,
+    { name: "markers_integrated_clusters_lfc", role: "measure", encoding: "dense", span: ["genes", "groups_integrated_clusters"] }];
+  const view = makeStoreView(withMarkers, { integrated_clusters: [0, 1, 2, 1, 0, 2] });
+  const ctx = new Ctx(view, {} as any);
+  await ctx.init();
+  assert.equal(ctx.defaultMarkerGrouping(), ctx.defaultGrouping(), "panels stay on one partition when that works");
+});

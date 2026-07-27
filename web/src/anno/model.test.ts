@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { seedLayer, emptyLayer, setLabel, clearLabel, compact, reconcile, crosstab, parseLineage, labelChain, hierarchyDepth, rollupToLevel } from "./model.ts";
+import { seedLayer, emptyLayer, setLabel, clearLabel, compact, reconcile, crosstab, parseLineage, labelChain, hierarchyDepth, rollupToLevel, adjustedRandIndex } from "./model.ts";
 
 test("seedLayer copies the source (independent arrays)", () => {
   const src = { codes: Int32Array.from([0, 1, 0, 2]), categories: ["a", "b", "c"] };
@@ -100,4 +100,56 @@ test("hierarchyDepth = deepest chain; rollupToLevel rolls cells up by lineage", 
   // L2 (mid): Monocyte / T cell / Platelet
   const l2 = rollupToLevel(codes, cats, recs as any, 2);
   assert.deepEqual([...l2.codes].map((c) => c < 0 ? null : l2.categories[c]), ["Monocyte", "Monocyte", "T cell", "Platelet", null]);
+});
+
+// ---- chance-corrected agreement ------------------------------------------------------------------
+
+test("adjustedRandIndex: identical partitions = 1, independent = ~0", () => {
+  const x = Int32Array.from([0, 0, 1, 1, 2, 2, 0, 1, 2, 0]);
+  assert.equal(adjustedRandIndex(x, x), 1, "a labeling agrees perfectly with itself");
+  // relabeled but structurally identical → still 1 (vocabulary-agnostic, like crosstab)
+  const renamed = Int32Array.from([...x].map((v) => (v + 1) % 3));
+  assert.equal(adjustedRandIndex(x, renamed), 1, "agreement is about the PARTITION, not the label names");
+});
+
+test("adjustedRandIndex: an imbalanced batch column scores ~0, where raw agreement looks high", () => {
+  // 100 cells, 90 in one cell type. A 2-level "batch" split that ignores cell type entirely: a
+  // dominant-label fraction would read ~90% ("they agree!"); ARI must expose that as no information.
+  const n = 100;
+  const cellType = new Int32Array(n); for (let i = 90; i < n; i++) cellType[i] = 1;   // 90 × type0, 10 × type1
+  const batch = new Int32Array(n); for (let i = 0; i < n; i++) batch[i] = i % 2;      // interleaved, independent
+  const ari = adjustedRandIndex(cellType, batch);
+  assert.ok(Math.abs(ari) < 0.05, `independent batch must be ~0, got ${ari}`);
+  // the raw "dominant label" reading of the same pair is high — this is the number ARI corrects
+  const dominant = Math.max(...[0, 1].map((b) => { let m = [0, 0]; for (let i = 0; i < n; i++) if (batch[i] === b) m[cellType[i]]++; return Math.max(...m) / m.reduce((p, c) => p + c, 0); }));
+  assert.ok(dominant > 0.85, `precondition: raw agreement looks like corroboration (${dominant})`);
+});
+
+test("adjustedRandIndex corrects for chance, NOT for granularity", () => {
+  // l1 = {A,B}; l2 splits each in two — a PERFECT nested refinement, yet ARI is 0.36, not 1: the two
+  // simply are not the same partition. This is exactly why the panel picks ONE level per method at the
+  // base's granularity — otherwise a resolution difference reads as the methods disagreeing.
+  const l1 = Int32Array.from([0, 0, 0, 0, 1, 1, 1, 1]);
+  const l2 = Int32Array.from([0, 0, 1, 1, 2, 2, 3, 3]);
+  const nested = adjustedRandIndex(l1, l2);
+  assert.ok(Math.abs(nested - 0.3636) < 0.001, `perfect refinement scores 0.36, got ${nested}`);
+  // still far above an unrelated split of the same shape — it IS real, partial agreement
+  const independent = adjustedRandIndex(l1, Int32Array.from([0, 1, 2, 3, 0, 1, 2, 3]));
+  assert.ok(nested > independent + 0.3, `a refinement is much closer than an unrelated split (${nested} vs ${independent})`);
+});
+
+test("adjustedRandIndex: unassigned cells and restrict are honoured", () => {
+  const a = Int32Array.from([0, 0, 1, 1, -1]);
+  const b = Int32Array.from([0, 0, 1, 1, 0]);
+  assert.equal(adjustedRandIndex(a, b), 1, "the -1 (unassigned) cell is excluded, not treated as a category");
+  const restrict = Uint8Array.from([1, 1, 1, 1, 0]);
+  assert.equal(adjustedRandIndex(b, b, restrict), 1, "restrict scopes the comparison to the focused subset");
+  assert.equal(adjustedRandIndex(Int32Array.from([0]), Int32Array.from([0])), 0, "fewer than 2 cells carries no information");
+});
+
+test("adjustedRandIndex: a single-cluster labeling carries no information (no divide-by-zero)", () => {
+  const flat = Int32Array.from([0, 0, 0, 0]);
+  const split = Int32Array.from([0, 0, 1, 1]);
+  assert.equal(adjustedRandIndex(flat, flat), 0, "everything-in-one-group vs itself is degenerate, not perfect");
+  assert.ok(Number.isFinite(adjustedRandIndex(flat, split)));
 });

@@ -87,6 +87,20 @@ export function partitionFromNumeric(values: ArrayLike<number>, maxCard = 200): 
   return { codes, categories: levels.map(String) };
 }
 
+/** The per-cell CONFIDENCE column that ships alongside an annotation track, if the store has one —
+ *  `predicted.celltype.l2` → `predicted.celltype.l2.score`, `celltypist` → `celltypist_conf`. Reference
+ *  mappers emit these next to every call and nothing was reading them, so a low-confidence track looked
+ *  exactly as authoritative as a high-confidence one. Matched case-insensitively against real field names. */
+export function confidenceFieldFor(track: string, fieldNames: string[]): string | undefined {
+  const want = ["score", "conf", "confidence", "prob", "probability", "uncertainty"];
+  const lower = new Map(fieldNames.map((f) => [f.toLowerCase(), f]));
+  for (const sep of [".", "_", "-"]) for (const w of want) {
+    const hit = lower.get((track + sep + w).toLowerCase());
+    if (hit && hit !== track) return hit;
+  }
+  return undefined;
+}
+
 export interface TrackFamily { family: string; level: number; raw: boolean }
 
 /** Split a track name into the METHOD that produced it and which level/variant of it this is:

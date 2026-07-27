@@ -481,6 +481,21 @@ export class Ctx {
     return clusters.find((g) => !annos.has(g)) || clusters[0] || this.defaultGrouping();
   }
 
+  /** Did the store SHIP precomputed markers for this grouping (markers_<g>_lfc)? Everything else must
+   *  derive them from the counts matrix — far more expensive, and a whole-matrix read can exceed the WASM
+   *  heap on a large store (a 13.5k × 19k float64 matrix aborts), so a marker view should not land there
+   *  by default. */
+  hasPrecomputedMarkers(group: string): boolean { return this.view.ds.hasField("markers_" + group + "_lfc"); }
+
+  /** Default grouping for a MARKER view: the shared default when the store carries its markers, else the
+   *  first grouping that does. Keeps panels describing the same partition where possible, without making
+   *  "open the Markers tab" mean "compute markers for a grouping the store never precomputed". */
+  defaultMarkerGrouping(): string {
+    const dg = this.defaultGrouping();
+    if (this.hasPrecomputedMarkers(dg)) return dg;
+    return this.groupings().find((g) => this.hasPrecomputedMarkers(g)) || dg;
+  }
+
   /** The sample/batch ids, when a sample-ish column has been warmed — lets looksLikeBatch reject a
    *  differently-named copy of the sample column by VALUE, not just by name. */
   private sampleIds(): string[] {

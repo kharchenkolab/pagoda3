@@ -139,3 +139,39 @@ export function crosstab(A: { codes: ArrayLike<number>; categories: string[] }, 
   for (let i = 0; i < n; i++) { const a = A.codes[i], b = B.codes[i]; if (a >= 0 && a < R && b >= 0 && b < C) { counts[a][b]++; rowTotals[a]++; } }
   return { rows: A.categories, cols: B.categories, counts, rowTotals };
 }
+
+// Chance-corrected agreement between two labelings (adjusted Rand index): 1 = identical partitions,
+// ~0 = no better than chance, <0 = worse than chance. The RAW "dominant label matches" fraction the table
+// shows is inflated by class imbalance — on a real 2-sample store the batch column `sample` scores 63.7%
+// against a cell-type track purely from imbalance, which reads as corroboration when the two share no
+// information at all. ARI removes that baseline. `restrict` scopes it to the focused subset.
+//
+// It corrects for CHANCE, not for GRANULARITY: a perfect nested refinement (2 clusters vs the 4 that split
+// them) scores 0.36, not 1, because the two can't be the same partition. So a low ARI between levels of one
+// hierarchy is expected, and comparing at MATCHED granularity (what pickDefaultSources arranges) is what
+// makes the number mean "these two methods disagree" rather than "these two are at different resolutions".
+export function adjustedRandIndex(a: ArrayLike<number>, b: ArrayLike<number>, restrict?: ArrayLike<number>): number {
+  const n0 = Math.min(a.length, b.length);
+  const pair = new Map<number, number>();   // (codeA, codeB) packed → count
+  const ra = new Map<number, number>(), rb = new Map<number, number>();
+  let n = 0;
+  for (let i = 0; i < n0; i++) {
+    if (restrict && !restrict[i]) continue;
+    const x = a[i], y = b[i];
+    if (x < 0 || y < 0) continue;                       // unassigned cells carry no pairing information
+    const k = x * 4294967296 + y;                       // pack (fits exactly while both < 2^32)
+    pair.set(k, (pair.get(k) || 0) + 1);
+    ra.set(x, (ra.get(x) || 0) + 1); rb.set(y, (rb.get(y) || 0) + 1);
+    n++;
+  }
+  if (n < 2) return 0;
+  const c2 = (v: number) => (v * (v - 1)) / 2;
+  let index = 0, sa = 0, sb = 0;
+  for (const v of pair.values()) index += c2(v);
+  for (const v of ra.values()) sa += c2(v);
+  for (const v of rb.values()) sb += c2(v);
+  const total = c2(n);
+  const expected = (sa * sb) / total;
+  const max = (sa + sb) / 2;
+  return max === expected ? 0 : (index - expected) / (max - expected);   // both trivial (one cluster each) → no information
+}

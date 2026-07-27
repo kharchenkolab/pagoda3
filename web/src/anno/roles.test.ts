@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { prefilterRole, candidateFields, looksLikeBatch, looksLikeClusterField, partitionFromNumeric, trackFamily, pickDefaultSources } from "./roles.ts";
+import { prefilterRole, candidateFields, looksLikeBatch, looksLikeClusterField, partitionFromNumeric, trackFamily, pickDefaultSources, confidenceFieldFor } from "./roles.ts";
 
 const N = 35000, S = 6;
 
@@ -99,4 +99,18 @@ test("pickDefaultSources: independent methods are all kept (nothing is dropped a
     { name: "cell_type", cardinality: 20 },
   ];
   assert.deepEqual(pickDefaultSources(tracks, 27), ["celltypist", "scType", "cell_type"]);
+});
+
+test("confidenceFieldFor: finds the companion score column the store already ships", () => {
+  // the real field list from the annotated store
+  const fields = ["predicted.celltype.l1", "predicted.celltype.l1.score", "predicted.celltype.l2",
+                  "predicted.celltype.l2.score", "celltypist", "celltypist_conf", "celltypist_raw", "nCount_RNA"];
+  assert.equal(confidenceFieldFor("predicted.celltype.l2", fields), "predicted.celltype.l2.score");
+  assert.equal(confidenceFieldFor("celltypist", fields), "celltypist_conf");
+  assert.equal(confidenceFieldFor("celltypist_raw", fields), undefined, "no companion → undefined, not a wrong guess");
+  assert.equal(confidenceFieldFor("nCount_RNA", fields), undefined);
+});
+
+test("confidenceFieldFor: never returns the track itself", () => {
+  assert.equal(confidenceFieldFor("score", ["score"]), undefined);
 });
