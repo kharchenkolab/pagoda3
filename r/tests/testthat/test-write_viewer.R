@@ -43,20 +43,21 @@ test_that("write_viewer adds navigators; stats kernel-exact; panel = counts re-o
 # A clustering that arrives as INTEGERS is a `measure` to L*, so lstar's label-role detection skips it.
 # On a real Seurat-derived store that meant the one grouping never summarized was the actual clustering.
 
-.numeric_cluster_ds <- function(nc = 120, ng = 20, nclust = 5) {
+.numeric_cluster_ds <- function(nc = 120L, ng = 20L, nclust = 5L) {
   set.seed(3)
-  X <- Matrix::rsparsematrix(nc, ng, density = 0.4, rand.x = function(n) rpois(n, 2) + 1)
-  ds <- lstar::lstar_dataset(kind = "sample")
-  ds <- lstar::add_axis(ds, "cells", paste0("cell", seq_len(nc)))
-  ds <- lstar::add_axis(ds, "genes", paste0("g", seq_len(ng)))
-  ds <- lstar::add_field(ds, "counts", X, role = "measure", span = c("cells", "genes"), state = "raw")
-  ds <- lstar::add_field(ds, "integrated_clusters", (seq_len(nc) - 1) %% nclust,
-                         role = "measure", span = "cells")
-  ds <- lstar::add_field(ds, "celltypist", paste0("t", (seq_len(nc) - 1) %% 3),
-                         role = "label", span = "cells")
-  ds <- lstar::add_field(ds, "nCount_RNA", as.numeric(Matrix::rowSums(X)),
-                         role = "measure", span = "cells")
-  ds
+  cnt <- as(Matrix::Matrix(rpois(nc * ng, 0.7), nc, ng, sparse = TRUE), "CsparseMatrix")
+  rownames(cnt) <- paste0("cell", 1:nc); colnames(cnt) <- paste0("g", 1:ng)
+  structure(list(kind = "sample", spec_version = "0.1", profiles = character(0), dropped = character(0),
+    axes = list(cells = list(labels = rownames(cnt), origin = "observed", role = "observation"),
+                genes = list(labels = colnames(cnt), origin = "observed", role = "feature")),
+    fields = list(
+      counts = list(role = "measure", span = c("cells", "genes"), state = "raw", values = cnt),
+      # the clustering, as NUMBERS: role=measure, so lstar's label-role detection cannot see it
+      integrated_clusters = list(role = "measure", span = "cells", values = (0:(nc - 1)) %% nclust),
+      celltypist = list(role = "label", span = "cells", values = paste0("t", (0:(nc - 1)) %% 3)),
+      # a real measure that is integral with few levels — must NOT be claimed as a grouping
+      nCount_RNA = list(role = "measure", span = "cells", values = as.numeric(Matrix::rowSums(cnt))))),
+    class = "lstar_dataset")
 }
 
 test_that("a numeric clustering is detected and does not cost the annotations their stats", {
