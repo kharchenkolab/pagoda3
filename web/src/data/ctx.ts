@@ -566,6 +566,16 @@ export class Ctx {
   }
 
   private gsCache = new Map<string, Awaited<ReturnType<LstarView["groupStats"]>>>();
+  // Were this grouping's statistics MEASURED or estimated? Backed by the same cached sufficient stats the
+  // dotplot uses, so asking is free once anything has computed them. Kept separate from markers()/groupStats()
+  // rather than widening their return shapes, which eight call sites depend on.
+  async statsQuality(grouping = "leiden"): Promise<{ approx: boolean; cells: number; measured: number }> {
+    const gs = await this.groupStatsCached(grouping);
+    let cells = 0, measured = 0;
+    for (let i = 0; i < gs.n.length; i++) { cells += gs.n[i]; measured += gs.nUsed[i]; }
+    return { approx: !!gs.approx, cells, measured };
+  }
+
   async groupStatsCached(grouping = "leiden") {
     if (!this.gsCache.has(grouping)) this.gsCache.set(grouping, await this.view.groupStats(grouping));
     return this.gsCache.get(grouping)!;

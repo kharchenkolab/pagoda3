@@ -6,6 +6,7 @@ import { colorsFor, focusMaskFor, categoryColorOf, setCodeValues } from "../rend
 import { loadCollection, listCollections, parseGmt, registerCustomCollection, GeneSetDB, Collection } from "../compute/genesets.ts";
 import { enrichRanked, RankedGene, EnrichResult } from "../compute/enrich.ts";
 import { themeIsDark } from "../render/theme.ts";
+import { isPlottableP } from "./estimated.ts";
 import { getStyle, resolveStyle } from "../render/style.ts";
 import { registerPanelType, getPanelType } from "./panel-registry.ts";
 import { EmbeddingStyle } from "../render/embedding.style.ts";
@@ -965,12 +966,21 @@ function volcanoBody(p: Panel, ctx: Ctx): BuiltBody {
   const sx = (v: number) => pad + (Math.max(-xm, Math.min(xm, v)) + xm) / (2 * xm) * (W - pad - 6);
   const sy = (v: number) => H - pad - Math.min(v, ym) / ym * (H - 2 * pad);
   let g = `<line class="gl" x1="${sx(0)}" y1="6" x2="${sx(0)}" y2="${H - pad}"/>`;
+  // A row from an ESTIMATED table carries padj = NaN: the significance was never measured. `?? 1` does not
+  // catch NaN, so scaling it produced cy="NaN" and an invisible point. Draw those on the axis floor in the
+  // muted colour — the fold-change is still real — and never let one count as a hit.
+  let unmeasured = 0;
   for (const r of rows) {
-    const lfc = r.lfc ?? 0, pj = r.padj ?? 1;
-    const y = -Math.log10(Math.max(pj, 1e-12)); const hit = Math.abs(lfc) >= lT && pj <= pT;
-    g += `<circle cx="${sx(lfc).toFixed(1)}" cy="${sy(y).toFixed(1)}" r="${s.dot.radius}" fill="${hit ? (lfc > 0 ? "var(--bad)" : "var(--cyan)") : "var(--faint)"}"/>`;
+    const lfc = r.lfc ?? 0;
+    const plottable = isPlottableP(r.padj);
+    if (!plottable) unmeasured++;
+    const y = plottable ? -Math.log10(Math.max(r.padj as number, 1e-12)) : 0;
+    const hit = plottable && Math.abs(lfc) >= lT && (r.padj as number) <= pT;
+    g += `<circle cx="${sx(lfc).toFixed(1)}" cy="${sy(y).toFixed(1)}" r="${s.dot.radius}" fill="${hit ? (lfc > 0 ? "var(--bad)" : "var(--cyan)") : "var(--faint)"}"${plottable ? "" : ' opacity="0.5"'}/>`;
     if (hit && Math.abs(lfc) > s.label.lfc) g += `<text class="axis" x="${(sx(lfc) + 5).toFixed(1)}" y="${(sy(y) + 3).toFixed(1)}">${r.symbol}</text>`;
   }
+  if (unmeasured === rows.length && rows.length)
+    g += `<text class="axis" x="${W / 2}" y="16" text-anchor="middle" fill="var(--faint)">significance not measured — estimated table, fold-change only</text>`;
   g += `<text class="axis" x="${W / 2}" y="${H - 3}" text-anchor="middle">log2 fold-change</text>`;
   const svg = S("svg", { viewBox: `0 0 ${W} ${H}` }); svg.innerHTML = g;
   const w = mk("div"); w.appendChild(svg); return { el: w };

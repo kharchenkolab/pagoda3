@@ -9,6 +9,7 @@ import { WIDGET_API_DOC } from "../widget/contract.ts";
 import { capabilityMenu } from "./capabilities.ts";
 import { getWidgetTemplate } from "../widget/template.ts";
 import { previewWidget } from "../widget/runtime.ts";
+import { withApproxNote } from "../ui/estimated.ts";
 import { previewHost, PreviewSim } from "../widget/apphost.ts";
 import { listRecipes, findRecipes, getRecipe, recipeSource } from "../widget/recipes.ts";
 import { applyEdits } from "../widget/edits.ts";
@@ -234,7 +235,10 @@ async function execTool(app: App, name: string, input: any): Promise<string> {
       const grouping = input.grouping && app.ctx.groupings().includes(input.grouping) ? input.grouping : "leiden";
       const markers = await app.ctx.markers(grouping); const rows = (markers.get(input.cluster) || []).slice(0, 20);
       if (!rows.length) return `no group "${input.cluster}" in ${grouping} (have: ${[...markers.keys()].slice(0, 12).join(", ")})`;
-      ag.addRail({ type: "DeTable", title: `Markers · ${input.cluster}`, cap: `${grouping} vs rest`, bind: `de:${grouping}:${input.cluster}`, group: input.cluster, rows });
+      // say so when the grouping's stats were estimated: these rows carry padj = NaN, and a caption is the
+      // only place the user learns that the significance is absent by design rather than missing by accident
+      const q = await app.ctx.statsQuality(grouping).catch(() => null);
+      ag.addRail({ type: "DeTable", title: `Markers · ${input.cluster}`, cap: withApproxNote(`${grouping} vs rest`, q), bind: `de:${grouping}:${input.cluster}`, group: input.cluster, rows });
       return `added marker table for ${grouping}=${input.cluster}; top genes: ${rows.slice(0, 8).map((r) => r.symbol).join(", ")}`;
     }
     case "compute": { const { ok, error } = await app.runCompute({ ...input, source: "agent" }); return error ? `error: ${error}` : ok!; }

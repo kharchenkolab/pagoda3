@@ -37,6 +37,7 @@ import { AnnotationLayer, seedLayer, setLabel, reconcile, compact, hierarchyDept
 import { PBMC_MARKERS, MarkerDB } from "../anno/markerdb.ts";
 import { zscoreByGroup, scoreClusters, assignClusters, MarkerIdx } from "../anno/sctype.ts";
 import { LRModel, lrFinalize } from "../anno/celltypist.ts";
+import { withApproxNote } from "./estimated.ts";
 
 interface Checkpoint { i: number; q: string; why: string; state: any; kind?: "ask" | "act"; exchange?: { kind: string; entries?: any[]; turns?: any[] }; }
 interface WS { colorBy: string; panels: Partial<Panel>[]; }
@@ -1839,10 +1840,13 @@ export class App {
     }
 
     // de (cell-level, ranking-grade)
-    const { ranked, panel } = await ctx.view.subsampleDE(Aids, Bids);
+    const { ranked, panel, approx, nA, nB } = await ctx.view.subsampleDE(Aids, Bids);
     const rows = ranked.map((r: any) => ({ gene: r.gene, symbol: r.symbol, lfc: r.lfc, meanA: r.meanA, meanB: r.meanB }));   // ALL tested genes — the panel filters/searches the full list (render is capped)
-    place({ type: "DeTable", title: titleOf(`${aL} vs ${bL}`), cap: "cell-level DE" + sharedNote, bind: "de:between", aLabel: aL, bLabel: bL, rows });   // title = the contrast (the identity); cap = the test TYPE (secondary, non-redundant) — the approx/ranking nature lives in the caveat
-    record("de", titleOf(`${aL} vs ${bL}`), "cell-level DE" + sharedNote, "de:between", rows, aL, bL);
+    // The SAME computation used to say "approx" when the agent ran it and nothing when the UI did; one
+    // helper now, so a table means the same thing however it was made.
+    const deCap = withApproxNote("cell-level DE" + sharedNote, { approx, cells: Aids.length + Bids.length, measured: nA + nB });
+    place({ type: "DeTable", title: titleOf(`${aL} vs ${bL}`), cap: deCap, bind: "de:between", aLabel: aL, bLabel: bL, rows });   // title = the contrast (the identity); cap = the test TYPE (secondary, non-redundant)
+    record("de", titleOf(`${aL} vs ${bL}`), deCap, "de:between", rows, aL, bL);
     const up = rows.filter((r: any) => r.lfc > 0).slice(0, 6).map((r: any) => r.symbol).join(", ");
     const dn = rows.filter((r: any) => r.lfc < 0).slice(0, 6).map((r: any) => r.symbol).join(", ");
     return { ok: `DE ${aL} (${Aids.length}) vs ${bL} (${Bids.length}), compared directly. Higher in ${aL}: ${up || "—"}. Higher in ${bL}: ${dn || "—"}.` };
