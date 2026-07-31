@@ -282,7 +282,12 @@ export class LstarView {
   // The SAB-backed gene-major counts (data + indptr) for the WIDGET worker's WASM kernels (colMeanVar genome-wide
   // mean/var). Null when not isolated. The buffers are SharedArrayBuffers → posting them SHARES (no copy).
   async sharedCountsRefs(): Promise<{ data: ArrayBufferLike; indptr: ArrayBufferLike; nCells: number; nGenes: number; symbols: string[] } | null> {
-    const cc = await this.countsCSC();
+    // The one remaining WHOLE-basis read on the hot path, and the least defensible: it pulls the entire
+    // gene-major matrix so a widget's api.meanVar can run genome-wide. Callers already treat null as
+    // "not available" (it is null whenever the page isn't cross-origin isolated), so a store that can't
+    // serve the whole basis should take that branch rather than rejecting into the widget worker.
+    let cc: Awaited<ReturnType<LstarView["countsCSC"]>>;
+    try { cc = await this.countsCSC(); } catch { return null; }
     if (!(isolationAvailable() && cc.data.buffer instanceof SharedArrayBuffer)) return null;
     return { data: cc.data.buffer, indptr: cc.indptr.buffer, nCells: this.nCells, nGenes: cc.nGenes, symbols: await this.genes() };
   }
