@@ -254,3 +254,96 @@ test("globalGeneStats: with only a partial grouping, N is the covered count, not
 test("globalGeneStats: null when nothing is summarized", async () => {
   assert.equal(await (globalView(globalDs([], {}, {})) as any).globalGeneStats(), null);
 });
+
+// --- tier 2 / tier 3: read it when that's affordable, sample when it isn't --------------------------
+// 8 cells x 2 genes, cell-major. Group 0 = cells 0..3, group 1 = cells 4..7. Every cell expresses both
+// genes with value = cell index + 1, so exact answers are hand-checkable.
+const CM8 = {
+  data: Float32Array.from(Array.from({ length: 8 }, (_, c) => [c + 1, c + 1]).flat()),
+  indices: Int32Array.from(Array.from({ length: 8 }, () => [0, 1]).flat()),
+  indptr: Int32Array.from(Array.from({ length: 9 }, (_, i) => 2 * i)),
+};
+const tierDs = (opts: { order?: Int32Array | null; onRead?: (cells: number[]) => void } = {}): any => {
+  const rowsFor = (cells: number[]) => {
+    const data: number[] = [], indices: number[] = [], indptr = [0];
+    for (const c of cells) { for (let k = CM8.indptr[c]; k < CM8.indptr[c + 1]; k++) { data.push(CM8.data[k]); indices.push(CM8.indices[k]); } indptr.push(data.length); }
+    return { data: Float32Array.from(data), indices: Int32Array.from(indices), indptr: Int32Array.from(indptr), rows: cells };
+  };
+  return {
+    fieldNames: () => ["counts_cellmajor", ...(opts.order ? ["counts_cellmajor_order"] : [])],
+    axisNames: () => ["cells", "genes"],
+    hasField: (n: string) => n === "counts_cellmajor" || (!!opts.order && n === "counts_cellmajor_order"),
+    field: (n: string) => (n === "counts_cellmajor" ? { encoding: "csr", span: ["cells", "genes"], state: "raw", shape: [8, 2] } : undefined),
+    axisLength: (a: string) => (a === "cells" ? 8 : 2),
+    axisLabels: async (a: string) => (a === "genes" ? ["A", "B"] : Array.from({ length: 8 }, (_, i) => `c${i}`)),
+    fieldDense: async () => ({ data: opts.order ?? new Int32Array(0) }),
+    csrRows: async (_n: string, cells: number[]) => { opts.onRead?.(cells); return rowsFor(cells); },
+    sampleRows: async (_n: string, ids: number[], max: number) => ids.filter((_, i) => i % 2 === 0).slice(0, max),
+  };
+};
+const tierView = (ds: any, codes: number[], cats: string[]) => {
+  const v: any = new LstarView(ds);
+  v.metadata = async () => ({ kind: "categorical", codes: Int32Array.from(codes), categories: cats });
+  return v;
+};
+
+test("tier 2: a group that coalesces is READ — exact means, approx false", async () => {
+  const seen: number[][] = [];
+  const v = tierView(tierDs({ onRead: (c) => seen.push(c) }), [0, 0, 0, 0, 1, 1, 1, 1], ["a", "b"]);
+  const gs = await v.groupStats("g");
+  assert.equal(gs.approx, false);
+  assert.deepEqual(seen[0], [0, 1, 2, 3, 4, 5, 6, 7], "reads every labelled cell, not a sample");
+  // group a = log1p(1..4) / 4 exactly
+  const meanA = [1, 2, 3, 4].reduce((s, x) => s + Math.log1p(x), 0) / 4;
+  assert.equal(+gs.mean[0].toFixed(6), +meanA.toFixed(6));
+  assert.deepEqual([...gs.frac.slice(0, 2)], [1, 1]);
+});
+
+test("tier 3: a scattered group is SAMPLED and says so", async () => {
+  // maxRuns forced low so the plan takes the sampled branch on this tiny fixture
+  const ds = tierDs();
+  const v = tierView(ds, [0, 1, 0, 1, 0, 1, 0, 1], ["a", "b"]);
+  v.statsSampleCells = 4;
+  const gs = await v.groupStats("g");
+  assert.equal(gs.approx, true, "estimated results must be labelled");
+  assert.equal(gs.plan.mode, "sample");
+});
+
+// The trap this design has to avoid: S is summed over the cells actually read, so dividing by the FULL
+// group size would scale every mean down by the sampling fraction — a quiet, plausible-looking error.
+test("tier 3: the divisor is cells MEASURED, while n still reports the real group size", async () => {
+  const ds = tierDs();
+  const v = tierView(ds, [0, 0, 0, 0, 1, 1, 1, 1], ["a", "b"]);
+  v.statsSampleCells = 4;                       // 8 labelled cells > budget -> sample; sampleRows takes evens
+  const gs = await v.groupStats("g");
+  assert.equal(gs.approx, true);
+  assert.deepEqual([...gs.n], [4, 4], "n is the true group size, for display");
+  assert.deepEqual([...gs.nUsed], [2, 2], "but only 2 of each group were read");
+  // group a sampled cells are 0 and 2 -> values 1 and 3
+  const meanA = (Math.log1p(1) + Math.log1p(3)) / 2;
+  assert.equal(+gs.mean[0].toFixed(6), +meanA.toFixed(6), "mean divides by 2, not by 4");
+});
+
+test("tier 3: markers blank padj on a sampled table, keep it on an exact one", async () => {
+  const exact = tierView(tierDs(), [0, 0, 0, 0, 1, 1, 1, 1], ["a", "b"]);
+  const mExact = await exact.markers("g", 2);
+  assert.ok([...mExact.get("a")!].every((r: any) => !Number.isNaN(r.padj)), "an exact table keeps its padj");
+
+  const ds = tierDs();
+  const sampled = tierView(ds, [0, 0, 0, 0, 1, 1, 1, 1], ["a", "b"]);
+  sampled.statsSampleCells = 4;
+  const mSampled = await sampled.markers("g", 2);
+  assert.ok([...mSampled.get("a")!].every((r: any) => Number.isNaN(r.padj)),
+    "a sampled significance value would read as biology, not as methodology — blank it");
+  assert.ok([...mSampled.get("a")!].every((r: any) => Number.isFinite(r.lfc)), "lfc still reported: it converges");
+});
+
+test("tier selection uses PHYSICAL rows: the permutation can make a scattered group compact", async () => {
+  // cells 0,2,4,6 are stride-2 by id, but adjacent once permuted -> one run -> read, not sample
+  const order = Int32Array.from([0, 4, 1, 5, 2, 6, 3, 7]);
+  const seen: number[][] = [];
+  const v = tierView(tierDs({ order, onRead: (c) => seen.push(c) }), [0, 1, 0, 1, 0, 1, 0, 1], ["a", "b"]);
+  const gs = await v.groupStats("g");
+  assert.equal(gs.approx, false, "compact once permuted — no need to estimate");
+  assert.equal(seen[0].length, 8);
+});

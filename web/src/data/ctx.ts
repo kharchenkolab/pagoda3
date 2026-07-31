@@ -575,24 +575,26 @@ export class Ctx {
   // (e.g. one condition). Same {groups, nGenes, mean, frac} shape as groupStatsCached; groups stay in the
   // grouping's full order so two scoped panels share identical columns. Cached per (grouping, scope key).
   private gsfcCache = new Map<string, Awaited<ReturnType<Ctx["groupStatsCached"]>>>();
-  async groupStatsForCells(grouping: string, cellIds: ArrayLike<number>, key?: string): Promise<{ groups: string[]; nGenes: number; n: Int32Array; mean: Float32Array; frac: Float32Array }> {
+  async groupStatsForCells(grouping: string, cellIds: ArrayLike<number>, key?: string): Promise<{ groups: string[]; nGenes: number; n: Int32Array; nUsed: Int32Array; mean: Float32Array; frac: Float32Array; approx: boolean }> {
     const ck = key ? `${grouping}:${key}` : "";
     if (ck && this.gsfcCache.has(ck)) return this.gsfcCache.get(ck)!;
     const m = await this.metaOf(grouping) as any;
     const { mean, frac, n } = await this.view.groupStatsForCells(m.codes, m.categories.length, cellIds);
-    const out = { groups: m.categories as string[], nGenes: this.view.nGenes, n, mean, frac };
+    // these read every cell they were handed, so the stats are exact: measured == present, never estimated
+    const out = { groups: m.categories as string[], nGenes: this.view.nGenes, n, nUsed: n, mean, frac, approx: false };
     if (ck) this.gsfcCache.set(ck, out);
     return out;
   }
 
   // GENE-SLICE subset stats (the dotplot's L3 recompute): per-(group,gene) mean/frac over `cellIds`, computed by
   // reading ONLY `geneCols` from gene-major counts — same shape as groupStatsForCells, a few MB not the whole matrix.
-  async groupStatsForGenes(grouping: string, geneCols: number[], cellIds: ArrayLike<number>, key?: string): Promise<{ groups: string[]; nGenes: number; n: Int32Array; mean: Float32Array; frac: Float32Array }> {
+  async groupStatsForGenes(grouping: string, geneCols: number[], cellIds: ArrayLike<number>, key?: string): Promise<{ groups: string[]; nGenes: number; n: Int32Array; nUsed: Int32Array; mean: Float32Array; frac: Float32Array; approx: boolean }> {
     const ck = key ? `${grouping}:${key}:g${geneCols.join(",")}` : "";
     if (ck && this.gsfcCache.has(ck)) return this.gsfcCache.get(ck)!;
     const m = await this.metaOf(grouping) as any;
     const { mean, frac, n } = await this.view.groupStatsForGenesInSubset(m.codes, m.categories.length, geneCols, cellIds);
-    const out = { groups: m.categories as string[], nGenes: this.view.nGenes, n, mean, frac };
+    // these read every cell they were handed, so the stats are exact: measured == present, never estimated
+    const out = { groups: m.categories as string[], nGenes: this.view.nGenes, n, nUsed: n, mean, frac, approx: false };
     if (ck) this.gsfcCache.set(ck, out);
     return out;
   }

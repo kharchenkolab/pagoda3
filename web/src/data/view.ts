@@ -11,6 +11,7 @@ import { groupSufficientStats as lsGroupStats, markers as lsMarkers } from "../.
 import type { ComputePool } from "../compute/pool.ts";
 import { isolationAvailable } from "../compute/pool.ts";
 import { checkViewerContract, expectedChunkBytes, shortReadIssue, type StoreIssue, type StoreSpec } from "./storecheck.ts";
+import { planGroupStats, type ReadPlan, type RowOrder } from "./locality.ts";
 
 export type Metadata =
   | { kind: "categorical"; codes: Int32Array; categories: string[]; colors?: number[] }   // colors = per-category palette INDEX (annotation layers use a stable name→colour map)
@@ -357,36 +358,71 @@ export class LstarView {
   // Per-(group, gene) sufficient stats over log1p — read from the viewer profile when present, else
   // computed in-browser from counts via the libstar WASM kernel (so a *bare* L* store, with no
   // precomputed navigators, is fully viewable; precompute is an optimization, not a requirement).
-  private gssCache = new Map<string, { groups: string[]; n: Int32Array; S: Float64Array; SS: Float64Array; NE: Float64Array }>();
-  // LAST RESORT, for a genuinely per-CELL partition that no summarized grouping refines (a lasso, an
-  // imported per-cell assignment). Per-(group, gene) sum / sumsq / n_expr accumulated by STREAMING the
-  // cell-major counts in row blocks (byte-range reads via csrRows): bounded memory — only the
-  // accumulators plus one block are resident — but it does read every nonzero, ~29 s on a 22M-nnz store.
-  // Everything cluster-derived is caught by coarsenedStats first and never gets here. Returns null when
-  // the store has no all-genes cell-major copy (the caller then falls back to the whole-matrix read).
-  private async groupStatsStreamed(code: ArrayLike<number>, G: number, ng: number, block = 2048):
-      Promise<{ S: Float64Array; SS: Float64Array; NE: Float64Array } | null> {
+  private gssCache = new Map<string, { groups: string[]; n: Int32Array; nUsed: Int32Array; S: Float64Array; SS: Float64Array; NE: Float64Array; approx: boolean; plan?: ReadPlan }>();
+  // Each cell's physical row in the reordered cell-major copy, or null when it's in cell order. Read once.
+  private rowOrderCache?: Int32Array | null;
+  private async rowOrder(): Promise<RowOrder> {
+    if (this.rowOrderCache === undefined) {
+      this.rowOrderCache = this.ds.hasField("counts_cellmajor_order")
+        ? Int32Array.from((await this.ds.fieldDense("counts_cellmajor_order")).data as any)
+        : null;
+    }
+    return this.rowOrderCache;
+  }
+
+  /** How many cells the sampled path reads — and the byte budget the exact path must fit inside. */
+  statsSampleCells = 6000;
+
+  // For a grouping no summarized grouping refines: read it from the cell-major counts, EXACTLY when that
+  // is affordable and by sampling when it isn't. planGroupStats decides from the layout alone, with no
+  // I/O — a lassoed region of the embedding is ~40 coalesced reads because the store's Hilbert order
+  // keeps it together, while imported per-cell labels of the same size are ~1,333, one per cell. So the
+  // common interactive case is EXACT (read every cell of the group) and only a grouping genuinely
+  // orthogonal to the row order is estimated. `approx` says which happened; callers must not present a
+  // sampled significance value as if it were measured.
+  //
+  // Sampled mode reads a contiguous slab of the WHOLE dataset and splits it by membership, rather than
+  // sampling each group: for a grouping orthogonal to the row order, membership is uncorrelated with
+  // position, so one slab is a fair sample of every group at once — and it costs a dozen coalesced reads
+  // instead of one per cell. Returns null when there's no all-genes cell-major copy to read.
+  private async groupStatsFromCounts(code: ArrayLike<number>, G: number, ng: number):
+      Promise<{ S: Float64Array; SS: Float64Array; NE: Float64Array; nUsed: Int32Array; approx: boolean; plan: ReadPlan } | null> {
     const name = this.ds.hasField("counts_cellmajor") ? "counts_cellmajor" : null;
     if (!name || typeof (this.ds as any).csrRows !== "function") return null;
     const fm = this.ds.field(name)!;
     if ((fm.span?.[1] ?? "genes") !== "genes") return null;   // indices must be GLOBAL gene ids
     const lognorm = fm.state === "lognorm";                   // already log-scaled → don't log1p twice
+
+    const plan = planGroupStats(code, await this.rowOrder(), { sampleCells: this.statsSampleCells });
+    let cells: number[] = [];
+    if (plan.mode === "read") {
+      for (let i = 0; i < this.nCells; i++) if (code[i] >= 0) cells.push(i);
+    } else {
+      const all = Array.from({ length: this.nCells }, (_, i) => i);
+      cells = typeof (this.ds as any).sampleRows === "function"
+        ? await (this.ds as any).sampleRows(name, all, this.statsSampleCells)
+        : all;
+    }
+    if (!cells.length) return { S: new Float64Array(G * ng), SS: new Float64Array(G * ng), NE: new Float64Array(G * ng), nUsed: new Int32Array(G), approx: false, plan };
+
     const S = new Float64Array(G * ng), SS = new Float64Array(G * ng), NE = new Float64Array(G * ng);
-    for (let start = 0; start < this.nCells; start += block) {
-      const cells: number[] = [];
-      for (let i = start, end = Math.min(start + block, this.nCells); i < end; i++) cells.push(i);
-      const sub = await (this.ds as any).csrRows(name, cells, 4096, (d: number, t: number) => this.emitFetch(d, t));
-      const { data, indices, indptr } = sub; const rows: number[] = sub.rows;
-      for (let r = 0; r < rows.length; r++) {
-        const grp = code[rows[r]]; if (grp < 0 || grp >= G) continue;
-        const base = grp * ng;
-        for (let k = indptr[r]; k < indptr[r + 1]; k++) {
-          const v = lognorm ? data[k] : Math.log1p(data[k]);
-          const o = base + indices[k]; S[o] += v; SS[o] += v * v; NE[o]++;
-        }
+    // cells actually MEASURED per group. In sampled mode these are the sample's per-group counts, and
+    // they — not the true group sizes — are the divisor: mean and fraction are ratios over what was read,
+    // which is what makes them unbiased. Dividing a sampled sum by the full group size would scale every
+    // mean down by the sampling fraction.
+    const nUsed = new Int32Array(G);
+    const sub = await (this.ds as any).csrRows(name, cells, 4096, (d: number, t: number) => this.emitFetch(d, t));
+    const { data, indices, indptr } = sub; const rows: number[] = sub.rows;
+    for (let r = 0; r < rows.length; r++) {
+      const grp = code[rows[r]]; if (grp < 0 || grp >= G) continue;
+      nUsed[grp]++;
+      const base = grp * ng;
+      for (let k = indptr[r]; k < indptr[r + 1]; k++) {
+        const v = lognorm ? data[k] : Math.log1p(data[k]);
+        const o = base + indices[k]; S[o] += v; SS[o] += v * v; NE[o]++;
       }
     }
-    return { S, SS, NE };
+    return { S, SS, NE, nUsed, approx: plan.mode === "sample", plan };
   }
 
   /** Derive a grouping's stats by SUMMING an already-summarized one — zero matrix reads.
@@ -465,6 +501,7 @@ export class LstarView {
     const md = await this.metadata(grouping);
     if (md.kind !== "categorical") throw new Error(`grouping ${grouping} is not categorical`);
     let groups: string[], S: Float64Array, SS: Float64Array, NE: Float64Array;
+    let approx = false, plan: ReadPlan | undefined, nUsed: Int32Array | undefined;
     if (this.ds.hasField(`stats_${grouping}_sum`) && this.ds.axisNames().includes(`groups_${grouping}`)) {
       const f64 = (a: any) => (a instanceof Float64Array ? a : Float64Array.from(a));
       // the group labels + the three stat arrays are independent reads — fire them together so a hosted
@@ -483,9 +520,12 @@ export class LstarView {
       // so it is a coarsening of a summarized grouping and costs no matrix reads at all; only a
       // genuinely per-CELL partition (a lasso, an imported per-cell CSV) has to touch the counts.
       const derived = await this.coarsenedStats(grouping, md, ng);
-      const streamed = derived ?? await this.groupStatsStreamed(code, G, ng);
-      if (streamed) { S = streamed.S; SS = streamed.SS; NE = streamed.NE; }
-      else {
+      const fromCounts = derived ?? await this.groupStatsFromCounts(code, G, ng);
+      if (fromCounts) {
+        S = fromCounts.S; SS = fromCounts.SS; NE = fromCounts.NE;
+        approx = (fromCounts as any).approx ?? false; plan = (fromCounts as any).plan;
+        nUsed = (fromCounts as any).nUsed;   // undefined on the coarsened branch: it sums whole base rows, so every cell counts
+      } else {
       const cc = await this.countsCSC();
       const M = await kernels();
       if (M) {
@@ -508,23 +548,26 @@ export class LstarView {
     const gi = new Map(groups.map((g, i) => [g, i]));
     const n = new Int32Array(groups.length);
     for (const c of md.codes) { const idx = gi.get(md.categories[c]); if (idx !== undefined) n[idx]++; }
-    const r = { groups, n, S, SS, NE };
+    // reblock reorders group ROWS; nUsed is per group, so it must follow the same permutation
+    if (gord && nUsed) { const u = new Int32Array(nUsed.length); for (let i = 0; i < gord.length; i++) u[i] = nUsed[gord[i]]; nUsed = u; }
+    const r = { groups, n, nUsed: nUsed ?? n, S, SS, NE, approx, plan };
     this.gssCache.set(grouping, r);
     return r;
   }
 
   // Cluster sufficient stats -> per (group, gene) mean/frac (precomputed or on the fly).
   async groupStats(grouping = "leiden"): Promise<{
-    groups: string[]; nGenes: number; n: Int32Array; mean: Float32Array; frac: Float32Array;
+    groups: string[]; nGenes: number; n: Int32Array; nUsed: Int32Array; mean: Float32Array; frac: Float32Array;
+    approx: boolean; plan?: ReadPlan;
   }> {
-    const { groups, n, S, NE } = await this.groupSufficientStats(grouping);
+    const { groups, n, nUsed, S, NE, approx, plan } = await this.groupSufficientStats(grouping);
     const G = groups.length, ng = this.nGenes;
     const mean = new Float32Array(G * ng), frac = new Float32Array(G * ng);
     for (let g = 0; g < G; g++) {
-      const nn = Math.max(n[g], 1);
+      const nn = Math.max(nUsed[g], 1);            // divide by cells MEASURED, not cells that exist
       for (let j = 0; j < ng; j++) { mean[g * ng + j] = S[g * ng + j] / nn; frac[g * ng + j] = NE[g * ng + j] / nn; }
     }
-    return { groups, nGenes: ng, n, mean, frac };
+    return { groups, nGenes: ng, n, nUsed, mean, frac, approx, plan };
   }
 
   // Per (group, gene) mean(log1p) + fraction-expressing computed over a CELL SUBSET (e.g. one condition's
@@ -613,11 +656,18 @@ export class LstarView {
     // markers() (from the colSumByGroup sufficient stats), byte-identical to the retired hand-rolled formula.
     // It returns GENE-major lfc/padj (ng × G) — the SAME orientation as the precomputed tables above, so the
     // per-group row assembly below is identical to the precomputed branch.
-    const { groups, n, S, NE } = await this.groupSufficientStats(grouping);
-    const G = groups.length, ng = this.nGenes, N = this.nCells;
-    const { lfc, padj } = await lsMarkers(S, NE, n, G, ng, N, await kernels());   // n = per-group sizes (nper)
+    const { groups, nUsed, S, NE, approx } = await this.groupSufficientStats(grouping);
+    const G = groups.length, ng = this.nGenes;
+    // Counts must match the sums they normalize: on the sampled path those are the cells MEASURED, and
+    // N is their total — not the dataset's. Feeding true sizes with sampled sums would be incoherent.
+    let N = 0; for (let g = 0; g < G; g++) N += nUsed[g];
+    const { lfc, padj } = await lsMarkers(S, NE, nUsed, G, ng, N, await kernels());
+    // lfc, mean and fraction converge on more cells — they are the same quantity, measured less precisely.
+    // The significance surrogate does not: it is count-dependent, so a sampled one reads as "less
+    // significant" when the truth is "fewer cells were measured". Report NaN rather than a number whose
+    // meaning shifted; the panel renders it blank and says the table is estimated.
     for (let g = 0; g < G; g++) {
-      const rows = []; for (let j = 0; j < ng; j++) rows.push({ gene: j, symbol: genes[j], lfc: lfc[j * G + g], padj: padj[j * G + g] });
+      const rows = []; for (let j = 0; j < ng; j++) rows.push({ gene: j, symbol: genes[j], lfc: lfc[j * G + g], padj: approx ? NaN : padj[j * G + g] });
       rows.sort((a, b) => b.lfc - a.lfc); out.set(groups[g], this.filterRanked(rows).slice(0, topN));
     }
     return out;
