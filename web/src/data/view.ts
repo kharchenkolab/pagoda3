@@ -10,6 +10,7 @@ import { sample, overdispersed, deCore, groupStatsForCellsCore } from "../comput
 import { groupSufficientStats as lsGroupStats, markers as lsMarkers } from "../../../../lstar/js/core/compute.ts";
 import type { ComputePool } from "../compute/pool.ts";
 import { isolationAvailable } from "../compute/pool.ts";
+import { checkViewerContract, expectedChunkBytes, shortReadIssue, type StoreIssue, type StoreSpec } from "./storecheck.ts";
 
 export type Metadata =
   | { kind: "categorical"; codes: Int32Array; categories: string[]; colors?: number[] }   // colors = per-category palette INDEX (annotation layers use a stable name→colour map)
@@ -190,6 +191,67 @@ export class LstarView {
   private geneMajorCounts(): string | null {
     const b = this.countsBasis();
     return b?.geneMajor ? b.name : null;
+  }
+
+  /** The store's shape as storecheck sees it — metadata already in hand, no reads. */
+  private storeSpec(): StoreSpec {
+    const ds: any = this.ds;
+    const fields: Record<string, any> = {};
+    for (const n of ds.fieldNames()) {
+      const f = ds.field(n);
+      if (f) fields[n] = { encoding: f.encoding, span: f.span, role: f.role, shape: f.shape, provenance: f.provenance };
+    }
+    return { fields, axes: ds.axisNames() };
+  }
+
+  /** Contract issues with this store — free (metadata only), so it can run at open. */
+  contractIssues(): StoreIssue[] {
+    const spec = this.storeSpec();
+    const prepped = this.ds.hasField("counts_cellmajor") || Object.keys(spec.fields).some((n) => /^stats_.+_sum$/.test(n));
+    return checkViewerContract(spec, prepped);
+  }
+
+  /** Can the server actually deliver each verifiable array's FULL extent?
+   *
+   *  Only uncompressed single-chunk arrays have a client-computable length — which is exactly the shape
+   *  the prep gives the gene-major basis, and so exactly the array a per-object cap anywhere in the
+   *  serving path will truncate. Costs one metadata read plus one sizing request per array.
+   *
+   *  BACKGROUND ONLY. On a cold server-side chunk cache a single sizing request blocked for 62–72 s
+   *  while the object was assembled — running this at open would stall the very stores it protects.
+   *  Silent (returns []) when the store isn't a plain HTTP directory, or when the server declines to
+   *  declare a size: a guess here would be worse than no check.
+   */
+  async probeReachability(baseUrl: string, fields = ["counts", "counts_cellmajor"]): Promise<StoreIssue[]> {
+    if (!/^https?:\/\//i.test(baseUrl) && !baseUrl.startsWith("/")) return [];   // zip / File / opaque source
+    const base = baseUrl.endsWith("/") ? baseUrl : baseUrl + "/";
+    const out: StoreIssue[] = [];
+    for (const f of fields) {
+      if (!this.ds.hasField(f)) continue;
+      for (const arr of ["data", "indices", "indptr"]) {
+        const path = `fields/${f}/${arr}`;
+        let meta: any;
+        try { const r = await fetch(`${base}${path}/zarr.json`); if (!r.ok) continue; meta = await r.json(); } catch { continue; }
+        const expected = expectedChunkBytes({
+          dataType: meta.data_type, shape: meta.shape,
+          chunkShape: meta.chunk_grid?.configuration?.chunk_shape,
+          codecs: (meta.codecs ?? []).map((c: any) => c.name),
+        });
+        if (expected === null) continue;                     // compressed/sharded: nothing to compare against
+        let declared: number | null = null;
+        try {
+          const h = await fetch(`${base}${path}/c/0`, { method: "HEAD" });
+          if (h.ok) declared = Number(h.headers.get("content-length"));
+          if (!Number.isFinite(declared as number)) {        // HEAD unsupported → ask for one byte instead
+            const r = await fetch(`${base}${path}/c/0`, { headers: { Range: "bytes=0-0" } });
+            declared = r.status === 206 ? Number((r.headers.get("content-range") || "").split("/")[1]) : null;
+          }
+        } catch { continue; }
+        const issue = shortReadIssue(`${path}/c/0`, expected, declared);
+        if (issue) out.push(issue);
+      }
+    }
+    return out;
   }
 
   private noGeneMajor(op: string): Error {

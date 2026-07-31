@@ -162,31 +162,52 @@ export class App {
   // Surface the store's viewer-optimization level. The app opens ANY lstar zarr and degrades gracefully (a base store
   // recomputes the cell-major panel from gene-major counts each session; coloring/embedding/metadata need no extension);
   // this banner just makes the level visible + names the one-command fix. Dismissal is remembered per store + level.
+  private storeIssueExtra = "";                  // filled in by the BACKGROUND reachability probe, if it finds anything
   private bannerForStore(): void {
     const el = this.$("optbanner"); if (!el) return;
     const ds: any = this.ctx.view.ds;
     const has = (n: string) => typeof ds?.hasField === "function" && ds.hasField(n);
     const cellmajor = has("counts_cellmajor"), ordered = has("counts_cellmajor_order");
-    // A STALE prep outranks the optimization level: a store can look fully extended and still be missing the
-    // gene-major half of the counts, because preps before lstar's basis write-back left a CSR-sourced measure
-    // cell-major. Gene colouring and the dotplot still WORK — view.geneColumns derives them from the cell-major
-    // copy — but each costs the whole panel instead of one byte range, so name the repair at open.
+    // storecheck owns WHAT is wrong with a store (shared with the load log and testable without a server);
+    // this banner owns how to say it. A contract error outranks the optimization level — a store can look
+    // fully extended and still be unusable in a specific way, e.g. a prep before lstar's basis write-back
+    // leaves a CSR-sourced measure cell-major, which still WORKS (view.geneColumns derives gene columns
+    // from the cell-major copy) but costs the whole panel per gene instead of one byte range.
+    const issues = this.ctx.view.contractIssues();
     const basis = this.ctx.view.countsBasis();
     const stale = !!basis && !basis.geneMajor;
-    if (cellmajor && ordered && !stale) { el.style.display = "none"; return; }   // fully viewer-optimized → nothing to say
-    const level = stale ? "stale-basis" : cellmajor ? "ext" : "base";
+    const hard = issues.filter((i) => i.level === "error");
+    if (cellmajor && ordered && !stale && !hard.length && !this.storeIssueExtra) { el.style.display = "none"; return; }
+    const level = hard.length ? "contract" : stale ? "stale-basis" : cellmajor ? "ext" : "base";
     const storeKey = new URLSearchParams(location.search).get("store") || "default";
-    try { if (localStorage.getItem("p2-optdismiss::" + storeKey) === level) { el.style.display = "none"; return; } } catch { /* */ }
+    try { if (localStorage.getItem("p2-optdismiss::" + storeKey) === level && !this.storeIssueExtra) { el.style.display = "none"; return; } } catch { /* */ }
     const fix = "lstar convert IN.h5ad OUT.lstar.zarr --viewer";
-    const msg = stale
+    const esc = (s: string) => s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]!));
+    const msg = hard.length
+      ? `<b>This store doesn't match the viewer contract.</b> ${hard.map((i) => esc(i.message)).join(" ")}`
+      : stale
       ? `<b>Prepped by an older lstar — no gene-major counts.</b> <code>${basis!.name}</code> is <code>${basis!.encoding}</code>, so colouring by a gene and the dotplot's subset recompute are derived from the cell-major copy — correct, but they load the whole matrix instead of reading one byte range. Re-run the prep (<code>${fix}</code>) to store the counts in both orientations.`
       : cellmajor
       ? `<b>Extended, but not locality-ordered.</b> Compute is fast, but on a high-latency host the per-selection reads aren't coalesced into one. Add the order — re-run <code>${fix}</code>.`
       : `<b>Not viewer-optimized.</b> Differential expression & variable genes recompute from the whole matrix each session (slow on large or remote data). Optimize once — <code>${fix}</code>.`;
-    el.innerHTML = `<span class="ob-i">◆</span><span class="ob-t">${msg}</span><span class="ob-x" id="optX" title="dismiss">✕</span>`;
+    el.innerHTML = `<span class="ob-i">◆</span><span class="ob-t">${msg}${this.storeIssueExtra}</span><span class="ob-x" id="optX" title="dismiss">✕</span>`;
     el.style.display = "flex";
     const x = el.querySelector("#optX") as HTMLElement | null;
     if (x) x.onclick = () => { el.style.display = "none"; try { localStorage.setItem("p2-optdismiss::" + storeKey, level); } catch { /* */ } };
+  }
+
+  // Reachability runs DETACHED, never in the open path: on a cold server-side chunk cache a single sizing
+  // request blocked for over a minute while the object was assembled, so gating the open on it would stall
+  // exactly the stores it protects. It re-renders the banner only if it finds something.
+  private probeStoreInBackground(): void {
+    const store = new URLSearchParams(location.search).get("store");
+    if (!store) return;
+    void this.ctx.view.probeReachability(store).then((issues) => {
+      if (!issues.length) return;
+      const esc = (s: string) => s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]!));
+      this.storeIssueExtra = ` <b>Data is not fully reachable.</b> ${issues.map((i) => esc(i.message)).join(" ")}`;
+      this.bannerForStore();
+    }).catch(() => { /* a probe that can't run tells us nothing — stay quiet */ });
   }
 
   async mount(parent: HTMLElement) {
@@ -236,6 +257,7 @@ export class App {
     this.wire();
     this.setPip("idle");
     this.bannerForStore();   // surface the store's viewer-optimization level (extended? locality-ordered?)
+    this.probeStoreInBackground();   // detached: reachability can block a minute on a cold host, so never gate the open
     this.switchWS("Metadata", false);
     this.checkpoint("session start", "Baseline Metadata workspace.");
     this.restoreSession();   // restore the last session (layout incl. widget panels) + load the custom-widget library
