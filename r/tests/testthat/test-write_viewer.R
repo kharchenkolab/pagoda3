@@ -38,3 +38,54 @@ test_that("write_viewer adds navigators; stats kernel-exact; panel = counts re-o
   lstar::lstar_write(ds, p); ds2 <- lstar::lstar_read(p)
   expect_true(all(c("counts_cellmajor", "stats_leiden_sum") %in% names(ds2$fields)))
 })
+
+# --- numeric partitions (parity with py/src/pagoda3/viewer.py) --------------------------------------
+# A clustering that arrives as INTEGERS is a `measure` to L*, so lstar's label-role detection skips it.
+# On a real Seurat-derived store that meant the one grouping never summarized was the actual clustering.
+
+.numeric_cluster_ds <- function(nc = 120, ng = 20, nclust = 5) {
+  set.seed(3)
+  X <- Matrix::rsparsematrix(nc, ng, density = 0.4, rand.x = function(n) rpois(n, 2) + 1)
+  ds <- lstar::lstar_dataset(kind = "sample")
+  ds <- lstar::add_axis(ds, "cells", paste0("cell", seq_len(nc)))
+  ds <- lstar::add_axis(ds, "genes", paste0("g", seq_len(ng)))
+  ds <- lstar::add_field(ds, "counts", X, role = "measure", span = c("cells", "genes"), state = "raw")
+  ds <- lstar::add_field(ds, "integrated_clusters", (seq_len(nc) - 1) %% nclust,
+                         role = "measure", span = "cells")
+  ds <- lstar::add_field(ds, "celltypist", paste0("t", (seq_len(nc) - 1) %% 3),
+                         role = "label", span = "cells")
+  ds <- lstar::add_field(ds, "nCount_RNA", as.numeric(Matrix::rowSums(X)),
+                         role = "measure", span = "cells")
+  ds
+}
+
+test_that("a numeric clustering is detected and does not cost the annotations their stats", {
+  ds <- .numeric_cluster_ds()
+  expect_equal(pagoda3:::.numeric_partitions(ds), "integrated_clusters")
+  ds <- write_viewer(ds)
+  expect_true("stats_integrated_clusters_sum" %in% names(ds$fields))
+  expect_true("stats_celltypist_sum" %in% names(ds$fields))       # auto-detection survives primary=
+  expect_equal(ds$fields[["counts_cellmajor_order"]]$provenance$group, "integrated_clusters")
+})
+
+test_that("an explicitly named grouping wins and the clustering rides along", {
+  ds <- write_viewer(.numeric_cluster_ds(), "celltypist")
+  expect_true("stats_celltypist_sum" %in% names(ds$fields))
+  expect_true("stats_integrated_clusters_sum" %in% names(ds$fields))
+  expect_equal(ds$fields[["counts_cellmajor_order"]]$provenance$group, "celltypist")
+})
+
+test_that(".partition_levels matches the Python policy", {
+  f <- pagoda3:::.partition_levels
+  expect_equal(f(seq_len(50) %% 7), 7)                       # 0..6 contiguous codes
+  expect_equal(f(seq_len(50) %% 7 + 1), 7)                   # 1-based codes (R factors)
+  expect_null(f(seq(0, 1, length.out = 50)))                 # fractional -> a score
+  expect_null(f(rep(0, 50)))                                 # constant
+  expect_null(f(seq_len(500)))                               # per-cell unique -> an id
+  expect_null(f(c(1, NA, 2)))                                # non-finite
+  expect_null(f(seq_len(50) %% 7, max_card = 3))             # over the cardinality bound
+  expect_null(f(c(310, 415, 415, 902, 902, 310)))            # integral but not codes
+  expect_equal(f(c(310, 415, 415, 902, 902, 310), "seurat_clusters"), 3)   # ...unless named like one
+  expect_null(f(c(0, 1, 3, 3, 0)))                           # gap, unnamed
+  expect_equal(f(c(0, 1, 3, 3, 0), "leiden"), 3)             # empty level, rescued by name
+})
