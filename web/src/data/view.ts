@@ -577,17 +577,37 @@ export class LstarView {
   private globalStatsCache?: { sumLog: Float64Array; sumsqLog: Float64Array; nexpr: Float64Array; N: number } | null;
   private async globalGeneStats() {
     if (this.globalStatsCache !== undefined) return this.globalStatsCache;
-    const sumField = this.ds.fieldNames().find((n) => n.startsWith("stats_") && n.endsWith("_sum"));
-    if (!sumField) { this.globalStatsCache = null; return null; }
-    const g = sumField.slice("stats_".length, -"_sum".length);
     const ng = this.nGenes;
-    const S = (await this.ds.fieldDense(`stats_${g}_sum`)).data as ArrayLike<number>;
-    const SS = (await this.ds.fieldDense(`stats_${g}_sumsq`)).data as ArrayLike<number>;
-    const NE = (await this.ds.fieldDense(`stats_${g}_nexpr`)).data as ArrayLike<number>;
+    const cands = this.ds.fieldNames()
+      .map((n) => /^stats_(.+)_sum$/.exec(n)?.[1])
+      .filter((g): g is string => !!g && this.ds.hasField(`stats_${g}_sumsq`) && this.ds.hasField(`stats_${g}_nexpr`));
+    // WHICH grouping is summed doesn't matter when it covers every cell — summing all rows of any full
+    // partition gives the same per-gene totals. It matters when one does NOT: the totals are then over
+    // fewer cells than `nCells`, and the a-vs-rest consumer divides by `N - nA`, so a short global makes
+    // every rest-mean too small and every lfc too large, silently. Prefer a grouping that covers all
+    // cells; when none does, report the covered count rather than claiming nCells. (Every grouping on
+    // every lstar-prepped store measured so far is full-coverage — lstar gives unlabelled cells their
+    // own "" group — so this is a guard against a hand-built or foreign-prepped store, not a live bug.)
+    let chosen: string | undefined, covered = -1;
+    for (const g of cands) {
+      const md = await this.metadata(g).catch(() => null);
+      if (!md || md.kind !== "categorical") continue;
+      let cov = 0;
+      for (const c of md.codes) if (c >= 0) cov++;
+      if (cov > covered) { covered = cov; chosen = g; }
+      if (cov >= this.nCells) break;                       // full coverage: no better candidate exists
+    }
+    if (!chosen || covered <= 0) { this.globalStatsCache = null; return null; }
+    const [sumF, sqF, neF] = await Promise.all([
+      this.ds.fieldDense(`stats_${chosen}_sum`),
+      this.ds.fieldDense(`stats_${chosen}_sumsq`),
+      this.ds.fieldDense(`stats_${chosen}_nexpr`),
+    ]);
+    const S = sumF.data as ArrayLike<number>, SS = sqF.data as ArrayLike<number>, NE = neF.data as ArrayLike<number>;
     const G = Math.round((S as any).length / ng);
     const sumLog = new Float64Array(ng), sumsqLog = new Float64Array(ng), nexpr = new Float64Array(ng);
     for (let gi = 0; gi < G; gi++) { const off = gi * ng; for (let j = 0; j < ng; j++) { sumLog[j] += S[off + j]; sumsqLog[j] += SS[off + j]; nexpr[j] += NE[off + j]; } }
-    this.globalStatsCache = { sumLog, sumsqLog, nexpr, N: this.nCells };
+    this.globalStatsCache = { sumLog, sumsqLog, nexpr, N: covered };
     return this.globalStatsCache;
   }
 

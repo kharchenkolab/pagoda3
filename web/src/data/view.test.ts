@@ -208,3 +208,49 @@ test("coarsening: stats rows are aligned by LABEL, not by position", async () =>
   assert.deepEqual([...gs.mean].map((x: number) => +x.toFixed(6)),
     [(1 + 3) / 4, (2 + 4) / 4, 5 / 2, 6 / 2].map((x) => +x.toFixed(6)));
 });
+
+// --- global gene stats: coverage, not field order ----------------------------------------------------
+// globalGeneStats sums every row of ONE summarized grouping to get per-gene totals over all cells, and
+// the a-vs-rest DE divides by `N - nA`. Summing any FULL partition gives identical totals, so the choice
+// of grouping is harmless — until one doesn't cover every cell, when the totals are short AND `N` is
+// overstated, making every rest-mean too small and every lfc too large, with no error.
+const NG3 = 2;
+const globalDs = (order: string[], cov: Record<string, number[]>, rows: Record<string, number[]>): any => ({
+  fieldNames: () => order.flatMap((g) => [`stats_${g}_sum`, `stats_${g}_sumsq`, `stats_${g}_nexpr`]),
+  hasField: (n: string) => order.some((g) => n === `stats_${g}_sumsq` || n === `stats_${g}_nexpr`),
+  axisNames: () => order.map((g) => `groups_${g}`),
+  field: () => undefined,
+  axisLength: (a: string) => (a === "cells" ? 4 : NG3),
+  axisLabels: async (a: string) => (a === "genes" ? ["A", "B"] : ["c0", "c1", "c2", "c3"]),
+  fieldDense: async (n: string) => {
+    const g = /^stats_(.+)_(sum|sumsq|nexpr)$/.exec(n)![1];
+    return { data: Float64Array.from(rows[g]) };
+  },
+  __cov: cov,
+});
+function globalView(ds: any) {
+  const v: any = new LstarView(ds);
+  v.metadata = async (g: string) => ({ kind: "categorical", codes: Int32Array.from(ds.__cov[g]), categories: ["p", "q"] });
+  return v;
+}
+
+test("globalGeneStats: prefers a grouping that covers every cell over an earlier partial one", async () => {
+  // `partial` comes first in field order but leaves 2 of 4 cells unlabelled; `full` covers all 4.
+  const ds = globalDs(["partial", "full"],
+    { partial: [0, 1, -1, -1], full: [0, 0, 1, 1] },
+    { partial: [1, 1, 2, 2], full: [10, 20, 30, 40] });     // 2 groups x 2 genes each
+  const gs = await (globalView(ds) as any).globalGeneStats();
+  assert.equal(gs.N, 4, "N is the covered cell count");
+  assert.deepEqual([...gs.sumLog], [40, 60], "totals come from the full-coverage grouping");
+});
+
+test("globalGeneStats: with only a partial grouping, N is the covered count, not nCells", async () => {
+  const ds = globalDs(["partial"], { partial: [0, 1, -1, -1] }, { partial: [1, 1, 2, 2] });
+  const gs = await (globalView(ds) as any).globalGeneStats();
+  assert.equal(gs.N, 2, "must not claim all 4 cells — the rows only cover 2");
+  assert.deepEqual([...gs.sumLog], [3, 3]);
+});
+
+test("globalGeneStats: null when nothing is summarized", async () => {
+  assert.equal(await (globalView(globalDs([], {}, {})) as any).globalGeneStats(), null);
+});
