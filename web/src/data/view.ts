@@ -291,10 +291,12 @@ export class LstarView {
   // computed in-browser from counts via the libstar WASM kernel (so a *bare* L* store, with no
   // precomputed navigators, is fully viewable; precompute is an optimization, not a requirement).
   private gssCache = new Map<string, { groups: string[]; n: Int32Array; S: Float64Array; SS: Float64Array; NE: Float64Array }>();
-  // Per-(group, gene) sum / sumsq / n_expr accumulated by STREAMING the cell-major counts in row blocks
-  // (byte-range reads via the package reader's csrRows) — identical arithmetic to the gene-major pass, but
-  // bounded memory: only the accumulators + one block are ever resident. Returns null when the store has no
-  // all-genes cell-major copy to stream (the caller then falls back to the whole-matrix reduction).
+  // LAST RESORT, for a genuinely per-CELL partition that no summarized grouping refines (a lasso, an
+  // imported per-cell assignment). Per-(group, gene) sum / sumsq / n_expr accumulated by STREAMING the
+  // cell-major counts in row blocks (byte-range reads via csrRows): bounded memory — only the
+  // accumulators plus one block are resident — but it does read every nonzero, ~29 s on a 22M-nnz store.
+  // Everything cluster-derived is caught by coarsenedStats first and never gets here. Returns null when
+  // the store has no all-genes cell-major copy (the caller then falls back to the whole-matrix read).
   private async groupStatsStreamed(code: ArrayLike<number>, G: number, ng: number, block = 2048):
       Promise<{ S: Float64Array; SS: Float64Array; NE: Float64Array } | null> {
     const name = this.ds.hasField("counts_cellmajor") ? "counts_cellmajor" : null;
@@ -320,6 +322,75 @@ export class LstarView {
     return { S, SS, NE };
   }
 
+  /** Derive a grouping's stats by SUMMING an already-summarized one — zero matrix reads.
+   *
+   *  Sufficient stats are additive over cells. So if every group of a summarized base falls entirely
+   *  inside one group of the requested grouping (the grouping is a COARSENING of the base), the
+   *  requested stats are just sums of the base's rows. Checking that is O(nCells) over two code
+   *  vectors; the only read is the base's ~K×ngenes stats table.
+   *
+   *  This is the shape of every category the viewer creates at RUNTIME — scType output, a Reconcile
+   *  draft, a hand-merged or renamed clustering are all assigned PER CLUSTER, so they are coarsenings
+   *  of the clustering by construction. Prep-time precompute can never cover them: they do not exist
+   *  until the user makes them. Measured on the 13,533 × 19,231 store: 20 ms and 0 bytes of counts
+   *  read, against 31 s and 176 MB to read it, agreeing to 1.9e-14 (nexpr exactly).
+   *
+   *  Returns null when no summarized base refines this grouping — the caller then streams the counts.
+   */
+  private async coarsenedStats(grouping: string, md: { codes: ArrayLike<number>; categories: string[] }, ng: number):
+      Promise<{ S: Float64Array; SS: Float64Array; NE: Float64Array; base: string } | null> {
+    const axes = this.ds.axisNames();
+    const bases = this.ds.fieldNames()
+      .map((n) => /^stats_(.+)_sum$/.exec(n)?.[1])
+      .filter((b): b is string => !!b && b !== grouping && axes.includes(`groups_${b}`)
+        && this.ds.hasField(`stats_${b}_sumsq`) && this.ds.hasField(`stats_${b}_nexpr`));
+    if (!bases.length) return null;
+    const G = md.categories.length;
+    // Any base that refines the grouping yields the IDENTICAL answer, so prefer the cheapest read —
+    // the stats table is K×ngenes. A base coarser than the grouping cannot possibly refine it.
+    const sized = (await Promise.all(bases.map(async (b) => ({ b, K: (await this.ds.axisLabels(`groups_${b}`)).length }))))
+      .filter((x) => x.K >= G).sort((x, y) => x.K - y.K);
+
+    for (const { b } of sized) {
+      const bmd = await this.metadata(b);
+      if (bmd.kind !== "categorical") continue;
+      // base group -> the grouping's group, if every cell of that base group agrees. -2 = unseen.
+      const map = new Int32Array(bmd.categories.length).fill(-2);
+      let ok = true;
+      for (let i = 0; i < this.nCells; i++) {
+        const bc = bmd.codes[i], tc = md.codes[i];
+        // A cell the base does not label carries no stats, so it may only be unlabelled here too —
+        // otherwise this grouping covers cells the base's rows never counted and the sum undercounts.
+        if (bc < 0) { if (tc >= 0) { ok = false; break; } continue; }
+        if (map[bc] === -2) map[bc] = tc;
+        else if (map[bc] !== tc) { ok = false; break; }   // one base group split across groups: not a coarsening
+      }
+      if (!ok) continue;
+
+      const [gl, sumF, sqF, neF] = await Promise.all([
+        this.ds.axisLabels(`groups_${b}`),
+        this.ds.fieldDense(`stats_${b}_sum`),
+        this.ds.fieldDense(`stats_${b}_sumsq`),
+        this.ds.fieldDense(`stats_${b}_nexpr`),
+      ]);
+      const bsum = sumF.data as ArrayLike<number>, bsq = sqF.data as ArrayLike<number>, bne = neF.data as ArrayLike<number>;
+      const S = new Float64Array(G * ng), SS = new Float64Array(G * ng), NE = new Float64Array(G * ng);
+      const bIndex = new Map(bmd.categories.map((c, i) => [c, i]));
+      for (let r = 0; r < gl.length; r++) {
+        // stats rows are ordered by the groups_<b> AXIS, which need not match the metadata's category
+        // order — align by label, never by position.
+        const bc = bIndex.get(gl[r]);
+        if (bc === undefined) continue;
+        const tc = map[bc];
+        if (tc < 0) continue;                            // base group unused, or unlabelled here
+        const src = r * ng, dst = tc * ng;
+        for (let j = 0; j < ng; j++) { S[dst + j] += bsum[src + j]; SS[dst + j] += bsq[src + j]; NE[dst + j] += bne[src + j]; }
+      }
+      return { S, SS, NE, base: b };
+    }
+    return null;
+  }
+
   private async groupSufficientStats(grouping: string) {
     const cached = this.gssCache.get(grouping);
     if (cached) return cached;
@@ -341,13 +412,11 @@ export class LstarView {
     } else {
       groups = md.categories.slice();
       const G = groups.length, code = md.codes;          // 0-based into categories (== groups order)
-      // Sufficient stats are ADDITIVE over cells, so stream the reduction in cell blocks rather than
-      // materializing the matrix: we hold only the G×ngenes accumulators (27×19k×8×3 ≈ 12 MB) plus one
-      // block. Reading the whole thing was a shortcut that put a hard ceiling on the feature — a real
-      // 13,533 × 19,231 float64 store aborts the WASM heap on fieldAsCsc, so markers for any grouping the
-      // store had not precomputed were simply impossible. Falls through to the whole-matrix path when
-      // there's no all-genes cell-major copy to stream from.
-      const streamed = await this.groupStatsStreamed(code, G, ng);
+      // Cost order, cheapest first. A category made at runtime is almost always assigned PER CLUSTER,
+      // so it is a coarsening of a summarized grouping and costs no matrix reads at all; only a
+      // genuinely per-CELL partition (a lasso, an imported per-cell CSV) has to touch the counts.
+      const derived = await this.coarsenedStats(grouping, md, ng);
+      const streamed = derived ?? await this.groupStatsStreamed(code, G, ng);
       if (streamed) { S = streamed.S; SS = streamed.SS; NE = streamed.NE; }
       else {
       const cc = await this.countsCSC();
